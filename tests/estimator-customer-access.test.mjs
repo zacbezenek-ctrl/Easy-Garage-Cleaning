@@ -116,7 +116,7 @@ test('under the right name the quote attaches, and every answer stays masked: no
   const saved = await saveDraft(f, sales, body); seen.push(saved.text);
   assert.equal(saved.status, 200, saved.text);
   const id = saved.body.job.id;
-  assert.deepEqual([saved.body.job.customerId, f.job(id).customerId, f.job(id).authorCustomerRef], [ref, 'ghl_provider7', { ref, by: 'sales.person', name: 'Jordan Example' }]);
+  assert.deepEqual([saved.body.job.customerId, f.job(id).customerId, f.job(id).authorCustomerRef], [ref, 'ghl_provider7', { ref, by: 'sales.person', name: 'Jordan Example', phone: '9705550142', address: '1 Typed Street' }]);
   const read = await readDraft(f, sales, id); seen.push(read.text);
   assert.deepEqual([read.status, read.body.job.customerId], [200, ref]);
   const prepared = await prepare(f, sales, { jobId: id }); seen.push(prepared.text);
@@ -291,4 +291,57 @@ test('a placeholder stored name ("Customer", "Unknown", "Test Lead") names nobod
     assert.deepEqual([refused.status, refused.body.code], [409, 'customer_resolve_identity_review'], stored);
   }
   assert.equal(estimatorNamesAgree('Jordan Example', 'Casey Example'), true, 'a real shared surname still agrees');
+});
+
+test('a capture the office filled in reads back to the estimator with only the details they typed, and their resave keeps the office\'s', async () => {
+  const { walkthroughCaptureHandlers } = await import('../functions/api/walkthrough-capture.js');
+  const f = fixture(), resolved = await resolve(f, sales, typed('Casey Example'));
+  const saved = await saveDraft(f, sales, { requestId: randomUUID(), customerId: resolved.body.customer.id, draft: draft('Casey Example') });
+  const id = saved.body.job.id, capture = actor => walkthroughCaptureHandlers({ session: async () => actor, storage: () => f.store, now: () => new Date(NOW) });
+  const post = (actor, data) => call(capture(actor).post({ request: json('/api/walkthrough-capture', { action: 'save', jobId: id, requestId: randomUUID(), expectedRevision: f.job(id).walkthroughReview?.revision ?? 0, data }), env: ROLES }));
+  const get = actor => call(capture(actor).get({ request: new Request(`${SITE}/api/walkthrough-capture?jobId=${id}`), env: ROLES }));
+  // The owner records the stored name and address on the estimator's capture.
+  const office = await post(owner, { customerName: 'Jordan Example', address: '742 Synthetic Way', phone: '9705550142', scopeSummary: 'Shelving wall' });
+  assert.equal(office.status, 200, office.text);
+  const read = await get(sales);
+  assert.equal(read.status, 200, read.text);
+  assert.deepEqual([read.body.review.draft.customerName, read.body.review.draft.address, read.body.review.draft.phone, read.body.review.draft.scopeSummary], ['Casey Example', '', '9705550142', 'Shelving wall'], 'their own typed phone is theirs to see');
+  assert.equal(/Jordan|742 Synthetic Way|stored@example/.test(read.text), false);
+  // Resaving what they were shown changes only what they edit; the office still reads its own entries.
+  const resave = await post(sales, { ...read.body.review.draft, scopeSummary: 'Shelving wall and bins' });
+  assert.equal(resave.status, 200, resave.text);
+  assert.equal(/Jordan|742 Synthetic Way/.test(resave.text), false);
+  const stored = f.job(id).walkthroughReview.draft;
+  assert.deepEqual([stored.customerName, stored.address, stored.scopeSummary], ['Jordan Example', '742 Synthetic Way', 'Shelving wall and bins']);
+  assert.equal((await get(owner)).body.review.draft.customerName, 'Jordan Example');
+});
+
+test('an estimator who created the customer record still cannot take over another estimator\'s draft, or its commission, unless the office gives it to them', async () => {
+  const f = fixture();
+  // Estimator B adds a customer; estimator A later quotes the same customer under the same name.
+  const added = await resolve(f, sales, { name: 'Pat Sample', phone: '9705550177', email: '', address: '5 New Road', highlevelContactId: '' });
+  assert.deepEqual([added.status, added.body.created], [200, true]);
+  const theirs = await resolve(f, otherSales, { name: 'Pat Sample', phone: '9705550177', email: '', address: '', highlevelContactId: '' });
+  const clientA = { name: 'Pat Sample', phone: '9705550177', email: '', address: '5 New Road', highlevel_contact_id: '' };
+  const drafted = await saveDraft(f, otherSales, { requestId: randomUUID(), customerId: theirs.body.customer.id, draft: { ...draft(), client: clientA } });
+  assert.equal(drafted.status, 200, drafted.text);
+  const id = drafted.body.job.id, before = structuredClone(f.job(id));
+  // B, who owns the customer record, is refused on every route into A's draft.
+  const read = await readDraft(f, sales, id);
+  assert.deepEqual([read.status, read.body.code], [403, 'quote_draft_job_forbidden']);
+  const revised = await saveDraft(f, sales, { requestId: randomUUID(), customerId: added.body.customer.id, jobId: id, expectedRevision: f.job(id).revision, draft: { ...draft(), client: clientA, title: 'Taken over' } });
+  assert.deepEqual([revised.status, revised.body.code], [403, 'quote_draft_job_forbidden']);
+  const opened = await prepare(f, sales, { jobId: id });
+  assert.deepEqual([opened.status, opened.body.code], [403, 'handoff_job_forbidden']);
+  const signed = await sign(f, sales, { requestId: randomUUID(), customerId: added.body.customer.id, jobId: id, expectedRevision: f.job(id).revision, plan: { ...plan('Pat Sample'), client: clientA } });
+  assert.deepEqual([signed.status, signed.body.code], [403, 'handoff_revision_forbidden']);
+  assert.deepEqual(f.job(id), before, 'A\'s draft is untouched and unsigned');
+  // A reference B stamped on the job earlier gives no way in either.
+  f.job(id).authorCustomerRef = { ref: added.body.customer.id, by: sales.user, name: 'Pat Sample' };
+  assert.equal((await prepare(f, sales, { jobId: id })).status, 403);
+  delete f.job(id).authorCustomerRef;
+  // Once the office assigns the job to B, B may revise and sign it.
+  f.job(id).assignedCrew = [sales.user];
+  const taken = await saveDraft(f, sales, { requestId: randomUUID(), customerId: added.body.customer.id, jobId: id, expectedRevision: f.job(id).revision, draft: { ...draft(), client: clientA, title: 'Reassigned' } });
+  assert.equal(taken.status, 200, taken.text);
 });

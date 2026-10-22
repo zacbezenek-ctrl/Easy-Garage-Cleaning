@@ -60,11 +60,14 @@ export async function fullCustomerAccess(customer, actor, { env = {}, source = n
   return Boolean(job) && job.customerId === customer.id && !job.recordType && await createJobAssignmentAccess(env, actor).assigned(job);
 }
 
-/** The reference this estimator saved a job with (authorCustomerRef), or ''; typedName: the name they typed with it. */
+/** The reference this estimator saved a job with (authorCustomerRef), or ''; typed: the name, phone and address they
+ * typed with it (what they may be shown in its place). */
 const ownRef = (job, actor) => plain(job?.authorCustomerRef) && isCustomerRef(job.authorCustomerRef.ref) && same(job.authorCustomerRef.by, actor.user);
 export const jobRef = (job, actor) => ownRef(job, actor) ? job.authorCustomerRef.ref : '';
-const typedName = (job, actor) => ownRef(job, actor) && typeof job.authorCustomerRef.name === 'string' ? job.authorCustomerRef.name.slice(0, 200) : '';
-export const refPatch = (pick, actor, name = '') => pick?.ref ? { authorCustomerRef: { ref: pick.ref, by: actor.user, name: String(name || '').slice(0, 200) } } : {};
+const typedField = (job, actor, key, max) => ownRef(job, actor) && typeof job.authorCustomerRef[key] === 'string' ? job.authorCustomerRef[key].slice(0, max) : '';
+const typedName = (job, actor) => typedField(job, actor, 'name', 200);
+/** client: the customer details typed on the quote or signed plan ({name, phone, address}). */
+export const refPatch = (pick, actor, client = {}) => pick?.ref ? { authorCustomerRef: { ref: pick.ref, by: actor.user, name: String(client?.name || '').slice(0, 200), phone: String(client?.phone || '').slice(0, 40), address: String(client?.address || '').slice(0, 500) } } : {};
 
 /**
  * The stored customer a quote save names (value: a record id or a cref_ reference) and what the author may see of it:
@@ -91,17 +94,24 @@ export async function authorCustomer(store, actor, access, value, { env = {}, cl
  * is what to show as the customer's name when not full: the name this estimator typed, never the stored one. */
 export async function jobCustomerAccess(store, actor, access, job, { env = {} } = {}) {
   if (!restrictedAuthor(actor, access, env)) return { restricted: false, full: true, ref: '', name: '' };
-  const ref = jobRef(job, actor), name = typedName(job, actor);
+  const ref = jobRef(job, actor), name = typedName(job, actor), typed = { phone: typedField(job, actor, 'phone', 40), address: typedField(job, actor, 'address', 500) };
   const customer = job?.customerId ? await store.read('customers', job.customerId) : null;
   const source = job?.sourceWalkthroughId ? await store.read('jobs', job.sourceWalkthroughId) : null;
-  return { restricted: true, full: await fullCustomerAccess(customer, actor, { env, source, job }), ref, name };
+  return { restricted: true, full: await fullCustomerAccess(customer, actor, { env, source, job }), ref, name, typed };
 }
 
 /** Whether an author may open a saved job's quote: always, unless restricted; then a draft they started or saved, a
- * job they created, or one whose customer they may see. Another estimator's draft stays with them and the office. */
+ * job they created, or one whose customer they may see. A draft another estimator started stays with them and the
+ * office unless the office gave it to this one (the job, or its walkthrough, assigned to them): owning the customer
+ * is not enough, since a revision there would let them sign it and take its commission (acceptance.recordedBy). */
 export async function authorOpensJob(store, actor, access, job, env = {}) {
   if (!restrictedAuthor(actor, access, env)) return true;
-  if (same(job?.quoteDraft?.createdBy, actor.user) || same(job?.createdBy, actor.user) || jobRef(job, actor)) return true;
+  const starter = job?.quoteDraft?.createdBy;
+  if (starter && !same(starter, actor.user)) {
+    const source = job.sourceWalkthroughId ? await store.read('jobs', job.sourceWalkthroughId) : null;
+    return await createJobAssignmentAccess(env, actor).assigned(job) || Boolean(source) && source.id === job.sourceWalkthroughId && await walkthroughVisible(source, actor, env);
+  }
+  if (same(starter, actor.user) || same(job?.createdBy, actor.user) || jobRef(job, actor)) return true;
   return (await jobCustomerAccess(store, actor, access, job, { env })).full;
 }
 
