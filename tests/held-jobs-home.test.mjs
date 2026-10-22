@@ -58,3 +58,12 @@ test('the owner presses Release held jobs; with nothing held the widget shows no
   await quiet.mount();
   assert.equal(quiet.host.children.length, 0, 'nothing held, nothing shown');
 });
+
+test('the widget keeps the + on a capped count and tells apart jobs signed above the approved price and jobs that could not be released', async () => {
+  const ui = widget({ who: OWNER, sweep: () => ({ released: [], held: 1000, more: true, signedAbove: 2, stuck: 1 }) });
+  await ui.mount();
+  assert.match(ui.host.textContent, /997\+ booked jobs still wait for prices/);
+  assert.match(ui.host.textContent, /2 booked jobs were signed above the price the owner approved, so they are not released: rebuild the quote and have the customer sign it again\./);
+  assert.match(ui.host.textContent, /1 booked job couldn't be released automatically after three tries: press Release held jobs to try again\./);
+  assert.ok(ui.button('Release held jobs (1000+)'));
+});
