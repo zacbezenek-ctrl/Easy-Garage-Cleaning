@@ -57,14 +57,14 @@ function current(job,value,date){const ms=at(value),restored=at(job?.restoredAt)
 const tapTime=row=>row.fieldExecution?.activityTappedAt||row.fieldExecution?.activityAt;
 // The crew's last status tap, when it was made today (after any restore). An End day counts as today's arrival only
 // when it ended a visit started and ended today: one saved offline and synced after midnight ended yesterday's visit
-// (field-execution-visits.js end_day with visitDate), so it says nothing about today. A Pause or Waiting tap made
-// before a later visit's scheduled start is not that visit's arrival.
+// (field-execution-visits.js end_day with visitDate), so it says nothing about today. A Pause made before a later
+// visit's scheduled start is not that visit's arrival; a Waiting is (crew on site early, waiting on the customer).
 function todayTap(row){
   const when=tapTime(row);
   if(!current(row,when,row.date))return'';
   const tap=String(row.fieldExecution?.activity||''),visit=row.fieldExecution?.visits?.[row.date];
   if(tap==='day_ended')return visit?.status==='ended'&&!visit.endedLate&&current(row,visit.startedAt,row.date)&&current(row,visit.endedAt,row.date)?'arrived':'';
-  if((tap==='paused'||tap==='waiting')&&row.firstVisit===false){const start=startAt(row);if(start!==null&&at(when)<start)return'';}
+  if(tap==='paused'&&row.firstVisit===false){const start=startAt(row);if(start!==null&&at(when)<start)return'';}
   return tap;
 }
 // Something on the job recorded on a Denver day before this visit's (after any restore): its canonical status is older.
