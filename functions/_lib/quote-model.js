@@ -606,7 +606,7 @@ export const customerScopeText = scope => typeof scope === 'string' ? scope.repl
  * Labor line on a junk-only quote) and D-LABOR-TEXT (one amount for the customer). HAULING_GROUPS are the removal groups
  * whose own prices pay the crew's time: truck loads, and the special-handling items and access charges priced on top of
  * a truck on the job. builderJunkOnly(lines): builder lines (breakdown lines, anything with section and group) of at least
- * one truck load and otherwise only special items and access charges: $750 per truck, no Labor line.
+ * one truck load and otherwise only special items and access charges: $1,000 per truck, no Labor line.
  */
 export const BUILDER_LABOR_VERSION = 2;
 export const HAULING_GROUPS = Object.freeze(['junk', 'special', 'access']);
@@ -616,7 +616,7 @@ export const builderJunkOnly = lines => Array.isArray(lines) && lines.some(line 
  * plan "Customer sorts with crew" or "Crew stages keep / donate / haul zones", with the reset of what stays: the fullness
  * minutes the labor estimate counts with a garage cleaning base), the cleaning add-ons, shelving and totes the Finish step
  * sold, and pest-waste cleanup. "Everything goes" and "Customer labels before arrival" are junk removal: the customer
- * decided, the crew loads. A junk-only builder quote ($750 per truck, no Labor line) prices none of this, so it is signed
+ * decided, the crew loads. A junk-only builder quote ($1,000 per truck, no Labor line) prices none of this, so it is signed
  * only on a walkthrough that records none of it (walkthrough-handoff.js saveWalkthroughHandoff, which reads the signed
  * plan's scope) and sent only on one whose saved capture records none (junkOnlyGarageWork). The walkthrough page
  * (crew/gameplan.html) and the builder (crew/quote-draft.js) apply the same rule. unknownQty: shelving or totes with no
