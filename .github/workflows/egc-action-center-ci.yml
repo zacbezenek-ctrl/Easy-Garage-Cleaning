@@ -308,6 +308,8 @@ jobs:
         run: python tests/browser/test_open_quotes_ui.py
       - name: Crew staffing at 390 and 1280 px, roster health, unstaffed jobs and Staff waiting jobs
         run: python tests/browser/test_crew_staffing_ui.py
+      - name: Manager slip alerts at 390 px, one per slip, the tap opens the job's Field agenda row
+        run: python tests/browser/test_manager_slip_alerts_ui.py
       - name: Crew pre-job customer texts are idempotent and never re-sent
         run: python tests/browser/test_prejob_sms_ui.py
       - name: Server-rendered estimate, invoice and receipt documents on a phone

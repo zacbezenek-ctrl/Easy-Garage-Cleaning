@@ -6,4 +6,4 @@
 import '../../employee-arrival-deadline.js';
 
 const rule = globalThis.EGCArrivalDeadline;
-export const { flags, visitRow, arrivalDeadline, enRouteDeadline, startAt, denverDate, denverInstant, LATE_GRACE_MS, EN_ROUTE_LEAD_MS } = rule;
+export const { flags, underway, visitRow, arrivalDeadline, enRouteDeadline, startAt, denverDate, denverInstant, LATE_GRACE_MS, EN_ROUTE_LEAD_MS } = rule;
