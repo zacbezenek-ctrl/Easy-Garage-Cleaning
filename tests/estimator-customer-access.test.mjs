@@ -21,7 +21,7 @@ const otherSales = { ...sales, user: 'sales.other', displayName: 'Synthetic Sale
 const phoneRole = { ...sales, user: 'phone.person', staffRoles: ['phone'] };
 
 // A stored customer whose record id embeds its CRM contact, as provider-created customers' ids do.
-const STORED = { id: 'ghl_provider7', revision: 's1', name: 'Stored Homeowner', phone: '9705550142', email: 'stored@example.invalid', address: '742 Synthetic Way', highlevelContactId: 'provider7', createdBy: 'zacb' };
+const STORED = { id: 'ghl_provider7', revision: 's1', name: 'Jordan Example', phone: '9705550142', email: 'stored@example.invalid', address: '742 Synthetic Way', highlevelContactId: 'provider7', createdBy: 'zacb' };
 const SECRETS = ['ghl_provider7', 'provider7', 'stored@example.invalid', '742 Synthetic Way', '9705550142'];
 const leaks = text => SECRETS.filter(secret => text.includes(secret));
 
@@ -29,7 +29,7 @@ function fixture() {
   const rows = new Map([
     ['customers/ghl_provider7', structuredClone(STORED)],
     // The stored customer's walkthrough, assigned to the estimator (their own visit).
-    ['jobs/w1', { id: 'w1', revision: 'w1r', type: 'walkthrough', status: 'scheduled', pipelineStatus: 'scheduled', customerId: 'ghl_provider7', customer: 'Stored Homeowner', date: '2026-09-22', time: '11:00', endTime: '12:00', assignedCrew: [] }],
+    ['jobs/w1', { id: 'w1', revision: 'w1r', type: 'walkthrough', status: 'scheduled', pipelineStatus: 'scheduled', customerId: 'ghl_provider7', customer: 'Jordan Example', date: '2026-09-22', time: '11:00', endTime: '12:00', assignedCrew: [] }],
   ]);
   let n = 0;
   const list = prefix => [...rows].filter(([key]) => key.startsWith(prefix)).map(([, value]) => structuredClone(value));
@@ -56,10 +56,10 @@ const prepare = (f, actor, query) => call(handoff(f, actor).get({ request: new R
 const sign = (f, actor, body) => call(handoff(f, actor).post({ request: json('/api/walkthrough-handoff', body), env: ROLES }));
 
 // What an estimator at a garage types: the phone, and the name they were given.
-const typed = (name = 'Stored Homeowner') => ({ name, phone: '(970) 555-0142', email: '', address: '', highlevelContactId: '' });
-const draft = (name = 'Stored Homeowner') => ({ client: { name, phone: '9705550142', email: '', address: '1 Typed Street', highlevel_contact_id: '' }, title: 'Garage reset', scope: 'Cleanout and reset.', valid_until: '2026-10-06', catalog_version: '2026-09-22.1', crew_size: 2,
+const typed = (name = 'Jordan Example') => ({ name, phone: '(970) 555-0142', email: '', address: '', highlevelContactId: '' });
+const draft = (name = 'Jordan Example') => ({ client: { name, phone: '9705550142', email: '', address: '1 Typed Street', highlevel_contact_id: '' }, title: 'Garage reset', scope: 'Cleanout and reset.', valid_until: '2026-10-06', catalog_version: '2026-09-22.1', crew_size: 2,
   line_items: [{ id: 'cleanout', kind: 'service', name: 'Garage cleanout and reset', description: 'Sorting, hauling and disposal', quantity: 1, unitCents: 90000, totalCents: 90000 }] });
-const plan = (name = 'Stored Homeowner') => ({ client: { name, phone: '9705550142', email: '', address: '1 Typed Street', highlevel_contact_id: '' }, quote: { title: 'Garage reset', total: 1400, deposit: 350, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 },
+const plan = (name = 'Jordan Example') => ({ client: { name, phone: '9705550142', email: '', address: '1 Typed Street', highlevel_contact_id: '' }, quote: { title: 'Garage reset', total: 1400, deposit: 350, job_date: '2026-09-24', start_time: '09:00', end_time: '12:00', estimated_duration_min: 180 },
   acceptance: { accepted_at: '2026-09-22T17:45:00.000Z', accepted_by: name, signature_captured: true, method: 'in_person_signature', terms_version: '2026-10-deposit25' }, signature: 'data:image/png;base64,iVBORw0KGgo=', terms_version: '2026-10-deposit25', terms_accepted: true,
   photos: { before: 2 }, scope: { keep_items: 'Blue bicycle' }, discovery: { success: 'Park the car' }, logistics: { crew_size: 2 }, internal_notes: 'Synthetic brief', client_checklists: { preJob: [], postJob: [] }, notes: '' });
 
@@ -94,7 +94,7 @@ test('a phone number alone no longer reveals or attaches a stored customer (reso
 });
 
 test('the name is checked again at save: a reference under an agreeing name cannot carry a different name onto the quote', async () => {
-  const f = fixture(), resolved = await resolve(f, sales, typed('stored homeowner'));
+  const f = fixture(), resolved = await resolve(f, sales, typed('jordan example'));
   assert.equal(resolved.status, 200);
   for (const name of ['Anyone At All', 'Another Person']) {
     const saved = await saveDraft(f, sales, { requestId: randomUUID(), customerId: resolved.body.customer.id, draft: draft(name) });
@@ -116,7 +116,7 @@ test('under the right name the quote attaches, and every answer stays masked: no
   const saved = await saveDraft(f, sales, body); seen.push(saved.text);
   assert.equal(saved.status, 200, saved.text);
   const id = saved.body.job.id;
-  assert.deepEqual([saved.body.job.customerId, f.job(id).customerId, f.job(id).authorCustomerRef], [ref, 'ghl_provider7', { ref, by: 'sales.person' }]);
+  assert.deepEqual([saved.body.job.customerId, f.job(id).customerId, f.job(id).authorCustomerRef], [ref, 'ghl_provider7', { ref, by: 'sales.person', name: 'Jordan Example' }]);
   const read = await readDraft(f, sales, id); seen.push(read.text);
   assert.deepEqual([read.status, read.body.job.customerId], [200, ref]);
   const prepared = await prepare(f, sales, { jobId: id }); seen.push(prepared.text);
@@ -177,7 +177,7 @@ test('replays and idempotency are unchanged: the same request answers the same w
   const f = fixture(), resolveId = randomUUID();
   const first = await resolve(f, sales, typed(), resolveId), again = await resolve(f, sales, typed(), resolveId);
   assert.deepEqual([again.status, again.body.replayed, again.body.customer], [200, true, first.body.customer]);
-  const conflict = await resolve(f, sales, typed('Stored H. Homeowner'), resolveId);
+  const conflict = await resolve(f, sales, typed('Jordan Q. Example'), resolveId);
   assert.deepEqual([conflict.status, conflict.body.code], [409, 'customer_resolve_idempotency_conflict']);
   const body = { requestId: randomUUID(), customerId: first.body.customer.id, draft: draft() };
   const saved = await saveDraft(f, sales, body), replayed = await saveDraft(f, sales, body);
@@ -190,4 +190,49 @@ test('replays and idempotency are unchanged: the same request answers the same w
   const signed = await sign(f, sales, signBody), resigned = await sign(f, sales, signBody);
   assert.deepEqual([resigned.status, resigned.body.replayed, resigned.body.job.customerId, resigned.body.job.highlevelContactId], [200, true, first.body.customer.id, '']);
   assert.deepEqual(leaks(signed.text + resigned.text), []);
+});
+
+test('a phone and part of the name never reveal the stored name: the estimator is shown only the name they typed', async () => {
+  const f = fixture(), seen = [];
+  // One word, or a full name whose last word is not the stored surname, goes to the office; each refusal is audited.
+  for (const name of ['Jordan', 'Example', 'Jordan Smith']) {
+    const refused = await resolve(f, sales, typed(name)); seen.push(refused.text);
+    assert.deepEqual([refused.status, refused.body.code], [409, 'customer_resolve_identity_review'], name);
+  }
+  const audits = [...f.rows].filter(([key]) => key.startsWith('hub_audit/')).map(([, row]) => row);
+  assert.deepEqual([audits.length, audits.every(row => row.action === 'customer.identity_review' && row.actor.id === 'sales.person' && row.entity.id === 'ghl_provider7')], [3, true]);
+  // A household member's full name (same surname) attaches, but every answer names the customer as typed.
+  const resolved = await resolve(f, sales, typed('Casey Example')); seen.push(resolved.text);
+  assert.equal(resolved.status, 200);
+  const saved = await saveDraft(f, sales, { requestId: randomUUID(), customerId: resolved.body.customer.id, sourceWalkthroughId: 'w1', sourceRevision: 'w1r', draft: draft('Casey Example') }); seen.push(saved.text);
+  assert.deepEqual([saved.status, saved.body.job.customer], [200, 'Casey Example'], saved.text);
+  const id = saved.body.job.id;
+  const read = await readDraft(f, sales, id); seen.push(read.text);
+  assert.equal(read.body.job.customer, 'Casey Example');
+  f.job(id).date = '2026-10-02';
+  const preview = await call(drafts(f, sales).post({ request: json('/api/quote-draft', { action: 'send_preview', jobId: id, expectedRevision: f.job(id).revision }), env: ROLES })); seen.push(preview.text);
+  assert.equal(preview.status, 200, preview.text);
+  assert.match(preview.body.summary, /to Casey Example/);
+  const prepared = await prepare(f, sales, { jobId: id }); seen.push(prepared.text);
+  assert.equal(prepared.status, 200);
+  const all = seen.join('\n');
+  assert.equal(/Jordan/i.test(all), false, 'the stored first name reaches no answer');
+  assert.deepEqual(leaks(all), []);
+  // The office still sees the stored customer.
+  assert.equal((await readDraft(f, owner, id)).body.job.customer, 'Jordan Example');
+});
+
+test('a stored name with no name words attaches under no typed name, and a CRM contact an estimator adds is not theirs in full', async () => {
+  const f = fixture();
+  f.rows.get('customers/ghl_provider7').name = 'The Homeowner Family';
+  for (const name of ['The Homeowner Family', 'Casey Example']) {
+    const refused = await resolve(f, sales, typed(name));
+    assert.deepEqual([refused.status, refused.body.code], [409, 'customer_resolve_identity_review'], name);
+  }
+  // A customer created from a CRM contact the estimator picked keeps the CRM's details masked from them.
+  const g = fixture();
+  g.rows.set('customers/crm_made', { id: 'crm_made', revision: 'm1', name: 'Riley Sample', phone: '9705550188', email: 'crm@example.invalid', address: '9 CRM Road', highlevelContactId: 'provider9', createdBy: 'sales.person', source: 'verified_provider_contact' });
+  g.rows.set('customers/typed_made', { id: 'typed_made', revision: 't1', name: 'Avery Sample', phone: '9705550189', email: 'own@example.invalid', address: '10 Own Road', createdBy: 'sales.person', source: 'manager_intake' });
+  const { fullCustomerAccess } = await import('../functions/_lib/estimator-customer-access.js');
+  assert.deepEqual([await fullCustomerAccess(g.rows.get('customers/crm_made'), sales, { env: ROLES }), await fullCustomerAccess(g.rows.get('customers/typed_made'), sales, { env: ROLES })], [false, true]);
 });

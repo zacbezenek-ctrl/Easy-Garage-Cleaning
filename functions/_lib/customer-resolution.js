@@ -1,7 +1,7 @@
 import { requireDispatcher } from './dispatch-service.js';
 import { customerIdentityFields, customerSearchFields } from './customer-identity.js';
-import { customerRef, maskedCustomer } from './estimator-customer-access.js';
-import { namesAgree } from './knock-bridge.js';
+import { customerRef, estimatorNamesAgree, maskedCustomer } from './estimator-customer-access.js';
+import { auditWrite } from './hub-audit.js';
 
 const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const safeId=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(value)&&!/^(_egc_|secure_)/.test(value);
@@ -58,7 +58,8 @@ export async function verifiedHighLevelContact(env,id,fetcher=fetch){
 // It may return {dispatcher:false} (requireQuoteAuthor): that caller gets masked().
 // restricted (an estimator: estimator-customer-access.js restrictedAuthor) also gets no record id, only the
 // reference cref_<this request>, and an existing customer under a name that does not agree with the typed one is
-// refused for office review instead of being selected.
+// refused for office review instead of being selected; each refusal leaves a Hub audit row (who, which customer, when)
+// so repeated guessing is visible to the office.
 export async function resolveCustomer(store,session,input,{verifyContact,now=new Date().toISOString(),authorize=requireDispatcher,restricted=false}={}){
   const access=authorize(session);
   if(!plain(input)||Object.keys(input).some(key=>!['requestId','customer'].includes(key))||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(input.requestId||''))throw fail('invalid_request','Customer resolution needs a unique request ID and customer details.');
@@ -82,7 +83,10 @@ export async function resolveCustomer(store,session,input,{verifyContact,now=new
     current=await store.read('customers',current.id);
     if(!current)throw fail('customer_changed','The customer changed during lookup. Retry the original request.',409);
     if(provider&&current.highlevelContactId&&current.highlevelContactId!==provider)throw fail('provider_link_conflict','These contact details belong to a different CRM-linked customer. Review the identity before booking.',409);
-    if(restricted&&current.createdBy!==session.user&&!namesAgree(current.name,wanted.name))throw fail('identity_review','This phone or email belongs to an existing customer under a different name. Ask the office to attach this quote to the right customer.',409);
+    if(restricted&&current.createdBy!==session.user&&!estimatorNamesAgree(current.name,wanted.name)){
+      try{await store.commit([auditWrite({actor:{id:session.user,kind:'human',role:session.role},via:'hub',action:'customer.identity_review',entity:{collection:'customers',id:current.id},requestId:input.requestId,reason:'estimator_name_mismatch',now})]);}catch{}
+      throw fail('identity_review','This phone or email belongs to an existing customer under a different name. Ask the office to attach this quote to the right customer.',409);
+    }
     if(!exact.length&&((phone(wanted.phone)&&phone(current.phone)&&phone(wanted.phone)!==phone(current.phone))||(email(wanted.email)&&email(current.email)&&email(wanted.email)!==email(current.email))))throw fail('contact_conflict','The phone and email point to conflicting customer details. Review the customer before booking.',409);
   }
   const id=current?.id||(provider?'ghl_'+provider:'customer_'+(await hash({phone:phone(wanted.phone),email:email(wanted.email)})).slice(0,40));

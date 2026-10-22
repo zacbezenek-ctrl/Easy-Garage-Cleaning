@@ -1,6 +1,6 @@
 import { can } from './staff-roles.js';
 import { assignmentKey, createJobAssignmentAccess } from './job-assignment.js';
-import { namesAgree } from './knock-bridge.js';
+import { nameWords, namesAgree } from './knock-bridge.js';
 
 /*
  * What an estimator (a quote author who is neither a dispatcher nor a booker) may learn about a stored customer.
@@ -10,8 +10,9 @@ import { namesAgree } from './knock-bridge.js';
  * by them, or the customer of a job the office assigned to them. Every other customer reaches them masked, and by an
  * opaque reference instead of its record id (customer-resolve hands out `cref_<resolve request>`, bound to the
  * estimator's own resolve receipt), so a phone number alone never reveals or attaches someone else's record.
- * Attaching such a customer to a quote also needs the typed name to agree with the stored one (the Knock bridge's
- * namesAgree rule); otherwise nothing is saved and the office attaches it.
+ * Attaching such a customer to a quote also needs the typed name to agree with the stored one (estimatorNamesAgree);
+ * otherwise nothing is saved and the office attaches it. What such an estimator is shown as the customer's name is the
+ * name they typed, never the stored one.
  * A reference does not expire: only the estimator who resolved it can use it, and they can resolve again at any time,
  * so an expiry would only strand a quote saved offline.
  */
@@ -25,6 +26,13 @@ const same = (left, right) => Boolean(assignmentKey(left)) && assignmentKey(left
 export const customerRef = requestId => 'cref_' + String(requestId).toLowerCase().replace(/-/g, '');
 export const isCustomerRef = value => typeof value === 'string' && REF.test(value);
 const receiptOf = ref => ref.slice(5).replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+
+/** The Knock bridge's namesAgree, stricter for an estimator: a full typed name (two words or more) whose last word is a
+ * word of the stored name. One word, or a stored name with no name words ('The Homeowner Family'), goes to the office. */
+export function estimatorNamesAgree(storedName, typedName) {
+  const stored = nameWords(storedName), typed = nameWords(typedName);
+  return stored.length > 0 && typed.length >= 2 && stored.includes(typed[typed.length - 1]) && namesAgree(storedName, typedName);
+}
 
 /** access: requireQuoteAuthor's (or requireCustomerResolver's) answer for this actor. */
 export const restrictedAuthor = (actor, access, env = {}) => access?.author === true && access.dispatcher !== true && !can(actor, 'schedule.book', env);
@@ -42,14 +50,17 @@ async function walkthroughVisible(source, actor, env) {
 /** Whether an estimator sees this customer in full: their own customer, their walkthrough's or their assigned job's. */
 export async function fullCustomerAccess(customer, actor, { env = {}, source = null, job = null } = {}) {
   if (!plain(customer) || !customer.id) return false;
-  if (same(customer.createdBy, actor.user)) return true;
+  // A customer the estimator created from a CRM contact is the CRM's record, not something they typed: not theirs in full.
+  if (same(customer.createdBy, actor.user) && customer.source !== 'verified_provider_contact') return true;
   if (source && source.customerId === customer.id && await walkthroughVisible(source, actor, env)) return true;
   return Boolean(job) && job.customerId === customer.id && !job.recordType && await createJobAssignmentAccess(env, actor).assigned(job);
 }
 
-/** The reference this estimator saved a job with (authorCustomerRef), or ''. */
-export const jobRef = (job, actor) => plain(job?.authorCustomerRef) && isCustomerRef(job.authorCustomerRef.ref) && same(job.authorCustomerRef.by, actor.user) ? job.authorCustomerRef.ref : '';
-export const refPatch = (pick, actor) => pick?.ref ? { authorCustomerRef: { ref: pick.ref, by: actor.user } } : {};
+/** The reference this estimator saved a job with (authorCustomerRef), or ''; typedName: the name they typed with it. */
+const ownRef = (job, actor) => plain(job?.authorCustomerRef) && isCustomerRef(job.authorCustomerRef.ref) && same(job.authorCustomerRef.by, actor.user);
+export const jobRef = (job, actor) => ownRef(job, actor) ? job.authorCustomerRef.ref : '';
+const typedName = (job, actor) => ownRef(job, actor) && typeof job.authorCustomerRef.name === 'string' ? job.authorCustomerRef.name.slice(0, 200) : '';
+export const refPatch = (pick, actor, name = '') => pick?.ref ? { authorCustomerRef: { ref: pick.ref, by: actor.user, name: String(name || '').slice(0, 200) } } : {};
 
 /**
  * The stored customer a quote save names (value: a record id or a cref_ reference) and what the author may see of it:
@@ -68,17 +79,18 @@ export async function authorCustomer(store, actor, access, value, { env = {}, cl
   if (!restrictedAuthor(actor, access, env)) return { customer, restricted: false, full: true, ref };
   const full = await fullCustomerAccess(customer, actor, { env, source, job });
   if (!full && !ref) throw fail(prefix + 'customer_ref_required', 'Find this customer again before saving the quote.', 403);
-  if (!full && plain(customer) && !namesAgree(customer.name, clientName)) throw fail(prefix + 'customer_review_required', 'This phone or email belongs to an existing customer under a different name. Nothing was saved. Ask the office to attach this quote to the right customer.', 409);
+  if (!full && plain(customer) && !estimatorNamesAgree(customer.name, clientName)) throw fail(prefix + 'customer_review_required', 'This phone or email belongs to an existing customer under a different name. Nothing was saved. Ask the office to attach this quote to the right customer.', 409);
   return { customer, restricted: true, full, ref };
 }
 
-/** What an author is shown of a saved job's customer: {restricted, full, ref}, read from the stored records. */
+/** What an author is shown of a saved job's customer: {restricted, full, ref, name}, read from the stored records. name
+ * is what to show as the customer's name when not full: the name this estimator typed, never the stored one. */
 export async function jobCustomerAccess(store, actor, access, job, { env = {} } = {}) {
-  if (!restrictedAuthor(actor, access, env)) return { restricted: false, full: true, ref: '' };
-  const ref = jobRef(job, actor);
+  if (!restrictedAuthor(actor, access, env)) return { restricted: false, full: true, ref: '', name: '' };
+  const ref = jobRef(job, actor), name = typedName(job, actor);
   const customer = job?.customerId ? await store.read('customers', job.customerId) : null;
   const source = job?.sourceWalkthroughId ? await store.read('jobs', job.sourceWalkthroughId) : null;
-  return { restricted: true, full: await fullCustomerAccess(customer, actor, { env, source, job }), ref };
+  return { restricted: true, full: await fullCustomerAccess(customer, actor, { env, source, job }), ref, name };
 }
 
 /** Whether an author may open a saved job's quote: always, unless restricted; then a draft they started or saved, a

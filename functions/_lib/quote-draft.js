@@ -205,7 +205,7 @@ function capturePatch(job, draft, actor, now) {
 export function quoteDraftView(job, seen = null) {
   const estimate = plain(job?.estimate) ? job.estimate : {}, lines = Array.isArray(estimate.lineItems) ? normalizeLineItems(estimate.lineItems).lineItems : [];
   return {
-    id: job.id, revision: job.revision, customerId: seen ? shownCustomerId(job.customerId, seen) : job.customerId || '', customer: String(job.customer || '').slice(0, 200), projectId: job.projectId || '', sourceWalkthroughId: job.sourceWalkthroughId || '', status: stage(job), quoteStatus: job.quoteStatus || '',
+    id: job.id, revision: job.revision, customerId: seen ? shownCustomerId(job.customerId, seen) : job.customerId || '', customer: seen && !seen.full ? String(seen.name || '').slice(0, 200) : String(job.customer || '').slice(0, 200), projectId: job.projectId || '', sourceWalkthroughId: job.sourceWalkthroughId || '', status: stage(job), quoteStatus: job.quoteStatus || '',
     estimate: { number: estimate.number || '', revision: Number.isSafeInteger(estimate.revision) ? estimate.revision : null, status: estimate.status || 'draft', amountCents: Number.isSafeInteger(estimate.amountCents) ? estimate.amountCents : null, depositRequiredCents: Number.isSafeInteger(estimate.depositRequiredCents) ? estimate.depositRequiredCents : null, validUntil: validDate(estimate.validUntil) ? estimate.validUntil : null, scope: String(estimate.scope || '').slice(0, 1600), sentAt: estimate.sentAt || null, sentRevision: Number.isSafeInteger(estimate.sentRevision) ? estimate.sentRevision : null, fingerprint: estimateFingerprint(estimate),
       ...(estimate.pricingSettingsVersion ? { catalogVersion: estimate.catalogVersion, pricingSettingsVersion: estimate.pricingSettingsVersion, depositPct: estimate.depositPct } : {}),
       ...(estimate.commercialPolicy !== undefined ? { commercialPolicy: estimate.commercialPolicy, depositPct: estimate.depositPct } : {}),
@@ -341,7 +341,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
       editable(job);
       // An in-person signature is revised only through a new signed walkthrough handoff.
       if (approved(job.estimate?.status) && job.estimate?.acceptanceMethod === 'in_person_signature') throw fail('signed', 'The customer signed this quote in person. Start a signed revision in the walkthrough instead.');
-      const plan = quotePatch(job, draft, actor, now, job.id), saved = record(job, plan, job.id), patch = { ...plan.patch, ...capturePatch(job, draft, actor, now), ...serviceTypeRevision(job, junkOnlyQuote), quoteDraft: saved.quoteDraft, ...refPatch(named, actor), updatedAt: now };
+      const plan = quotePatch(job, draft, actor, now, job.id), saved = record(job, plan, job.id), patch = { ...plan.patch, ...capturePatch(job, draft, actor, now), ...serviceTypeRevision(job, junkOnlyQuote), quoteDraft: saved.quoteDraft, ...refPatch(named, actor, draft.client.name), updatedAt: now };
       // FUN-03: a material revision ends the job's live sale (a portal approval of
       // an earlier revision), as the Hub estimate editor does: deal.approval_superseded
       // and the cleared funnelSale are in this revision's commit.
@@ -359,7 +359,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
         ...(retired ? [retired] : []),
         ...crossing.writes,
       ]);
-    } else await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote, ref: refPatch(named, actor) });
+    } else await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote, ref: refPatch(named, actor, draft.client.name) });
   } catch (error) {
     if (FINAL.has(error.code)) throw error;
     const recovered = await replay(false).catch(problem => { if (FINAL.has(problem.code)) throw problem; return null; });
@@ -521,9 +521,11 @@ export async function previewQuoteSend(store, actor, input, now = new Date().toI
   sendable(job, now, env);
   await compositeSendable(job, env, compositeState);
   const delivery = deliveryPlan(job, env), estimate = sendingEstimate(job.estimate), paymentSchedule = await paymentScheduleFor(store,job,estimate), sending = { ...job, estimate };
-  const summary = `Send ${estimate.number} revision ${estimate.revision} (${usd(estimate.amountCents)}) to ${String(job.customer || 'the customer').slice(0, 80)}`+(paymentSchedule?'. '+scheduleSummary(paymentSchedule,estimate.commercialPolicy):'');
+  // An estimator who may not see the customer is shown the name they typed (jobCustomerAccess), never the stored one.
+  const seen = await seenBy(store, actor, access, env)(job), shownName = seen.full ? job.customer : seen.name;
+  const summary = `Send ${estimate.number} revision ${estimate.revision} (${usd(estimate.amountCents)}) to ${String(shownName || 'the customer').slice(0, 80)}`+(paymentSchedule?'. '+scheduleSummary(paymentSchedule,estimate.commercialPolicy):'');
   const confirmation = await issueConfirmation(env, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding(sending, delivery, paymentSchedule), summary, now });
-  return { ok: true, authority: 'employee_hub', job: quoteDraftView(paymentSchedule?{...job,estimate:{...estimate,paymentSchedule}}:sending, await seenBy(store, actor, access, env)(job)), delivery, summary: confirmation.summary, confirmToken: confirmation.token, expiresAt: confirmation.expiresAt };
+  return { ok: true, authority: 'employee_hub', job: quoteDraftView(paymentSchedule?{...job,estimate:{...estimate,paymentSchedule}}:sending, seen), delivery, summary: confirmation.summary, confirmToken: confirmation.token, expiresAt: confirmation.expiresAt };
 }
 
 /**
