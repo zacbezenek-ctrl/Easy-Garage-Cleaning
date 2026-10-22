@@ -102,3 +102,17 @@ self.addEventListener('fetch', event => {
   event.respondWith(answer);
   event.waitUntil(settled.then(() => killSwitch()).catch(() => {}));
 });
+
+// A tapped Hub alert (employee-suite.js showBrowserAlert) closes and brings the Hub forward: an open Hub window is
+// focused as it is, so nothing typed there is lost; otherwise the Hub opens on the screen the alert names.
+const ALERT_VIEWS = new Set(['my_day', 'crew_chat']);
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const view = ALERT_VIEWS.has(event.notification.data?.view) ? event.notification.data.view : 'my_day';
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const hub = windows.find(client => { try { return /^\/employee(?:\.html)?\/?$/.test(new URL(client.url).pathname); } catch { return false; } });
+    if (hub) return hub.focus();
+    return self.clients.openWindow(`/employee?view=${view}`);
+  })().catch(() => {}));
+});
