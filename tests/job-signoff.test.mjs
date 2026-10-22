@@ -10,6 +10,7 @@ import { dispatchStorage } from '../functions/_lib/dispatch-storage.js';
 import { SIGNOFF_FIELDS, completedJob, leadFollowUps, requireSignoffManager, signoffCommand, signoffList, workedByEvents, workedJob, workerMatcher } from '../functions/_lib/job-signoff.js';
 import { jobSignoffHandlers } from '../functions/api/job-signoff.js';
 import { fieldCommand } from '../functions/_lib/field-execution.js';
+import { fieldVisitCommand } from '../functions/_lib/field-execution-visits.js';
 
 const OWNER = { user: 'ZacB', displayName: 'Synthetic Owner', role: 'owner', businessAccess: true };
 const MANAGER = { user: 'TylerG', displayName: 'Synthetic Manager', role: 'manager', businessAccess: true };
@@ -220,4 +221,19 @@ test('a manager who moved the job through the field and took its photos while of
   const office = [{ id: id(91), action: 'resolve_issue', actorId: 'TylerG', state: 'applied' }, { id: id(92), action: 'photo_visibility', actorId: 'TylerG', state: 'applied' }, { id: id(93), action: 'photo', category: 'walkthrough', actorId: 'TylerG', state: 'applied' }, { id: id(94), action: 'status', actorId: 'TylerG', state: 'pending' }];
   assert.equal(workedByEvents(office, as(MANAGER)), false);
   assert.equal(workedByEvents(events, as(OWNER)), false, 'another person\'s field work is not theirs');
+});
+
+test('a manager off the crew who ended a day of a multi-day job cannot sign it off once the visit names are rewritten', async () => {
+  // The real multi-day end of day (FIELD_MULTIDAY_VISITS): it writes the visit's endedBy and activityBy and an end_day entry.
+  const base = job('md', { status: 'in_progress', pipelineStatus: 'in_progress', date: '2026-10-20', endDate: '2026-10-21', completedAt: null, completedBy: null, fieldExecution: { activity: 'in_progress' } });
+  const ended = fieldVisitCommand(base, MANAGER, { requestId: id(80), action: 'end_day', notes: 'Synthetic day one finished; bay two remains.' }, '2026-10-21T00:30:00.000Z');
+  assert.equal(ended.event.action, 'end_day');
+  // Later the crew finishes, and a browser edit rewrites the visit's names off the manager.
+  const visits = Object.fromEntries(Object.entries(ended.patch.fieldExecution.visits).map(([day, visit]) => [day, { ...visit, endedBy: 'crew.one', startedBy: 'crew.one' }]));
+  const worked = { ...base, ...ended.patch, status: 'completed', pipelineStatus: 'completed', ...done('2026-10-21T22:00:00.000Z'), fieldExecution: { ...ended.patch.fieldExecution, ...done('2026-10-21T22:00:00.000Z').fieldExecution, activityBy: 'crew.one', visits } };
+  assert.equal(workedJob(worked, as(MANAGER)), false, 'the rewritten fields no longer show the manager');
+  const fs = firestoreRest({ 'jobs/md': worked, [`jobs/md/fieldEvents/${ended.event.id}`]: ended.event });
+  const handlers = jobSignoffHandlers({ session: async () => MANAGER, dispatch: env => ({ ...dispatchStorage(env, fs.fetcher), roster: async () => ROSTER }), now: () => new Date(NOW) });
+  const response = await handlers.post({ request: new Request('https://easygaragecleaning.com/api/job-signoff', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://easygaragecleaning.com' }, body: JSON.stringify({ action: 'sign_off', jobId: 'md', requestId: id(81), expected: 'none' }) }) });
+  assert.deepEqual([response.status, (await response.json()).code], [403, 'job_signoff_self']);
 });

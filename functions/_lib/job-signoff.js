@@ -63,10 +63,10 @@ export function workerMatcher(session, identities = [session?.user]) {
 }
 
 // Field work in the job's audit log (jobs/{id}/fieldEvents, server-only, so no SDK edit to the job hides it): moving the
-// job through its stages, checklist items, materials, completing it, and job photos. Office actions on the same log (notes,
+// job through its stages, ending a day of a multi-day job, checklist items, materials, completing it, and job photos. Office actions on the same log (notes,
 // resolving an issue, the checklist setup, customer photo sharing, purchase marks, completion sync, the signed
 // walkthrough's reference photos) are supervision, not field work.
-const FIELD_WORK = new Set(['status', 'checklist', 'material', 'complete', 'photo']);
+const FIELD_WORK = new Set(['status', 'end_day', 'checklist', 'material', 'complete', 'photo']);
 export const fieldWorkEvent = event => record(event) && event.state === 'applied' && FIELD_WORK.has(event.action) && !(event.action === 'photo' && event.category === 'walkthrough');
 /** Whether these audit-log entries show this viewer did field work on the job. */
 export const workedByEvents = (events, matcher) => (Array.isArray(events) ? events : []).some(event => fieldWorkEvent(event) && matcher.exact(event.actorId));
