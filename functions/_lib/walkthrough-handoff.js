@@ -1,6 +1,7 @@
 import { mutateDispatch } from './dispatch-service.js';
 import { saveJobReads } from './dispatch-window-reads.js';
 import { requireQuoteAuthor } from './quote-permissions.js';
+import { authorCustomer, fullCustomerAccess, jobCustomerAccess, jobRef, maskedCustomer, refPatch, restrictedAuthor, shownCustomerId } from './estimator-customer-access.js';
 import { assignmentKey, jobCrewNames } from './job-assignment.js';
 import { localInstant } from './operations-portal-records.js';
 import { customerIdentityPatch } from './customer-identity.js';
@@ -22,6 +23,7 @@ import { dispatchOpenings } from './dispatch-openings.js';
 import { catalogStorage, quoteBuilderEnabled, readCompositeState, requireCatalogOwner } from './catalog-store.js';
 import { GARAGE_SIZES, approvalRefusal, compositeApproval, compositeScope, fullnessOf, priceCompositeQuote } from './composite-quote.js';
 import { customerMoneyTotals } from './money-core.js';
+import { hasWinterSaleLine, signedWinterSale, winterSaleReaders } from './winter-sale.js';
 import { PAYMENT_TIME_ZONE, SIGNED_25_75, businessPaymentDate, quotePaymentDates, quotePaymentSchedule } from './quote-payment-policy.js';
 
 // FIX-CREW-PRICE-LEAK: every crew-visible copy of the brief is written without currency amounts.
@@ -43,8 +45,10 @@ const sameAddress = (next, saved) => addressKey(next) === addressKey(saved);
 const customerProjection = row => row ? Object.fromEntries(['id', 'name', 'phone', 'email', 'address', 'highlevelContactId'].map(key => [key, row[key] || ''])) : null;
 // The jobs a quote author who is not a dispatcher may open or revise (P2-12): a
 // quote draft, the job of the walkthrough being handed off, or a job they
-// created. Every other job stays with Dispatch.
-const authorsJob = (job, source, actor) => plain(job?.quoteDraft) || Boolean(source) && job.sourceWalkthroughId === source.id || Boolean(job?.createdBy) && job.createdBy === actor.user;
+// created. Every other job stays with Dispatch. An estimator (restricted:
+// estimator-customer-access.js) opens only a quote draft they started or saved.
+const ownDraft = (job, actor) => assignmentKey(job.quoteDraft.createdBy) === assignmentKey(actor.user) && Boolean(assignmentKey(actor.user)) || Boolean(jobRef(job, actor));
+const authorsJob = (job, source, actor, restricted = false) => plain(job?.quoteDraft) && (!restricted || ownDraft(job, actor)) || Boolean(source) && job.sourceWalkthroughId === source.id || Boolean(job?.createdBy) && job.createdBy === actor.user;
 // DISPATCH-RULES: a quote author who is not a dispatcher never sees the roster
 // (prepareHandoff), so the Dispatch rows of a save (its warnings, replayed or
 // fresh, and a refusal's details.conflicts) reach them as a code and a message
@@ -413,13 +417,18 @@ export async function prepareHandoff(store, actor, query = {}, { env = {} } = {}
     if (ids.length && !job) throw fail('job_missing', 'The linked job cannot be verified. Review its history before creating more work.');
     if (job && (!operational(job) || job.sourceWalkthroughId !== source.id || source.customerId && job.customerId !== source.customerId)) throw fail('job_mismatch', 'The existing job and walkthrough do not share the same customer and source.');
   }
-  if (job && !access.dispatcher && !authorsJob(job, source, actor)) throw fail('job_forbidden', 'Only an operations manager or owner can open this job. Start from its walkthrough or quote draft.', 403);
+  const restricted = restrictedAuthor(actor, access, env);
+  if (job && !access.dispatcher && !authorsJob(job, source, actor, restricted)) throw fail('job_forbidden', 'Only an operations manager or owner can open this job. Start from its walkthrough or quote draft.', 403);
   const customerId = job?.customerId || source?.customerId || '';
   const customer = customerId ? await store.read('customers', customerId) : null;
   if (customerId && !customer) throw fail('customer_missing', 'The linked customer is unavailable. Repair the customer link before saving.');
-  // A quote author sees the customer's contact details only through a job they may revise.
+  // A quote author sees the customer's contact details only through a job they may revise. An estimator sees them
+  // only for their own customer, an assigned walkthrough's or an assigned job's; any other customer is masked and
+  // named by their own customer reference, or not at all (estimator-customer-access.js).
+  const seen = !restricted ? { full: true, ref: '' } : job ? await jobCustomerAccess(store, actor, access, job, { env }) : { full: await fullCustomerAccess(customer, actor, { env, source }), ref: '' };
+  const shown = customer && (access.dispatcher || job) ? seen.full ? customerProjection(customer) : maskedCustomer(customer, seen.ref) : null;
   // crewAutoAssign (EGC_DISPATCH_CREW_AUTO_ASSIGN only): the page offers crew openings (handoffCrewOpenings) and Dispatch staffs the sold job.
-  return { ok: true, authority: 'employee_hub', sourceWalkthroughId: source?.id || '', sourceRevision: source?.revision || '', jobId: job?.id || '', expectedRevision: job?.revision || '', customerId: customer?.id || '', customer: access.dispatcher || job ? customerProjection(customer) : null, roster: access.dispatcher ? await store.roster() : [], ...(crewAutoAssignEnabled(env) ? { crewAutoAssign: true } : {}) };
+  return { ok: true, authority: 'employee_hub', sourceWalkthroughId: source?.id || '', sourceRevision: source?.revision || '', jobId: job?.id || '', expectedRevision: job?.revision || '', customerId: shownCustomerId(customer?.id, seen), customer: shown, roster: access.dispatcher ? await store.roster() : [], ...(crewAutoAssignEnabled(env) ? { crewAutoAssign: true } : {}) };
 }
 
 /** EGC_DISPATCH_CREW_AUTO_ASSIGN: the crew openings a quote author may offer the customer (GET
@@ -521,7 +530,7 @@ export async function releaseHandoffPrices(store, actor, input, now = new Date()
   requireRevision(job);
   if (!operational(job) || !plain(job.compositeQuote) && !plain(job.pricesPendingApproval)) throw fail('not_builder_quote', 'This job was not priced in the quote builder, so it has no builder prices to release.');
   if (CLOSED_STATES.includes(state(job))) throw fail('job_closed', 'This job is cancelled or finished, so its estimate is not sent.');
-  if (!access.dispatcher && !authorsJob(job, null, actor)) throw fail('job_forbidden', 'Only an operations manager or owner can release this job. Start from its walkthrough or quote draft.', 403);
+  if (!access.dispatcher && !authorsJob(job, null, actor, restrictedAuthor(actor, access, env))) throw fail('job_forbidden', 'Only an operations manager or owner can release this job. Start from its walkthrough or quote draft.', 403);
   if (job.revision !== input.expectedRevision) throw fail('job_changed', 'This job changed. Reload it before releasing its estimate.');
   if (!plain(job.pricesPendingApproval)) return view(job, false, false);
   const gate = releaseGate(job, plain(job.compositeQuote) ? await compositeState(env) : null, { owner: isOwner(actor) });
@@ -606,7 +615,7 @@ export async function releaseAllHeldHandoffs(store, actor, now = new Date().toIS
  * signed revision re-prices and re-approves an existing job, so an open portal
  * card checkout opened for the earlier terms is expired, or reported as
  * checkout_needs_review, exactly as a quote draft revision does. */
-export async function saveWalkthroughHandoff(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, compositeState = compositeStateDefault } = {}) {
+export async function saveWalkthroughHandoff(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, compositeState = compositeStateDefault, winterSale = winterSaleReaders } = {}) {
   const access = requireQuoteAuthor(actor, env);
   if (!plain(input) || Object.keys(input).some(key => !['actorId', 'requestId', 'customerId', 'sourceWalkthroughId', 'sourceRevision', 'jobId', 'expectedRevision', 'plan'].includes(key)) || !requestId(input.requestId) || !safeId(input.customerId) || input.jobId && !safeId(input.jobId)) throw fail('invalid_request', 'The accepted walkthrough needs a stable request and customer identity.', 400);
   if (input.actorId && input.actorId !== actor.user) throw fail('actor_changed', 'The signed-in employee changed. Reopen the original account to recover this request.', 403);
@@ -630,21 +639,25 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     savedHandoffPayload(saved, input.requestId);
     const checkout = receipt.originalJobRevision && typeof checkouts === 'function' ? await checkouts(saved).catch(() => ({ status: 'needs_review', reason: 'checkout_unconfirmed' })) : null;
     const open = checkout && !['none', 'current', 'expired'].includes(checkout.status) ? [{ code: 'checkout_needs_review', message: 'An open card checkout for the earlier quote could not be closed. Review it in Stripe before the customer pays.' }] : [];
-    return result(saved, true, [...(receipt.warnings || []), ...open], checkout, receipt.crewAuto);
+    return result(saved, true, [...(receipt.warnings || []), ...open], checkout, receipt.crewAuto, await jobCustomerAccess(store, actor, access, saved, { env }));
   }
   // A quote author who is not a dispatcher gets no crew identities (assignedCrew is
   // always []; the crew page does not read it): warnings say what staffing needs.
   // crew (EGC_DISPATCH_CREW_AUTO_ASSIGN): what Dispatch did with the sold job, {status, crewName?, priority?, date, time,
   // endTime} and, on the fresh answer, the crew openings when no crew was free; pricing: a builder quote's approval state.
-  function result(saved, replayed, warnings, checkout = null, crew = null) {
-    return { ok: true, authority: 'employee_hub', requestId: input.requestId, replayed, ...(checkout ? { checkout } : {}), job: { id: saved.id, revision: saved.revision, customerId: saved.customerId, projectId: saved.projectId, sourceWalkthroughId: saved.sourceWalkthroughId || '', date: saved.date, time: saved.time, endTime: saved.endTime, status: state(saved), assignedCrew: access.dispatcher ? saved.assignedCrew || [] : [], crewNeeded: saved.crewNeeded, highlevelContactId: saved.highlevelContactId || '', highlevelAppointmentId: saved.highlevelAppointmentId || '', highlevelOpportunityId: saved.highlevelOpportunityId || '', syncStatus: saved.syncStatus || 'pending' }, warnings: access.dispatcher ? warnings : authorRuleRows(warnings), financialState: 'accepted_quote_not_payment', fieldJobUrl: `/crew/job.html?jobId=${encodeURIComponent(saved.id)}`,
+  // seen (jobCustomerAccess): an estimator who may not see the customer gets their customer reference and no CRM contact.
+  function result(saved, replayed, warnings, checkout = null, crew = null, seen = { full: true, ref: '' }) {
+    return { ok: true, authority: 'employee_hub', requestId: input.requestId, replayed, ...(checkout ? { checkout } : {}), job: { id: saved.id, revision: saved.revision, customerId: shownCustomerId(saved.customerId, seen), projectId: saved.projectId, sourceWalkthroughId: saved.sourceWalkthroughId || '', date: saved.date, time: saved.time, endTime: saved.endTime, status: state(saved), assignedCrew: access.dispatcher ? saved.assignedCrew || [] : [], crewNeeded: saved.crewNeeded, highlevelContactId: seen.full ? saved.highlevelContactId || '' : '', highlevelAppointmentId: saved.highlevelAppointmentId || '', highlevelOpportunityId: saved.highlevelOpportunityId || '', syncStatus: saved.syncStatus || 'pending' }, warnings: access.dispatcher ? warnings : authorRuleRows(warnings), financialState: 'accepted_quote_not_payment', fieldJobUrl: `/crew/job.html?jobId=${encodeURIComponent(saved.id)}`,
       ...(plain(crew) ? { crew: { ...crew, date: saved.date || '', time: saved.time || '', endTime: saved.endTime || '' } } : {}), ...(plain(saved.compositeQuote) || plain(saved.pricesPendingApproval) ? { pricing: pricingView(saved) } : {}) };
   }
   const prior = await replay(); if (prior) return prior;
   // D-DEPOSIT: a new signature is on the current terms. A page still showing the earlier 50% terms (opened before they
   // changed) is refused, and nothing is saved; a save it made before is replayed above, on the terms it was signed on.
   if (plan.terms_version !== CURRENT_SIGNED_TERMS) throw fail('terms_outdated', 'This signature is on the earlier deposit terms (50% upfront). Nothing was saved. Reload the walkthrough so the homeowner reviews and signs the current terms: a 25% deposit now and the remaining 75% on the job day.');
-  const customer = await store.read('customers', input.customerId); requireRevision(customer);
+  // An estimator names a customer they may not see only by their own customer-resolve reference, under an agreeing name.
+  const named = await authorCustomer(store, actor, access, input.customerId, { env, clientName: plan.client.name, prefix: 'handoff_',
+    source: input.sourceWalkthroughId && safeId(input.sourceWalkthroughId) ? await store.read('jobs', input.sourceWalkthroughId) : null, job: input.jobId ? await store.read('jobs', input.jobId) : null });
+  const customer = named.customer; requireRevision(customer);
   if (!identityMatches(plan.client, customer)) throw fail('customer_mismatch', 'The signed customer details do not match the selected customer. Review the phone, email and CRM link.');
   let source = null;
   if (input.sourceWalkthroughId) {
@@ -668,7 +681,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // service address and required crew size stay exactly as Dispatch saved them.
   let placedAddress = null;
   if (previous && !access.dispatcher) {
-    if (!authorsJob(previous, source, actor)) throw fail('revision_forbidden', 'Only an operations manager or owner can revise this job. Start from its walkthrough or quote draft.', 403);
+    if (!authorsJob(previous, source, actor, restrictedAuthor(actor, access, env))) throw fail('revision_forbidden', 'Only an operations manager or owner can revise this job. Start from its walkthrough or quote draft.', 403);
     const unplaced = state(previous) === 'unscheduled' && !previous.date && !previous.time;
     if (!unplaced && (plan.quote.job_date !== previous.date || (previous.endDate || previous.date) !== plan.quote.job_date || plan.quote.start_time !== previous.time || plan.quote.end_time !== previous.endTime)) throw fail('schedule_change_forbidden', `Only an operations manager or owner can move a scheduled job. Keep its saved schedule${previous.date ? ` (${previous.date} ${previous.time || ''}–${previous.endTime || ''})` : ''} or ask Dispatch to move it.`, 403);
     if (!unplaced && !sameAddress(plan.client.address, previous.address)) throw fail('schedule_change_forbidden', `Only an operations manager or owner can change the service address of a scheduled job. Keep its saved address (${String(previous.address || 'none on file').slice(0, 200)}) or ask Dispatch to change it.`, 403);
@@ -688,9 +701,16 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // other line that differs (builderMismatch), so the quote is built again before the homeowner signs.
   const chosen = !builderOn ? null : builderSent ? signedInput.quote.composite_pricing : savedSelection(previous);
   const legacy = signedWithoutLabor(previous, chosen), selection = withSignedGarage(withSignedFullness(chosen, plan), plan);
-  let builder = null;
+  let builder = null, signedSale = null;
   if (selection) {
     builder = priceCompositeQuote(await compositeState(env), selection, { complete: true, requireLabor: !legacy });
+    // EGC_WINTER_SALE: a saved sale quote signed in person gets the server's sale line for the signing day and the booked
+    // day (winter-sale.js signedWinterSale), or is refused when it no longer qualifies (409 handoff_winter_sale_*: nothing
+    // was saved, and the page releases the request so the quote is built again).
+    try { ({ builder, record: signedSale } = await signedWinterSale(previous, builder, { quote: signedInput.quote, jobDate: plan.quote.job_date, now, env, readers: winterSale, sourceWalkthroughId: source?.id || '', actor: actor.user })); }
+    // Only the sale's own refusals are final; anything else (settings that fail verification, a read outage) stays a
+    // retryable 503 handoff_unavailable.
+    catch (error) { if (['winter_sale_ineligible', 'winter_sale_disabled'].includes(error?.code)) throw Object.assign(error, { code: `handoff_${error.code}`, status: 409 }); throw error; }
     const mismatch = builderMismatch(signedInput.quote, builder, Math.round(plan.quote.total * 100));
     if (mismatch) throw mismatch;
     // D-JUNK: a junk-only quote is $1,000 per truck with no Labor line, so it prices no garage work; the walkthrough the
@@ -781,7 +801,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       // one asked for earlier is withdrawn, until the builder's send gate releases the job (releaseHandoffPrices); every
       // customer surface withholds a held job (quote-model.js pricesPendingApproval).
       const invitation = !held ? { customerPortalInvitationRequestedAt: previous?.customerPortalInvitationRequestedAt || now } : previous?.customerPortalInvitationRequestedAt ? { customerPortalInvitationRequestedAt: null } : {};
-      Object.assign(target.patch, finance, { handoffVersion: 1, handoffRequestId: input.requestId, handoffFingerprint: fingerprint, acceptedHandoffPayload: providerPayload, sourceWalkthroughId: source?.id || '', customer: plan.client.name, phone: plan.client.phone, email: plan.client.email, scope: plan.scope, discovery: plan.discovery, logistics: plan.logistics, jobInstructions: instructions, internalNotes: plan.internal_notes, clientChecklists: plan.client_checklists, notes: plan.notes, customerNotesSummary: crewNotes || instructions.customerGoal, durationMin: (Date.parse(plan.quote.end_at) - Date.parse(plan.quote.start_at)) / 60000, estimatedDurationMin: plan.quote.estimated_duration_min, estimatedDurationHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, crewSize: plan.logistics.crew_size, photoCount: plan.photos.before, photoSyncStatus: previous?.photoSyncStatus || 'device_only', walkthroughSyncedAt: now, syncIdempotencyKey: providerPayload.idempotency_key, walkthroughAppointmentId: source?.highlevelAppointmentId || previous?.walkthroughAppointmentId || '', providerSyncOwner: 'operations', syncStatus: 'pending', ...invitation });
+      Object.assign(target.patch, finance, refPatch(named, actor, plan.client.name), { handoffVersion: 1, handoffRequestId: input.requestId, handoffFingerprint: fingerprint, acceptedHandoffPayload: providerPayload, sourceWalkthroughId: source?.id || '', customer: plan.client.name, phone: plan.client.phone, email: plan.client.email, scope: plan.scope, discovery: plan.discovery, logistics: plan.logistics, jobInstructions: instructions, internalNotes: plan.internal_notes, clientChecklists: plan.client_checklists, notes: plan.notes, customerNotesSummary: crewNotes || instructions.customerGoal, durationMin: (Date.parse(plan.quote.end_at) - Date.parse(plan.quote.start_at)) / 60000, estimatedDurationMin: plan.quote.estimated_duration_min, estimatedDurationHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, crewSize: plan.logistics.crew_size, photoCount: plan.photos.before, photoSyncStatus: previous?.photoSyncStatus || 'device_only', walkthroughSyncedAt: now, syncIdempotencyKey: providerPayload.idempotency_key, walkthroughAppointmentId: source?.highlevelAppointmentId || previous?.walkthroughAppointmentId || '', providerSyncOwner: 'operations', syncStatus: 'pending', ...invitation });
       if (typeof target.patch.operationalScope?.text === 'string') target.patch.operationalScope.text = stripCrewMoney(target.patch.operationalScope.text);
       if (soldNeedsCrew) target.patch.soldNeedsCrew = { at: now, by: actor.user, requestId: input.requestId };
       if (breakdown) target.patch.jobBreakdown = breakdown;
@@ -789,6 +809,9 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       else if (walkthroughPriced) Object.assign(target.patch, walkthroughHold(previous, actor, input.requestId, now));
       // A walkthrough-priced revision (the builder switched off) or a catalog-priced one leaves no stale builder prices behind.
       else if (plain(previous?.compositeQuote) || plain(previous?.pricesPendingApproval)) Object.assign(target.patch, { compositeQuote: null, pricesPendingApproval: null });
+      // The signed job's winter sale record: the one signed with it, else none once the signed estimate has no sale line.
+      const saleRecord = signedSale || (hasWinterSaleLine(finance.estimate.lineItems) && previous?.quoteDraft?.winterSale) || null;
+      if (plain(previous?.quoteDraft) && (saleRecord || plain(previous.quoteDraft.winterSale))) target.patch.quoteDraft = { ...(target.patch.quoteDraft || previous.quoteDraft), winterSale: saleRecord };
       const pendingNames = pricesPending ? builder.approval.blocked.map(row => row.name) : [];
       const roleWarnings = [...(crewIgnored ? [{ code: 'crew_assignment_ignored', jobId: target.id, message: 'Crew names were not saved. A manager assigns the crew in Dispatch.' }] : []), ...(soldNeedsCrew ? [{ code: 'sold_needs_crew', jobId: target.id, message: 'Sold: needs crew. A manager assigns the crew in Dispatch.' }] : []),
         ...(choiceDropped ? [{ code: 'crew_choice_unavailable', jobId: target.id, message: 'The chosen crew can no longer take this visit, so Dispatch assigned the first free crew instead.' }] : []),
@@ -831,7 +854,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // block applies, and its refusal names the rule (details.conflicts).
   const staffingLeftToDispatch = !access.dispatcher || !assignedCrew.length;
   const enforce = warning => !(staffingLeftToDispatch && warning.code === 'crew_size_short');
-  const options = { authorize: session => requireQuoteAuthor(session, env), enforce, ...(autoCrew ? { autoCrew: true } : {}) };
+  const options = { authorize: session => requireQuoteAuthor(session, env), enforce, saleChecked: true, ...(autoCrew ? { autoCrew: true } : {}) };
   let dispatched = null;
   try {
     try { dispatched = await mutateDispatch(adapter, actor, choiceInput || dispatchInput, now, choiceInput ? { ...options, crewChoice: true } : options); }

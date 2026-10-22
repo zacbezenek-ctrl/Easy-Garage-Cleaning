@@ -224,7 +224,9 @@ test('walkthrough conversion keeps canonical IDs and durable acceptance metadata
   // crew-size shortfall a warning when staffing is left to Dispatch; every other owner block still applies.
   // Updated deliberately (estimator integration): with EGC_DISPATCH_CREW_AUTO_ASSIGN on the same options also ask the
   // server to staff the job (autoCrew), and an estimator's crew opening goes as a crew choice; off, the options are as before.
-  assert.match(handoff,/const options = \{ authorize: session => requireQuoteAuthor\(session, env\), enforce, \.\.\.\(autoCrew \? \{ autoCrew: true \} : \{\}\) \};/);
+  // Updated deliberately (EGC_WINTER_SALE): saleChecked tells Dispatch the signed handoff already checked its own sale's
+  // job days (winter-sale.js signedWinterSale), so a Dispatch move of an accepted sale job is checked there instead.
+  assert.match(handoff,/const options = \{ authorize: session => requireQuoteAuthor\(session, env\), enforce, saleChecked: true, \.\.\.\(autoCrew \? \{ autoCrew: true \} : \{\}\) \};/);
   assert.match(handoff,/await mutateDispatch\(adapter, actor, choiceInput \|\| dispatchInput, now, choiceInput \? \{ \.\.\.options, crewChoice: true \} : options\)/);
   assert.match(handoff,/const staffingLeftToDispatch = !access\.dispatcher \|\| !assignedCrew\.length;\n\s*const enforce = warning => !\(staffingLeftToDispatch && warning\.code === 'crew_size_short'\);/);
   assert.match(handoff,/walkthroughHandoffs/);
@@ -413,7 +415,7 @@ test('crew tools provide a job-aware employee home and one connected workflow',(
     // WT-OUTCOME: the crew nav wraps instead of scrolling 'My Hub' off a 375 px screen, so the stylesheet tag moved;
     // D2D (2026-10-19) moved both tags again for the Door-to-door link.
     assert.match(page,/crew-brand\.css\?v=20261019d2d/);
-    assert.match(page,/hub-auth\.js\?v=20261021roles/);
+    assert.match(page,/hub-auth\.js\?v=20261021refbiz/);
   }
   const auth=read('crew/hub-auth.js');
   for(const marker of ['mountCrewNav','crew-utility','Crew home','Walkthrough','Door-to-door','canUseKnock','Pre-job','Closeout','My Hub'])assert.match(auth,new RegExp(marker));
