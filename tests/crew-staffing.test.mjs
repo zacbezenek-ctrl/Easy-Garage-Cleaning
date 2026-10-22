@@ -106,6 +106,17 @@ test('people who left do not staff a job: a departed sole assignee is no crew, a
   assert.equal(report.counts.unstaffed, 3, 'the Command center line counts them, so it never says crews are set');
 });
 
+test('a job under a name that matches no active employee (an old display name) keeps the name as stored', () => {
+  const jobs = [job('renamed', THU, { assignedCrew: undefined, assignedTo: 'Synthetic Old Name' }), job('mixed', FRI, { assignedCrew: ['c1a', 'Left Company'], crewNeeded: 2 }),
+    job('split', THU, { endDate: FRI, assignmentSegments: [{ id: 's1', date: THU, time: '10:00', endTime: '12:00', assignedCrew: ['Former Lead'] }, { id: 's2', date: FRI, time: '10:00', endTime: '12:00', assignedCrew: ['former lead', 'Other Old'] }] })];
+  const rows = unstaffedJobs(jobs, { today: TODAY, now: NOW.toISOString(), roster: ROSTER });
+  assert.deepEqual(rows.map(row => [row.jobId, row.status, row.inactive, row.unmatched]), [
+    ['renamed', 'no_crew', ['synthetic old name'], ['Synthetic Old Name']], ['split', 'no_crew', ['former lead', 'other old'], ['Former Lead', 'Other Old']], ['mixed', 'short', ['left company'], ['Left Company']]],
+    'flagged as before; the row carries each value as the job stores it (first spelling wins across segments) alongside its key');
+  assert.deepEqual(unstaffedJobs([job('legacy', THU, { assignedCrew: undefined, assignedTo: 'Synthetic c1a' })], { today: TODAY, now: NOW.toISOString(), roster: ROSTER }), [],
+    'a display name that matches one active employee still counts as that employee');
+});
+
 test('the preview counts people on legacy display-name assignments as busy', () => {
   const crews = [crew('crew_one', 'Crew 1', ['c1a', 'c1b'], { priority: 1, serviceDays: WEEKDAYS }), crew('crew_two', 'Crew 2', ['c2a'], { priority: 2, serviceDays: WEEKDAYS })];
   const jobs = [job('legacy', THU, { assignedCrew: undefined, assignedTo: 'Synthetic c1b', time: '10:00', endTime: '11:00' }), job('waiting', THU)];
