@@ -345,3 +345,49 @@ test('an estimator who created the customer record still cannot take over anothe
   const taken = await saveDraft(f, sales, { requestId: randomUUID(), customerId: added.body.customer.id, jobId: id, expectedRevision: f.job(id).revision, draft: { ...draft(), client: clientA, title: 'Reassigned' } });
   assert.equal(taken.status, 200, taken.text);
 });
+
+// The rest of a complete capture (tests/walkthrough-review.test.mjs complete()), without the customer identity.
+const captureRest = () => ({ serviceType: 'organization', scopeSummary: 'Organize the existing bins', customerConfirmed: true, addressConfirmed: true, accessReviewed: true, boundariesReviewed: true, decisionsReviewed: true, hazardsReviewed: true, damageReviewed: true,
+  measurementsReviewed: true, measurementsNeeded: false, equipmentReviewed: true, questionsReviewed: true, pricingReviewed: true, exclusions: 'None', crewSize: 2, estimatedDurationMin: 90, photoUnavailableReason: 'Customer declined photographs',
+  pricingStatus: 'needs_quote', pricingReviewNote: 'Quote to follow after stock is checked', handoffNotes: 'Keep bins labelled' });
+async function maskedCapture() {
+  const { walkthroughCaptureHandlers } = await import('../functions/api/walkthrough-capture.js');
+  const f = fixture(), resolved = await resolve(f, sales, typed('Casey Example'));
+  const saved = await saveDraft(f, sales, { requestId: randomUUID(), customerId: resolved.body.customer.id, draft: draft('Casey Example') });
+  const id = saved.body.job.id, capture = actor => walkthroughCaptureHandlers({ session: async () => actor, storage: () => f.store, now: () => new Date(NOW) });
+  const post = (actor, data, action = 'save') => call(capture(actor).post({ request: json('/api/walkthrough-capture', { action, jobId: id, requestId: randomUUID(), expectedRevision: f.job(id).walkthroughReview?.revision ?? 0, data }), env: ROLES }));
+  const get = actor => call(capture(actor).get({ request: new Request(`${SITE}/api/walkthrough-capture?jobId=${id}`), env: ROLES }));
+  return { f, id, post, get };
+}
+
+test('after the office fills in the capture, the estimator still finalizes it from what they are shown', async () => {
+  const { f, id, post, get } = await maskedCapture();
+  assert.equal((await post(owner, { ...captureRest(), customerName: 'Jordan Example', address: '742 Synthetic Way', phone: '9705550142' })).status, 200);
+  const shown = await get(sales);
+  assert.deepEqual([shown.body.review.draft.customerName, shown.body.review.draft.address], ['Casey Example', '']);
+  assert.equal(shown.body.gaps.some(gap => gap.field === 'customerName'), false, 'no "name differs" next to the name they are shown');
+  assert.equal(shown.body.gaps.some(gap => gap.field === 'address'), true, 'the blank address is theirs to fill');
+  // They fill in the address they are at and finalize what they see.
+  const finalized = await post(sales, { ...shown.body.review.draft, address: '1 Typed Street' }, 'finalize');
+  assert.equal(finalized.status, 200, finalized.text);
+  assert.equal(finalized.body.review.stage, 'finalized');
+  assert.equal(/Jordan|742 Synthetic Way/.test(finalized.text), false);
+  // An empty name stays empty for them, so "Record customer name" matches what they see.
+  const blank = await maskedCapture();
+  await blank.post(owner, { scopeSummary: 'Office note' });
+  const empty = await blank.get(sales);
+  assert.deepEqual([empty.body.review.draft.customerName ?? '', empty.body.gaps.some(gap => gap.field === 'customerName')], ['', true]);
+});
+
+test('an office resave that leaves the name, phone and address unchanged does not take them over', async () => {
+  const { f, id, post, get } = await maskedCapture();
+  // The estimator records their own name, phone and address on the capture.
+  assert.equal((await post(sales, { customerName: 'Casey Example', phone: '9705550199', address: '9 Other Road', scopeSummary: 'Shelving' })).status, 200);
+  const owned = structuredClone(f.job(id).walkthroughReview.identityBy);
+  // The office edits only the handoff notes; the gameplan resends the other fields as they are.
+  const office = await get(owner);
+  assert.equal((await post(owner, { ...office.body.review.draft, handoffNotes: 'Use the side door' })).status, 200);
+  assert.deepEqual(f.job(id).walkthroughReview.identityBy, owned);
+  const mine = await get(sales);
+  assert.deepEqual([mine.body.review.draft.customerName, mine.body.review.draft.phone, mine.body.review.draft.address, mine.body.review.draft.handoffNotes], ['Casey Example', '9705550199', '9 Other Road', 'Use the side door']);
+});
