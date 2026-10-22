@@ -259,7 +259,7 @@ export async function candidateCustomers(store, customer) {
    nothing to compare ('J', 'Mrs') never agrees with a named record. */
 export const IDENTITY_REVIEW = 'customer_identity_review';
 const NAME_FILLER = new Set(['mr', 'mrs', 'ms', 'miss', 'dr', 'jr', 'sr', 'and', 'the', 'family', 'household', 'home', 'homeowner', 'owner', 'owners', 'residence', 'llc', 'inc']);
-const nameWords = name => [...new Set(String(name || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9]+/).filter(word => word.length > 1 && !NAME_FILLER.has(word)))];
+export const nameWords = name => [...new Set(String(name || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9]+/).filter(word => word.length > 1 && !NAME_FILLER.has(word)))];
 /** Whether the Hub customer's name (hubName) and the name typed at the door (doorName) can be the same person. */
 export function namesAgree(hubName, doorName) {
   const hub = nameWords(hubName), door = nameWords(doorName);

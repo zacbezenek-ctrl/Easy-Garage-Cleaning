@@ -2,9 +2,10 @@ import { mutateDispatch } from './dispatch-service.js';
 import { saveJobReads } from './dispatch-window-reads.js';
 import { requireQuoteAuthor } from './quote-permissions.js';
 import { identityMatches } from './walkthrough-handoff.js';
+import { authorCustomer, authorOpensJob, jobCustomerAccess, refPatch, shownCustomerId } from './estimator-customer-access.js';
 import { auditWrite } from './hub-audit.js';
 import { addDays, denverToday, validDate } from './dispatch-time.js';
-import { depositCents, estimateFingerprint, estimateChanged, estimateTotals, included, junkOnlyGarageWork, normalizeLineItems, packageTotals, validateSelection } from './quote-model.js';
+import { builderJunkOnly, depositCents, estimateFingerprint, estimateChanged, estimateTotals, included, junkOnlyGarageWork, normalizeLineItems, packageTotals, validateSelection } from './quote-model.js';
 import { customerMoneyTotals, invoiceNumber } from './money-core.js';
 import { moneySnapshot } from './money-service.js';
 import { moneySupersedeWrite } from './job-funnel-events.js';
@@ -19,6 +20,8 @@ import { approvalRefusal, compositeApproval, priceCompositeQuote } from './compo
 import { normalizeUnsignedCapture, unsignedCapturePatch } from './unsigned-walkthrough-capture.js';
 import { quotePaymentSchedule, requireQuotePaymentTiming, quotePaymentDates, quotePaymentSummary, businessPaymentDate, sentQuotePaymentPolicy, snapshotQuotePaymentPolicy, PAYMENT_TIME_ZONE } from './quote-payment-policy.js';
 import { prepareWalkthroughCaptureSync, walkthroughCaptureSyncView } from './walkthrough-capture-sync.js';
+import { WINTER_SALE_LINE_ID, acceptedSaleOn, winterSaleLastDay, saleChannel, saleManHours, saleTerms, winterSaleReaders, hasWinterSaleLine, isWinterSaleLine, overrideFrom, readWinterSaleSettings, saleRequest, winterSaleCap, winterSaleDecision, winterSaleEnabled, winterSaleLine, winterSalePublic, winterSaleSettingsStorage } from './winter-sale.js';
+import { isHubOwner } from './hub-session.js';
 
 /**
  * P2-07 unsigned quote drafts and an explicit human send.
@@ -198,11 +201,70 @@ function capturePatch(job, draft, actor, now) {
   return patch;
 }
 
-/** Quote author DTO: the quote, its options and send state; never signatures, payment evidence, notes or provider IDs. */
-export function quoteDraftView(job) {
+// EGC_WINTER_SALE (winter-sale.js): what the sale's checks read (winterSaleReaders; the API adds the setter lookup).
+export { winterSaleReaders };
+const saleUsd = cents => (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+
+/**
+ * EGC_WINTER_SALE: a save that asks for the sale gets the server's decision. Eligible: the sale line (the full amount,
+ * or less where the margin floor caps it) follows the priced lines, the total drops by it and the quote expires no
+ * later than the sale's sign-by day; the line names that expiry as its accept-by day. Not eligible: the quote is saved
+ * without it and the estimator is told why. accepted (acceptedSaleOn): the customer accepted this sale by its sign-by
+ * day, so the revision keeps it on the saved terms, past that day too, still inside the job window and the margin cap.
+ * Returns {draft, record, warnings, audits}.
+ */
+async function applyWinterSale(draft, request, { job = null, actor, now, env, readers, sourceWalkthroughId = '', junkOnly = false, requestId, accepted = null }) {
+  const current = await readers.settings(env), saved = accepted ? job.quoteDraft.winterSale : null, override = overrideFrom(request, actor);
+  const settings = saved ? { ...current, ...saleTerms(saved.terms) } : current;
+  // The owner's earlier override stays with the sale the customer accepted.
+  const kept = saved?.overridden && plain(saved.override) && !override ? saved.override : null;
+  const cap = winterSaleCap({ lineItems: draft.lineItems, manHours: saleManHours(draft), junkOnly, costs: await readers.costs(env), channel: await saleChannel(env, readers, { junkOnly, sourceWalkthroughId }), settings });
+  let decision = winterSaleDecision({ settings, beforeCents: draft.totalCents, today: denverToday(new Date(now)), jobDate: job?.date || null, jobEnd: job ? winterSaleLastDay(job) : null, cap, override: override || kept, ownerOverride: isHubOwner(actor) || Boolean(kept), accepted: Boolean(accepted) });
+  if (decision.eligible && draft.lineItems.filter(included).length + 1 > MAX_INCLUDED_LINES) decision = { eligible: false, code: 'too_many_lines', reason: `Not eligible: the quote already charges ${MAX_INCLUDED_LINES} lines, the most the customer portal shows.`, overridden: false, amountCents: 0 };
+  const record = { requested: true, applied: decision.eligible, code: decision.code, reason: decision.reason, overridden: decision.overridden, amountCents: decision.amountCents, terms: saleTerms(settings), settingsRevision: saved ? saved.settingsRevision ?? null : current.revision,
+    override: decision.overridden ? override ? { reason: override.reason, by: actor.user, at: now } : kept : null, checkedAt: now, checkedBy: actor.user, ...(accepted ? { acceptedOn: accepted } : {}) };
+  if (!decision.eligible) return { draft, record, warnings: [{ code: 'winter_sale_not_applied', message: decision.reason }], audits: () => [] };
+  // The quote expires by the sign-by day (an accepted sale's revision keeps its own expiry); the line names that day.
+  const validUntil = accepted || draft.validUntil <= settings.signBy ? draft.validUntil : settings.signBy;
+  const withSale = [...draft.lineItems, winterSaleLine(settings, decision.amountCents, accepted ? settings.signBy : validUntil)];
+  const totals = estimateTotals(withSale);
+  const next = { ...draft, lineItems: withSale, totalCents: totals.totalCents, depositCents: depositCents(totals.totalCents, 50), validUntil };
+  // SEC-02: the owner's override is audited in the save's own commit (owner visibility: it records a margin decision).
+  const audits = jobId => decision.overridden && override ? [auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via: 'hub', action: 'quote.winter_sale.override', entity: { collection: 'jobs', id: jobId },
+    before: { marginCheck: cap.known ? 'capped' : cap.reason, capCents: cap.known ? cap.capCents : null }, after: { applied: true, amountCents: decision.amountCents }, requestId, reason: override.reason, visibility: 'owner', now })] : [];
+  return { draft: next, record, warnings: [{ code: 'winter_sale_applied', message: `Early-bird winter sale applied: −${saleUsd(decision.amountCents)}. The quote expires ${next.validUntil} at the latest.` }], audits };
+}
+
+/** EGC_WINTER_SALE: a quote carrying the sale is sent only while it still qualifies: saved on today's sale terms, the
+ * job date booked inside the sale's window, sent by the sign-by day and its amount still the one the server gives today
+ * (the owner's sale amount and, unless the owner applied it anyway, the margin cap with today's cost settings). With the
+ * flag off a sale quote is not sent. A sale the customer accepted by its sign-by day (acceptedSaleOn) is checked on its
+ * saved terms instead, past that day and with the flag off too. */
+async function winterSaleSendable(job, now, env, readers) {
+  const lines = Array.isArray(job.estimate?.lineItems) ? job.estimate.lineItems : [];
+  if (!hasWinterSaleLine(lines)) return;
+  const accepted = acceptedSaleOn(job);
+  if (!winterSaleEnabled(env) && !accepted) throw fail('winter_sale_disabled', 'The winter sale is turned off. Save the quote again without the sale before sending it.');
+  const current = await readers.settings(env), sale = lines.find(isWinterSaleLine), saved = plain(job.quoteDraft?.winterSale) ? job.quoteDraft.winterSale : null;
+  if (!accepted && canonical(plain(saved?.terms) ? saleTerms(saved.terms) : null) !== canonical(saleTerms(current))) throw fail('winter_sale_ineligible', 'The sale terms changed, save the quote again before sending it.', 409, { code: 'terms_changed' });
+  const settings = accepted ? { ...current, ...saleTerms(saved.terms) } : current;
+  const own = lines.filter(line => !isWinterSaleLine(line)), before = estimateTotals(own);
+  const draft = { compositePricing: job.quoteDraft?.compositePricing, breakdown: job.quoteDraft?.breakdown };
+  // Junk-only as the save decided it: the builder breakdown's own lines (quote-model.js builderJunkOnly).
+  const junkOnly = builderJunkOnly(job.quoteDraft?.breakdown?.lines);
+  const cap = winterSaleCap({ lineItems: own, manHours: saleManHours(draft), junkOnly, costs: await readers.costs(env), channel: await saleChannel(env, readers, { junkOnly, sourceWalkthroughId: job.sourceWalkthroughId || '' }), settings });
+  const decision = winterSaleDecision({ settings, beforeCents: before.totalCents, today: denverToday(new Date(now)), jobDate: job.date || null, jobEnd: winterSaleLastDay(job), requireJobDate: true, cap, override: saved?.override || null, ownerOverride: Boolean(saved?.overridden && saved?.override), accepted: Boolean(accepted) });
+  if (!decision.eligible) throw fail('winter_sale_ineligible', `${decision.reason} The quote was not sent: save it again without the winter sale, or fix this first.`, 409, { code: decision.code });
+  if (Math.abs(Number(sale.totalCents)) !== decision.amountCents) throw fail('winter_sale_ineligible', 'The winter sale amount for this quote changed since it was saved (the sale settings or the cost settings changed). Save the quote again before sending.', 409, { code: 'amount_changed' });
+}
+
+/** Quote author DTO: the quote, its options and send state; never signatures, payment evidence, notes or provider IDs.
+ * seen (estimator-customer-access.js jobCustomerAccess): an estimator who may not see the job's customer gets their own
+ * customer reference, or no customer id. */
+export function quoteDraftView(job, seen = null) {
   const estimate = plain(job?.estimate) ? job.estimate : {}, lines = Array.isArray(estimate.lineItems) ? normalizeLineItems(estimate.lineItems).lineItems : [];
   return {
-    id: job.id, revision: job.revision, customerId: job.customerId || '', customer: String(job.customer || '').slice(0, 200), projectId: job.projectId || '', sourceWalkthroughId: job.sourceWalkthroughId || '', status: stage(job), quoteStatus: job.quoteStatus || '',
+    id: job.id, revision: job.revision, customerId: seen ? shownCustomerId(job.customerId, seen) : job.customerId || '', customer: seen && !seen.full ? String(seen.name || '').slice(0, 200) : String(job.customer || '').slice(0, 200), projectId: job.projectId || '', sourceWalkthroughId: job.sourceWalkthroughId || '', status: stage(job), quoteStatus: job.quoteStatus || '',
     estimate: { number: estimate.number || '', revision: Number.isSafeInteger(estimate.revision) ? estimate.revision : null, status: estimate.status || 'draft', amountCents: Number.isSafeInteger(estimate.amountCents) ? estimate.amountCents : null, depositRequiredCents: Number.isSafeInteger(estimate.depositRequiredCents) ? estimate.depositRequiredCents : null, validUntil: validDate(estimate.validUntil) ? estimate.validUntil : null, scope: String(estimate.scope || '').slice(0, 1600), sentAt: estimate.sentAt || null, sentRevision: Number.isSafeInteger(estimate.sentRevision) ? estimate.sentRevision : null, fingerprint: estimateFingerprint(estimate),
       ...(estimate.pricingSettingsVersion ? { catalogVersion: estimate.catalogVersion, pricingSettingsVersion: estimate.pricingSettingsVersion, depositPct: estimate.depositPct } : {}),
       ...(estimate.commercialPolicy !== undefined ? { commercialPolicy: estimate.commercialPolicy, depositPct: estimate.depositPct } : {}),
@@ -213,22 +275,28 @@ export function quoteDraftView(job) {
     // The builder selection and its cost-free breakdown (sections, itemized lines, purchase list).
     ...(plain(job.quoteDraft?.compositePricing) ? { compositePricing: job.quoteDraft.compositePricing, breakdown: plain(job.quoteDraft.breakdown) ? job.quoteDraft.breakdown : null } : {}),
     approval: pick(job.customerApproval, ['status', 'approvedAt', 'supersededAt']),
+    // accepted: the customer accepted this sale by its sign-by day, so a revision keeps it (the builder shows it untick-only).
+    ...(plain(job.quoteDraft?.winterSale) ? { winterSale: { ...winterSalePublic(job.quoteDraft.winterSale), accepted: Boolean(acceptedSaleOn(job)) } } : {}),
     ...(walkthroughCaptureSyncView(job) ? { captureSync: walkthroughCaptureSyncView(job) } : {}),
     delivery: pick(job.estimateReady, ['requestId', 'revision', 'mode', 'status', 'reason', 'attempts', 'recipient', 'tagReset', 'at']),
   };
 }
 
-function outcome(job, action, requestId, replayed, warnings, extra = {}) {
-  return { ok: true, authority: 'employee_hub', action, requestId, replayed, job: quoteDraftView(job), warnings, ...extra };
+function outcome(job, action, requestId, replayed, warnings, extra = {}, seen = null) {
+  return { ok: true, authority: 'employee_hub', action, requestId, replayed, job: quoteDraftView(job, seen), warnings, ...extra };
 }
 
-async function readJobFor(store, jobId) {
+// author ({actor, access, env}): an estimator opens only a draft they started or one whose customer they may see
+// (estimator-customer-access.js authorOpensJob); owners, managers and dispatchers open any.
+async function readJobFor(store, jobId, author = null) {
   const job = await store.read('jobs', jobId);
   if (!operational(job)) throw fail('job_not_found', 'This quote job could not be found.', 404);
   requireRevision(job);
   if (!plain(job.quoteDraft)) throw fail('not_a_draft', 'This job\'s quote was not drafted here. Revise it in Estimates & payments.');
+  if (author && !await authorOpensJob(store, author.actor, author.access, job, author.env)) throw fail('job_forbidden', 'This quote belongs to another estimator. Ask the office to open it.', 403);
   return job;
 }
+const seenBy = (store, actor, access, env) => job => jobCustomerAccess(store, actor, access, job, { env });
 
 function editable(job) {
   if (CLOSED.has(stage(job))) throw fail('job_closed', 'A closed or cancelled job cannot take a quote revision.');
@@ -257,14 +325,15 @@ export async function expireStaleCheckout({ store, job, stripe, now = new Date()
 }
 
 export async function readQuoteDraft(store, actor, query = {}, { env = {} } = {}) {
-  requireQuoteAuthor(actor, env);
+  const access = requireQuoteAuthor(actor, env);
   keys(query, ['jobId'], 'The quote lookup is invalid.');
   if (!safeId(query.jobId)) throw fail('invalid_request', 'Choose a valid quote job.', 400);
-  return { ok: true, authority: 'employee_hub', job: quoteDraftView(await readJobFor(store, query.jobId)) };
+  const job = await readJobFor(store, query.jobId, { actor, access, env });
+  return { ok: true, authority: 'employee_hub', job: quoteDraftView(job, await seenBy(store, actor, access, env)(job)) };
 }
 
-export async function saveQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, catalogState = catalogStateDefault, compositeState = compositeStateDefault, newQuotePaymentPolicy } = {}) {
-  requireQuoteAuthor(actor, env);
+export async function saveQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, catalogState = catalogStateDefault, compositeState = compositeStateDefault, newQuotePaymentPolicy, winterSale: readers = winterSaleReaders } = {}) {
+  const access = requireQuoteAuthor(actor, env), seen = seenBy(store, actor, access, env);
   keys(input, SAVE_KEYS, 'The quote draft needs a stable request and customer identity.');
   if (!uuid(input.requestId) || !safeId(input.customerId) || input.jobId && !safeId(input.jobId) || input.sourceWalkthroughId && !safeId(input.sourceWalkthroughId)) throw fail('invalid_request', 'The quote draft needs a stable request and customer identity.', 400);
   if (input.jobId && (typeof input.expectedRevision !== 'string' || !input.expectedRevision)) throw fail('invalid_request', 'Reload the quote before revising it.', 400);
@@ -278,12 +347,21 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
     if (!saved || saved.customerId !== receipt.customerId || saved.quoteDraft?.requestId !== input.requestId) throw fail('changed_since_save', 'The earlier save succeeded, but this quote has changed since. Reload it before revising.');
     const checkout = receipt.revisedRelease && typeof checkouts === 'function' ? await checkouts(saved).catch(() => ({ status: 'needs_review', reason: 'checkout_unconfirmed' })) : null;
     const warnings = [...(receipt.warnings || []), ...(checkout && !['none', 'current', 'expired'].includes(checkout.status) ? [{ code: 'checkout_needs_review', message: 'An open card checkout for the earlier quote could not be closed. Review it in Stripe before the customer pays.' }] : [])];
-    return outcome(saved, 'save', input.requestId, replayed, warnings, checkout ? { checkout } : {});
+    return outcome(saved, 'save', input.requestId, replayed, warnings, checkout ? { checkout } : {}, await seen(saved));
   }
   // A committed save replays before validation, so a retry after the Denver date
   // (and the quote's expiry window) moved on still returns the saved quote.
   const prior = await replay(true);
   if (prior) return prior;
+  // EGC_WINTER_SALE: the draft may ask for the sale (draft.winter_sale: {apply, override?}); the sale line itself is only
+  // ever the server's. Flag off: winter_sale stays an unsupported draft field, as before.
+  const saleOn = winterSaleEnabled(env), sale = saleOn && plain(input.draft) ? saleRequest(input.draft.winter_sale) : null;
+  // A sale the customer already accepted stays on a revision unless the quote explicitly drops it (apply:false).
+  const saleDropped = Boolean(sale === null && saleOn && plain(input.draft?.winter_sale) && input.draft.winter_sale.apply === false);
+  if (saleOn && plain(input.draft)) {
+    if (Array.isArray(input.draft.line_items) && input.draft.line_items.some(line => plain(line) && line.id === WINTER_SALE_LINE_ID)) throw fail('winter_sale_server_only', 'The winter sale line is added by the server. Ask for the sale on the quote instead of adding the line.', 400);
+    input = { ...input, draft: Object.fromEntries(Object.entries(input.draft).filter(([key]) => key !== 'winter_sale')) };
+  }
   const catalogMode = input.draft?.catalog_pricing !== undefined;
   // With the builder flag off a composite_pricing field stays an unsupported draft field, as before.
   const compositeMode = quoteBuilderEnabled(env) && plain(input.draft) && input.draft.composite_pricing !== undefined;
@@ -315,22 +393,31 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
     draft = normalizeQuoteDraft(input.draft, now);
     if (draft.lineItems.some(line => line.catalog)) throw fail('catalog_descriptor_required', 'Catalog products must be saved from a current server price preview.', 409);
   }
-  const customer = await store.read('customers', input.customerId); requireRevision(customer);
+  // An estimator names a customer they may not see only by their own customer-resolve reference, under an agreeing name.
+  const named = await authorCustomer(store, actor, access, input.customerId, { env, clientName: draft.client.name, prefix: 'quote_draft_',
+    source: input.sourceWalkthroughId ? await store.read('jobs', input.sourceWalkthroughId) : null, job: input.jobId ? await store.read('jobs', input.jobId) : null });
+  const customer = named.customer; requireRevision(customer);
   if (!identityMatches(draft.client, customer)) throw fail('customer_mismatch', 'The quote\'s customer details do not match the selected customer. Review the phone, email and CRM link.');
   const record = (job, plan, jobId) => ({ quoteDraft: { ...(plain(job?.quoteDraft) ? job.quoteDraft : { version: 1, createdAt: now, createdBy: actor.user }), requestId: input.requestId, fingerprint, savedAt: now, savedBy: actor.user, sourceWalkthroughId: input.sourceWalkthroughId || '',
       ...(draft.catalogPricing ? { catalogPricing: draft.catalogPricing } : job?.quoteDraft?.catalogPricing ? { catalogPricing: null } : {}),
-      ...(draft.compositePricing ? { compositePricing: draft.compositePricing, breakdown: draft.breakdown } : job?.quoteDraft?.compositePricing ? { compositePricing: null, breakdown: null } : {}) },
+      ...(draft.compositePricing ? { compositePricing: draft.compositePricing, breakdown: draft.breakdown } : job?.quoteDraft?.compositePricing ? { compositePricing: null, breakdown: null } : {}),
+      ...(draft.winterSale ? { winterSale: draft.winterSale } : job?.quoteDraft?.winterSale ? { winterSale: null } : {}) },
     receipt: { fingerprint, actorId: actor.user, action: 'save', customerId: customer.id, jobId, sourceWalkthroughId: input.sourceWalkthroughId || '', estimateRevision: plan.patch.estimate.revision, material: plan.material, revisedRelease: plan.revisedRelease, warnings: plan.warnings, createdAt: now } });
   const audit = (job, patch, jobId) => auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via: 'hub', action: 'quote.draft.save', entity: { collection: 'jobs', id: jobId }, before: job ? moneySnapshot(job) : null, after: moneySnapshot({ ...(job || {}), ...patch }), requestId: input.requestId, reason: null, now });
   try {
     if (input.jobId) {
-      const job = await readJobFor(store, input.jobId);
+      const job = await readJobFor(store, input.jobId, { actor, access, env });
       if (job.customerId !== customer.id || (job.sourceWalkthroughId || '') !== (input.sourceWalkthroughId || '')) throw fail('job_mismatch', 'This quote belongs to a different customer or walkthrough. Reload it before revising.');
       if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This quote changed after you opened it. Reload it and review the latest version.');
       editable(job);
       // An in-person signature is revised only through a new signed walkthrough handoff.
       if (approved(job.estimate?.status) && job.estimate?.acceptanceMethod === 'in_person_signature') throw fail('signed', 'The customer signed this quote in person. Start a signed revision in the walkthrough instead.');
-      const plan = quotePatch(job, draft, actor, now, job.id), saved = record(job, plan, job.id), patch = { ...plan.patch, ...capturePatch(job, draft, actor, now), ...serviceTypeRevision(job, junkOnlyQuote), quoteDraft: saved.quoteDraft, updatedAt: now };
+      const accepted = saleDropped ? null : acceptedSaleOn(job), ask = sale || (accepted ? { apply: true } : null);
+      const saleResult = ask ? await applyWinterSale(draft, ask, { job, actor, now, env, readers, sourceWalkthroughId: input.sourceWalkthroughId || '', junkOnly: junkOnlyQuote, requestId: input.requestId, accepted }) : null;
+      if (saleResult) draft = { ...saleResult.draft, winterSale: saleResult.record };
+      const plan = quotePatch(job, draft, actor, now, job.id);
+      if (saleResult) plan.warnings.push(...saleResult.warnings);
+      const saved = record(job, plan, job.id), patch = { ...plan.patch, ...capturePatch(job, draft, actor, now), ...serviceTypeRevision(job, junkOnlyQuote), quoteDraft: saved.quoteDraft, ...refPatch(named, actor, draft.client.name), updatedAt: now };
       // FUN-03: a material revision ends the job's live sale (a portal approval of
       // an earlier revision), as the Hub estimate editor does: deal.approval_superseded
       // and the cleared funnelSale are in this revision's commit.
@@ -345,10 +432,16 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
         { collection: 'customers', id: customer.id, revision: customer.revision, verify: true },
         { collection: QUOTE_DRAFT_RECEIPTS, id: receiptId, patch: saved.receipt },
         audit(job, patch, job.id),
+        ...(saleResult ? saleResult.audits(job.id) : []),
         ...(retired ? [retired] : []),
         ...crossing.writes,
       ]);
-    } else await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote });
+    } else {
+      // A new quote has no job date yet: the sale's window is checked again when it is sent (winterSaleSendable).
+      const saleResult = sale ? await applyWinterSale(draft, sale, { actor, now, env, readers, sourceWalkthroughId: input.sourceWalkthroughId || '', junkOnly: junkOnlyQuote, requestId: input.requestId }) : null;
+      if (saleResult) draft = { ...saleResult.draft, winterSale: saleResult.record };
+      await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote, sale: saleResult, ref: refPatch(named, actor, draft.client.name) });
+    }
   } catch (error) {
     if (FINAL.has(error.code)) throw error;
     const recovered = await replay(false).catch(problem => { if (FINAL.has(problem.code)) throw problem; return null; });
@@ -361,7 +454,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
   return saved;
 }
 
-async function createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote = false }) {
+async function createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote = false, sale = null, ref = {} }) {
   let source = null, sourceProject = null;
   if (input.sourceWalkthroughId) {
     source = await store.read('jobs', input.sourceWalkthroughId); requireRevision(source);
@@ -389,8 +482,10 @@ async function createDraft(store, actor, input, draft, customer, now, env, { rec
     commit: async writes => {
       const target = writes.find(write => write.collection === 'jobs' && write.patch?.dispatchRequestId === input.requestId);
       if (!target) throw fail('commit_incomplete', 'The complete quote draft could not be prepared.', 503);
-      const plan = quotePatch(null, draft, actor, now, target.id, newQuotePaymentPolicy), saved = record(null, plan, target.id);
-      Object.assign(target.patch, plan.patch, capturePatch(target.patch, draft, actor, now), { quoteDraft: saved.quoteDraft });
+      const plan = quotePatch(null, draft, actor, now, target.id, newQuotePaymentPolicy);
+      if (sale) plan.warnings.push(...sale.warnings);
+      const saved = record(null, plan, target.id);
+      Object.assign(target.patch, plan.patch, capturePatch(target.patch, draft, actor, now), { quoteDraft: saved.quoteDraft }, ref);
       // A review can finish before its quote exists. Preserve the finalized
       // source receipt and create the same gated note intent as finalize-after-
       // quote, using the new canonical job/contact identity, never the old one.
@@ -409,7 +504,7 @@ async function createDraft(store, actor, input, draft, customer, now, env, { rec
       if (sourceProject) fence('projects', sourceProject);
       // The walkthrough keeps its status, completion, signature and money.
       if (source) fence('jobs', source, source.customerId ? null : { customerId: customer.id, updatedAt: now });
-      writes.push({ collection: QUOTE_DRAFT_RECEIPTS, id: receiptId, patch: saved.receipt }, audit(null, target.patch, target.id));
+      writes.push({ collection: QUOTE_DRAFT_RECEIPTS, id: receiptId, patch: saved.receipt }, audit(null, target.patch, target.id), ...(sale ? sale.audits(target.id) : []));
       await store.commit(writes);
     },
   };
@@ -500,19 +595,22 @@ async function compositeSendable(job, env, compositeState) {
   if (!approval.ready) throw approvalRefusal(approval);
 }
 
-export async function previewQuoteSend(store, actor, input, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault } = {}) {
-  requireQuoteAuthor(actor, env);
+export async function previewQuoteSend(store, actor, input, now = new Date().toISOString(), { env = {}, compositeState = compositeStateDefault, winterSale: readers = winterSaleReaders } = {}) {
+  const access = requireQuoteAuthor(actor, env);
   keys(input, PREVIEW_KEYS, 'Choose the saved quote to send.');
   if (!safeId(input.jobId) || typeof input.expectedRevision !== 'string' || !input.expectedRevision) throw fail('invalid_request', 'Choose the saved quote to send.', 400);
   actorMatches(input, actor);
-  const job = await readJobFor(store, input.jobId);
+  const job = await readJobFor(store, input.jobId, { actor, access, env });
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This quote changed after you opened it. Reload it and review the latest version.');
   sendable(job, now, env);
   await compositeSendable(job, env, compositeState);
+  await winterSaleSendable(job, now, env, readers);
   const delivery = deliveryPlan(job, env), estimate = sendingEstimate(job.estimate), paymentSchedule = await paymentScheduleFor(store,job,estimate), sending = { ...job, estimate };
-  const summary = `Send ${estimate.number} revision ${estimate.revision} (${usd(estimate.amountCents)}) to ${String(job.customer || 'the customer').slice(0, 80)}`+(paymentSchedule?'. '+scheduleSummary(paymentSchedule,estimate.commercialPolicy):'');
+  // An estimator who may not see the customer is shown the name they typed (jobCustomerAccess), never the stored one.
+  const seen = await seenBy(store, actor, access, env)(job), shownName = seen.full ? job.customer : seen.name;
+  const summary = `Send ${estimate.number} revision ${estimate.revision} (${usd(estimate.amountCents)}) to ${String(shownName || 'the customer').slice(0, 80)}`+(paymentSchedule?'. '+scheduleSummary(paymentSchedule,estimate.commercialPolicy):'');
   const confirmation = await issueConfirmation(env, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding(sending, delivery, paymentSchedule), summary, now });
-  return { ok: true, authority: 'employee_hub', job: quoteDraftView(paymentSchedule?{...job,estimate:{...estimate,paymentSchedule}}:sending), delivery, summary: confirmation.summary, confirmToken: confirmation.token, expiresAt: confirmation.expiresAt };
+  return { ok: true, authority: 'employee_hub', job: quoteDraftView(paymentSchedule?{...job,estimate:{...estimate,paymentSchedule}}:sending, seen), delivery, summary: confirmation.summary, confirmToken: confirmation.token, expiresAt: confirmation.expiresAt };
 }
 
 /**
@@ -520,8 +618,8 @@ export async function previewQuoteSend(store, actor, input, now = new Date().toI
  * notify the customer. A retry of the same request replays the saved send and
  * lets the deliverer's own ledger decide; it never records a second send.
  */
-export async function sendQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, deliver = null, compositeState = compositeStateDefault } = {}) {
-  requireQuoteAuthor(actor, env);
+export async function sendQuoteDraft(store, actor, input, now = new Date().toISOString(), { env = {}, deliver = null, compositeState = compositeStateDefault, winterSale: readers = winterSaleReaders } = {}) {
+  const access = requireQuoteAuthor(actor, env);
   keys(input, SEND_KEYS, 'The send request contains unsupported fields.');
   if (!uuid(input.requestId) || !safeId(input.jobId) || typeof input.expectedRevision !== 'string' || !input.expectedRevision || typeof input.confirmToken !== 'string') throw fail('invalid_request', 'Preview the quote and confirm it before sending.', 400);
   actorMatches(input, actor);
@@ -539,14 +637,15 @@ export async function sendQuoteDraft(store, actor, input, now = new Date().toISO
       delivery = await deliver(saved.id, { requestId: input.requestId, actorId: actor.user, actorRole: actor.role, mode: saved.estimateReady.mode }).catch(() => ({ status: 'uncertain', reason: 'delivery_unconfirmed' }));
       saved = await store.read('jobs', receipt.jobId) || saved;
     }
-    return outcome(saved, 'send', input.requestId, replayed, receipt.warnings || [], { delivery });
+    return outcome(saved, 'send', input.requestId, replayed, receipt.warnings || [], { delivery }, await seenBy(store, actor, access, env)(saved));
   }
   const prior = await replay(true);
   if (prior) return prior;
-  const job = await readJobFor(store, input.jobId);
+  const job = await readJobFor(store, input.jobId, { actor, access, env });
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This quote changed after the preview. Preview it again before sending.');
   sendable(job, now, env);
   await compositeSendable(job, env, compositeState);
+  await winterSaleSendable(job, now, env, readers);
   const delivery = deliveryPlan(job, env), estimate = sendingEstimate(job.estimate), paymentSchedule = await paymentScheduleFor(store,job,estimate);
   const patch = {
     estimate: { ...estimate, ...(paymentSchedule?{paymentSchedule}:{}), status: 'sent', sentAt: now, sentBy: actor.user, sentChannel: 'estimate_ready', sentRevision: estimate.revision, sentFingerprint: estimateFingerprint(paymentSchedule?{...estimate,paymentSchedule}:estimate), sentRequestId: input.requestId, updatedAt: now },

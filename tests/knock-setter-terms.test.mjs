@@ -216,7 +216,7 @@ test('an estimator on the roster can be paid their recorded 7% once the terms ar
   await assert.rejects(addPayout(early.knock(), office, body, NOW, env, { dispatch: rostered(early) }), { code: 'knock_rep_missing' }, 'not before the owner approved the terms');
   const w = world();
   const handlers = knockAdminHandlers({ storage: () => w.knock(), dispatch: rostered(w), now: () => new Date(NOW) });
-  const paid = (await call(handlers.post, await as('TylerG', cookie => post('/api/knock-admin', { action: 'payout.add', ...body }, cookie)), env)).body;
+  const paid = (await call(handlers.post, await as('ZacB', cookie => post('/api/knock-admin', { action: 'payout.add', ...body }, cookie)), env)).body;
   assert.deepEqual([paid.duplicate, paid.payout.repKey, paid.payout.amount], [false, 'estimator.one', 296.42]);
   assert.equal((await addPayout(w.knock(), office, body, NOW, env, { dispatch: rostered(w) })).duplicate, true);
   await assert.rejects(addPayout(w.knock(), office, { ...body, requestId: uuid(), repKey: 'nobody.here' }, NOW, env, { dispatch: rostered(w) }), { code: 'knock_rep_missing' });

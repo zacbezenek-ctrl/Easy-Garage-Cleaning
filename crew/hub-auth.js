@@ -316,13 +316,16 @@
     const host = document.getElementById('topbar') || document.querySelector('#app .top');
     if (!host) return;
     const path = location.pathname.replace(/\.html$/, '').replace(/\/$/, '') || '/crew';
+    const reference = canRunBusiness() ? ' (reference)' : '';
     // Clean URLs only: /crew/ is the crew home's own address (/crew answers with a redirect to it).
     const links = [
       ['/crew/', 'Crew home'],
       ['/crew/gameplan', 'Walkthrough'],
       ['/crew/knock', 'Door-to-door'],
-      ['/crew/prejob', 'Pre-job'],
-      ['/crew/postjob', 'Closeout'],
+      // The old pages stay for what the live job page does not do yet (arrival text, payment, review link, Garage Guard);
+      // business users, who also run the live page, see them marked as reference. Crew labels are unchanged.
+      ['/crew/prejob', 'Pre-job' + reference],
+      ['/crew/postjob', 'Closeout' + reference],
       ['/employee', 'My Hub'],
     ].filter(([href]) => (href !== '/crew/gameplan' || canRunWalkthrough()) && (href !== '/crew/knock' || canUseKnock()));
     const nav = document.createElement('nav');
