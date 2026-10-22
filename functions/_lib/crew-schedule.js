@@ -140,7 +140,9 @@ export async function crewSchedule({ session, env = {}, crews, jobs, access, nam
       // A segment row is an unsplit job (jobSegments), so the projection reads its own window, crew and lead.
       // A walkthrough names no lead (it is the viewer's own visit), so it never costs a lead-name lookup.
       const view = crewJobProjection(row, { viewer: session.user, crewName: crew?.name || '' });
-      shown.push({ crew, days, mine, canOpen: open, segmentId: row.segmentId || '', fieldStatus: visit ? '' : liveStatus(job, days, today), view: visit ? { ...view, crewLead: null } : view });
+      // The customer's arrival window is the first visit's: a segment row on another date or time shows none.
+      const firstVisit = !row.segmentId || row.date === job.date && row.time === job.time;
+      shown.push({ crew, days, mine, canOpen: open, segmentId: row.segmentId || '', firstVisit, fieldStatus: visit ? '' : liveStatus(job, days, today), view: visit ? { ...view, crewLead: null } : view });
     }
   }
   const groups = [...known.values()].sort(byCrew).map(crew => ({ crew, items: shown.filter(item => item.crew === crew) }))
@@ -149,9 +151,9 @@ export async function crewSchedule({ session, env = {}, crews, jobs, access, nam
   const leads = scheduleLeads(groups.map(group => group.crew), shown.map(item => item.view));
   const resolved = typeof names === 'function' ? leads.size ? await names(leads) || {} : {} : names || {};
   const name = id => resolved[assignmentKey(id)] || text(id, 120);
-  const rowView = ({ crew, days, mine, canOpen, segmentId, fieldStatus, view }) => ({
+  const rowView = ({ crew, days, mine, canOpen, segmentId, firstVisit, fieldStatus, view }) => ({
     id: view.id, ...(segmentId ? { segmentId } : {}), type: view.type, status: view.status, fieldStatus,
-    date: view.date, endDate: view.endDate, time: view.time, endTime: view.endTime, arrivalWindow: view.arrivalWindow, days,
+    date: view.date, endDate: view.endDate, time: view.time, endTime: view.endTime, arrivalWindow: firstVisit ? view.arrivalWindow : '', days,
     serviceType: view.serviceType, customer: firstName(view.customer), area: areaOf(view.address),
     crewId: crew ? crew.id : '', crewName: crew ? text(crew.name, 100) : text(view.crewName, 100),
     lead: view.crewLead ? name(view.crewLead) : crew?.leadId ? name(crew.leadId) : '',
