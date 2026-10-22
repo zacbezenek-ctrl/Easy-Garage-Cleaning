@@ -78,7 +78,7 @@ const plan = (logistics = {}) => ({ client: { name: 'Synthetic Customer', phone:
 function fixture({ people = null, rules = null } = {}) {
   const rows = new Map([
     ['customers/c1', { id: 'c1', revision: 'c1r', name: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevelContactId: 'provider1' }],
-    ['jobs/w1', { id: 'w1', revision: 'w1r', type: 'walkthrough', status: 'scheduled', pipelineStatus: 'scheduled', customerId: 'c1', customer: 'Synthetic Customer', highlevelContactId: 'provider1', date: '2026-09-22', time: '11:00', endTime: '12:00', projectId: 'p1' }],
+    ['jobs/w1', { id: 'w1', revision: 'w1r', type: 'walkthrough', status: 'scheduled', pipelineStatus: 'scheduled', customerId: 'c1', customer: 'Synthetic Customer', highlevelContactId: 'provider1', date: '2026-09-22', time: '11:00', endTime: '12:00', projectId: 'p1', assignedCrew: ['sales.person'] }],
     ['projects/p1', { id: 'p1', revision: 'p1r', customerId: 'c1', sourceRecordId: 'w1', sourceWalkthroughId: 'w1' }],
   ]);
   // rules: the owner's saved dispatch rules (dispatchSettings/current), read by every dispatch save.
@@ -372,6 +372,11 @@ test('with role permissions on, a manager lowered to sales is not a dispatcher f
   const lowered = { ...manager, staffRoles: ['sales'] };
   const get = new Request(`${SITE}/api/walkthrough-handoff?sourceWalkthroughId=w1`);
   const f = fixture(), handoff = handoffHandlers({ session: async () => lowered, storage: () => f.store, now: () => new Date(NOW) });
+  // Not their walkthrough: an estimator gets no customer id for it (estimator-customer-access.js).
+  assert.deepEqual((await (await handoff.get({ request: get, env: ON })).json()).customerId, '');
+  // The walkthrough assigned to them: its customer, as before.
+  const assign = fx => { fx.rows.get('jobs/w1').assignedCrew = [lowered.user]; return fx; };
+  assign(f);
   const prepared = await (await handoff.get({ request: get, env: ON })).json();
   assert.deepEqual([prepared.customerId, prepared.roster, prepared.customer], ['c1', [], null]);
   const legacy = await (await handoff.get({ request: get, env: {} })).json();
@@ -380,7 +385,7 @@ test('with role permissions on, a manager lowered to sales is not a dispatcher f
   assert.deepEqual([refused.status, (await refused.json()).code], [403, 'handoff_crew_assignment_forbidden']);
   assert.equal(f.calls.length, 0);
   // Its saved handoff gets the author view: name-free rule rows and no crew identities.
-  const g = staffedUnplaced({ maxJobsPerEmployeePerDay: 1 });
+  const g = assign(staffedUnplaced({ maxJobsPerEmployeePerDay: 1 }));
   const saved = await (await handoffHandlers({ session: async () => lowered, storage: () => g.store, now: () => new Date(NOW) }).post({ request: handoffPost(g.body()), env: ON })).json();
   assert.deepEqual([saved.ok, saved.job.assignedCrew], [true, []]);
   assert.doesNotMatch(JSON.stringify(saved), PRIVATE);
@@ -391,8 +396,12 @@ test('with role permissions on, a manager lowered to sales is not a dispatcher f
   const post = body => new Request(`${SITE}/api/customer-resolve`, { method: 'POST', headers: { Origin: SITE, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const resolve = customerResolveHandler({ session: async () => lowered, storage: () => f.store, verifyContact: async () => { throw new Error('not used'); } });
   const lookup = { name: 'Anyone At All', phone: '(970) 555-0100', email: '', address: '', highlevelContactId: '' };
-  const masked = await (await resolve({ request: post({ requestId: randomUUID(), customer: lookup }), env: ON })).json();
-  assert.deepEqual([masked.customer.id, masked.customer.contactDetails, masked.customer.name], ['c1', 'masked', undefined]);
+  // As an estimator: a name that does not agree is left for the office; an agreeing one gets the masked match,
+  // named by a reference to this request instead of the record id.
+  const review = await resolve({ request: post({ requestId: randomUUID(), customer: lookup }), env: ON });
+  assert.deepEqual([review.status, (await review.json()).code], [409, 'customer_resolve_identity_review']);
+  const requestId = randomUUID(), masked = await (await resolve({ request: post({ requestId, customer: { ...lookup, name: 'Synthetic Customer' } }), env: ON })).json();
+  assert.deepEqual([masked.customer.id, masked.customer.contactDetails, masked.customer.name], ['cref_' + requestId.replace(/-/g, ''), 'masked', undefined]);
   const unmasked = await (await resolve({ request: post({ requestId: randomUUID(), customer: lookup }), env: {} })).json();
   assert.equal(unmasked.customer.name, 'Synthetic Customer');
 });
@@ -443,7 +452,8 @@ test('a sales author cannot use the signed handoff to take over, move or re-noti
   f.rows.set('jobs/j1', { id: 'j1', revision: 'j1r', type: 'job', status: 'scheduled', pipelineStatus: 'scheduled', customerId: 'c1', customer: 'Synthetic Customer', phone: '9705550100', email: 'test@example.invalid', address: '100 Fixture Lane', title: 'Garage reset', date: '2026-09-25', endDate: '2026-09-25', time: '09:00', endTime: '12:00', assignedCrew: ['crew1'], assignedTo: 'Crew One', crewNeeded: 1, notify: false, createdBy: 'tylerg', scheduleSource: 'egc_hub', estimate: { number: 'EST-J1', revision: 1, status: 'accepted', amount: 3000, depositRequired: 1500 }, customerApproval: { status: 'approved', source: 'manager_recorded' }, quoteStatus: 'approved', syncStatus: 'synced' });
   const dispatched = structuredClone(f.rows.get('jobs/j1'));
   const takeover = (actor, env) => saveWalkthroughHandoff(f.store, actor, { requestId: randomUUID(), customerId: 'c1', jobId: 'j1', expectedRevision: f.rows.get('jobs/j1').revision, plan: at('2026-09-29', '13:00', '16:00', 400) }, NOW, { env });
-  await assert.rejects(takeover(sales, ON), error => error.code === 'handoff_revision_forbidden' && error.status === 403);
+  // An estimator who may not see c1 outside its walkthrough is refused before the job is even read.
+  await assert.rejects(takeover(sales, ON), error => error.code === 'handoff_customer_ref_required' && error.status === 403);
   await assert.rejects(prepareHandoff(f.store, sales, { jobId: 'j1' }, { env: ON }), error => error.code === 'handoff_job_forbidden' && error.status === 403);
   assert.deepEqual(f.rows.get('jobs/j1'), dispatched); assert.equal(f.calls.length, 0);
   assert.deepEqual([(await prepareHandoff(f.store, owner, { jobId: 'j1' })).customer.phone, (await prepareHandoff(f.store, owner, { jobId: 'j1' })).expectedRevision], ['9705550100', 'j1r']);
@@ -493,11 +503,18 @@ test('customer-resolve tells a sales author only which customer matched, with ma
   const post = body => new Request('https://easygaragecleaning.com/api/customer-resolve', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const resolve = actor => customerResolveHandler({ session: async () => actor, storage: () => f.store, verifyContact: async () => { throw new Error('not used'); } });
   // Someone types in a phone number that already belongs to a customer.
-  const lookup = { name: 'Anyone At All', phone: '(970) 555-0100', email: '', address: '', highlevelContactId: '' }, body = { requestId: randomUUID(), customer: lookup };
+  // Under a name that does not agree with the stored one, nothing is selected or recorded: the office attaches it.
+  const stranger = { name: 'Anyone At All', phone: '(970) 555-0100', email: '', address: '', highlevelContactId: '' }, wrong = { requestId: randomUUID(), customer: stranger };
+  const refused = await resolve(sales)({ request: post(wrong), env: ON }), refusedText = await refused.text();
+  assert.deepEqual([refused.status, JSON.parse(refusedText).code], [409, 'customer_resolve_identity_review']);
+  for (const secret of ['Synthetic Customer', '100 Fixture Lane', 'provider1', 'test@example.invalid', 'c1']) assert.equal(refusedText.includes(secret), false, secret);
+  assert.equal(f.rows.get(`customerOperations/${wrong.requestId}`), undefined);
+  // Under an agreeing name the match is masked and named by a reference to this request, never the record id.
+  const lookup = { ...stranger, name: 'synthetic customer' }, body = { requestId: randomUUID(), customer: lookup };
   const response = await resolve(sales)({ request: post(body), env: ON }), text = await response.text(), result = JSON.parse(text);
   assert.equal(response.status, 200);
-  assert.deepEqual(result.customer, { id: 'c1', revision: 'c1r', phone: '(•••) •••-0100', email: 't•••@example.invalid', contactDetails: 'masked' });
-  for (const secret of ['Synthetic Customer', '100 Fixture Lane', 'provider1', 'test@example.invalid', '9705550100']) assert.equal(text.includes(secret), false, secret);
+  assert.deepEqual(result.customer, { id: 'cref_' + body.requestId.replace(/-/g, ''), revision: 'c1r', phone: '(•••) •••-0100', email: 't•••@example.invalid', contactDetails: 'masked' });
+  for (const secret of ['Synthetic Customer', '100 Fixture Lane', 'provider1', 'test@example.invalid', '9705550100', '"c1"']) assert.equal(text.includes(secret), false, secret);
   // A replay of the request is masked the same way; a dispatcher still gets the full record.
   const replay = await (await resolve(sales)({ request: post(body), env: ON })).json();
   assert.deepEqual([replay.replayed, replay.customer], [true, result.customer]);
