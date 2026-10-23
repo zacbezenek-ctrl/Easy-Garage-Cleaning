@@ -7,7 +7,7 @@
   // business access) reads every crew and picks a crew; everyone else reads their own crews. Nothing here is stored on
   // the phone except the chosen view (range and crew) and whether this person last read every crew, in this browser.
   const API = '/api/crew-schedule', TIMEOUT = 30000, TZ = 'America/Denver', PREF = 'egc.crew-schedule.v1';
-  const DATE = /^\d{4}-\d{2}-\d{2}$/, ID = /^[A-Za-z0-9_-]{1,180}$/, OFFLINE = 'You’re offline. The crew schedule loads when you reconnect.';
+  const DATE = /^\d{4}-\d{2}-\d{2}$/, ID = /^[A-Za-z0-9_-]{1,180}$/, OFFLINE = 'You're offline. The crew schedule loads when you reconnect.';
   const S = { range: 'today', crew: 'all', scope: '', viewsAll: '', data: null, loading: false, error: '', signedOut: false, disabled: false, seq: 0, loadedAt: '' };
   const main = document.getElementById('schedule-main');
 
@@ -111,19 +111,19 @@
     const continuing = row.date && row.date < day, multi = row.endDate && row.date && row.endDate > row.date;
     // A multi-day job runs on from its first day: later days show when it ends, or All day in between.
     const time = continuing ? row.endDate === day && row.endTime ? `Until ${clock(row.endTime)}` : 'All day'
-      : row.time ? `${clock(row.time)}${row.endTime && row.endDate === day ? `–${clock(row.endTime)}` : ''}` : 'Time TBD';
-    const who = [row.customer || 'Customer', row.area].filter(Boolean).join(' · ');
+      : row.time ? `${clock(row.time)}${row.endTime && row.endDate === day ? `-${clock(row.endTime)}` : ''}` : 'Time TBD';
+    const who = [row.customer || 'Customer', row.area].filter(Boolean).join(' � ');
     // D2D-BOARD: an estimator's own walkthrough is a Walkthrough row that opens its game plan; it has no crew.
     const visit = row.type === 'walkthrough';
-    const detail = visit ? ['Walkthrough', row.serviceType].filter(Boolean).join(' · ') : [row.serviceType, crew?.name || row.crewName || (row.crewSize ? '' : 'No crew yet'), row.lead ? `Lead: ${row.lead}` : ''].filter(Boolean).join(' · ');
+    const detail = visit ? ['Walkthrough', row.serviceType].filter(Boolean).join(' � ') : [row.serviceType, crew?.name || row.crewName || (row.crewSize ? '' : 'No crew yet'), row.lead ? `Lead: ${row.lead}` : ''].filter(Boolean).join(' � ');
     const status = String(row.status || ''), live = !visit && day === today() && Object.prototype.hasOwnProperty.call(LIVE, row.fieldStatus || '') ? LIVE[row.fieldStatus] : null;
-    const badges = [visit ? badge('Walkthrough', 'visit') : null, row.mine ? badge(visit ? 'Your walkthrough' : 'You’re on this job', 'you') : null, live ? badge(live[0], live[1]) : status === 'in_progress' ? badge('In progress', 'live') : null,
+    const badges = [visit ? badge('Walkthrough', 'visit') : null, row.mine ? badge(visit ? 'Your walkthrough' : 'You're on this job', 'you') : null, live ? badge(live[0], live[1]) : status === 'in_progress' ? badge('In progress', 'live') : null,
       ['completed', 'invoiced', 'paid', 'review_requested'].includes(status) ? badge('Done', 'done') : null,
       !visit && row.crewSize < row.crewNeeded ? badge(row.crewSize ? `Needs ${row.crewNeeded - row.crewSize} more` : 'Needs crew', 'warn') : null,
-      multi ? badge(continuing ? `Continues · through ${dayLabel(row.endDate, { weekday: 'short' })}` : `Multi-day · through ${dayLabel(row.endDate, { weekday: 'short', month: 'short', day: 'numeric' })}`) : null].filter(Boolean);
+      multi ? badge(continuing ? `Continues � through ${dayLabel(row.endDate, { weekday: 'short' })}` : `Multi-day � through ${dayLabel(row.endDate, { weekday: 'short', month: 'short', day: 'numeric' })}`) : null].filter(Boolean);
     const body = [h('time', {}, time, row.arrivalWindow && !continuing ? h('small', {}, `Arrive ${row.arrivalWindow}`) : null),
       h('span', { class: 'who' }, h('strong', {}, who), h('small', {}, detail), badges.length ? h('span', { class: 'badges' }, badges) : null)];
-    if (row.canOpen) return h('a', { class: 'job-row', href: visit ? `/crew/gameplan.html?walkthroughId=${encodeURIComponent(row.id)}` : `/crew/job.html?jobId=${encodeURIComponent(row.id)}`, 'data-job': row.id, ...(visit ? { 'data-type': 'walkthrough', 'aria-label': `Open the game plan for the walkthrough at ${time} with ${who}` } : {}) }, ...body, h('b', { 'aria-hidden': 'true' }, '→'));
+    if (row.canOpen) return h('a', { class: 'job-row', href: visit ? `/crew/gameplan.html?walkthroughId=${encodeURIComponent(row.id)}` : `/crew/job.html?jobId=${encodeURIComponent(row.id)}`, 'data-job': row.id, ...(visit ? { 'data-type': 'walkthrough', 'aria-label': `Open the game plan for the walkthrough at ${time} with ${who}` } : {}) }, ...body, h('b', { 'aria-hidden': 'true' }, ''));
     return h('div', { class: 'job-row locked', 'data-job': row.id }, ...body, h('small', { class: 'lock-note' }, 'Not on your assignment'));
   }
 
@@ -135,7 +135,7 @@
     return h('section', { class: 'day', 'data-day': day },
       h('h2', {}, dayLabel(day), day === today() ? h('small', {}, 'Today') : null),
       !rows.length ? h('p', { class: 'empty' }, 'No crew jobs.') : split
-        ? [...crews.entries()].map(([key, list]) => h('div', { class: 'crew-block' }, h('h3', {}, key === 'walkthroughs' ? 'Your walkthroughs' : list[0][0] ? `${list[0][0].name}${list[0][0].lead ? ` · Lead: ${list[0][0].lead}` : ''}` : 'Not on a crew'), h('div', { class: 'job-list' }, list.map(([crew, row]) => jobRow(crew, row, day)))))
+        ? [...crews.entries()].map(([key, list]) => h('div', { class: 'crew-block' }, h('h3', {}, key === 'walkthroughs' ? 'Your walkthroughs' : list[0][0] ? `${list[0][0].name}${list[0][0].lead ? ` � Lead: ${list[0][0].lead}` : ''}` : 'Not on a crew'), h('div', { class: 'job-list' }, list.map(([crew, row]) => jobRow(crew, row, day)))))
         : h('div', { class: 'job-list' }, rows.map(([crew, row]) => jobRow(crew, row, day))));
   }
 
@@ -152,8 +152,9 @@
   function render() {
     if (!main) return;
     const data = S.data, { from, to } = data || shownDates(), nodes = [];
-    nodes.push(h('div', { class: 'eyebrow' }, 'Crew schedule'), h('h1', {}, data?.scope === 'all' ? 'Every crew' : 'My crew’s schedule'),
-      h('p', { class: 'sub' }, from === to ? dayLabel(from) : `${dayLabel(from, { weekday: 'short', month: 'short', day: 'numeric' })} – ${dayLabel(to, { weekday: 'short', month: 'short', day: 'numeric' })}`, ' · Mountain Time'));
+    if (window.EGCHubAuth?.profile?.()?.capabilities?.includes('jobs.operate')) nodes.push(h('a', { class: 'btn primary', href: '/crew/job-operations' }, 'Manage jobs across crews'));
+    nodes.push(h('div', { class: 'eyebrow' }, 'Crew schedule'), h('h1', {}, data?.scope === 'all' ? 'Every crew' : 'My crew's schedule'),
+      h('p', { class: 'sub' }, from === to ? dayLabel(from) : `${dayLabel(from, { weekday: 'short', month: 'short', day: 'numeric' })} - ${dayLabel(to, { weekday: 'short', month: 'short', day: 'numeric' })}`, ' � Mountain Time'));
     if (S.signedOut) {
       nodes.push(h('section', { class: 'card' }, h('h2', {}, 'Sign in first'), h('p', {}, 'Sign in to the crew app, then come back to the schedule.'), h('a', { class: 'btn primary', href: '/crew/?next=%2Fcrew%2Fschedule' }, 'Sign in')));
       main.replaceChildren(...nodes); return;
@@ -164,13 +165,13 @@
     }
     nodes.push(controls(data));
     if (S.error) nodes.push(h('div', { class: 'notice', role: 'alert' }, h('p', {}, S.error), h('button', { type: 'button', class: 'btn', onclick: load }, 'Try again')));
-    if (S.loading && !data) nodes.push(h('p', { class: 'load-note', role: 'status' }, 'Loading the schedule…'));
+    if (S.loading && !data) nodes.push(h('p', { class: 'load-note', role: 'status' }, 'Loading the schedule.'));
     if (data) {
       const pairs = visible(data), days = [];
       for (let day = data.from; day <= data.to; day = addDays(day, 1)) days.push(day);
       if (!data.groups.length && !data.unassigned.length && data.scope === 'mine') nodes.push(h('p', { class: 'load-note' }, 'You are not on a crew yet and have no crew jobs in these days. Your manager adds you to a crew in Dispatch.'));
       nodes.push(h('div', { class: 'days' }, days.map(day => dayBlock(day, pairs))));
-      nodes.push(h('p', { class: 'stamp' }, S.loading ? 'Refreshing…' : `Updated ${new Intl.DateTimeFormat('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' }).format(new Date(S.loadedAt || Date.now()))}`, ' ', h('button', { type: 'button', class: 'link', disabled: S.loading, onclick: load }, 'Refresh')));
+      nodes.push(h('p', { class: 'stamp' }, S.loading ? 'Refreshing.' : `Updated ${new Intl.DateTimeFormat('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' }).format(new Date(S.loadedAt || Date.now()))}`, ' ', h('button', { type: 'button', class: 'link', disabled: S.loading, onclick: load }, 'Refresh')));
     }
     main.replaceChildren(...nodes);
   }

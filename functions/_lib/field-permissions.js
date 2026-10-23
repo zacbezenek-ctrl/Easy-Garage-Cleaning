@@ -1,6 +1,6 @@
 import { createJobAssignmentAccess, jobCrewNames } from './job-assignment.js';
 import { hasBusinessAccess } from './hub-session.js';
-import { defaultStaffRoles, sanitizeStaffRoles } from './staff-roles.js';
+import { can, defaultStaffRoles, sanitizeStaffRoles } from './staff-roles.js';
 import { customerPhotosEnabled } from './customer-photo-visibility.js';
 
 // Exactly "true" lets only the job's crew lead or a manager complete a job and send
@@ -37,5 +37,5 @@ export async function fieldCapabilities({ session, manager = false, job, env = {
   const lead = await fieldJobLead({ session, job, access }), assigned = await access.assigned(job);
   const leader = manager === true || lead, dispatcher = hasBusinessAccess(session) && ['owner', 'manager'].includes(session?.role);
   const allowed = fieldLeadOnlyComplete(env) ? leader : leader || assigned;
-  return { lead, assigned, complete: allowed, sendOnMyWay: dispatcher || assigned && (lead || !fieldLeadOnlyComplete(env)), sharePhotos: dispatcher && customerPhotosEnabled(env), configureChecklist: manager === true };
+  return { lead, assigned, complete: allowed || can(session, 'jobs.operate', env), sendOnMyWay: dispatcher || assigned && (lead || !fieldLeadOnlyComplete(env)), sharePhotos: dispatcher && customerPhotosEnabled(env), configureChecklist: manager === true };
 }

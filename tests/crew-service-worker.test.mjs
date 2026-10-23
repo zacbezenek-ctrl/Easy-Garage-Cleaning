@@ -15,9 +15,9 @@ const basic = response => Object.defineProperty(response, 'type', { value: 'basi
 // Inside a worker, relative request URLs resolve against the worker's origin.
 class WorkerRequest extends Request { constructor(input, init) { super(typeof input === 'string' ? new URL(input, ORIGIN).href : input, init); } }
 const NOW = Date.parse('2026-09-22T15:00:00.000Z');
-const SHELL_CACHE = 'egc-crew-shell-20261022taplive';
+const SHELL_CACHE = 'egc-crew-shell-20261023jobops';
 // CREW-SCHEDULE: the crew schedule page and its script join the shell (the schedule itself is /api data, never stored).
-const SCHEDULE_ASSETS = ['/crew/schedule.html', '/crew/schedule.js?v=20261022livestatus'];
+const SCHEDULE_ASSETS = ['/crew/schedule.html', '/crew/schedule.js?v=20261023jobops', '/crew/job-operations.html', '/crew/job-operations.js?v=20261023jobops'];
 // LANE catalog: the read-only "What we sell" page and its script join the shell (the menu itself is /api data, never stored).
 const MENU_ASSETS = ['/crew/menu.html', '/crew/menu.js?v=20261019catalog'];
 // KNOCK: the canvassing page (crew/knock.html) and its modules share the crew shell. Its ES modules import each other
@@ -125,7 +125,7 @@ test('API calls, non-GET requests, other origins and the kill-switch config are 
   assert.equal((await sw.cached()).some(([, path]) => path.startsWith('/api/')), false);
 });
 
-test('Today’s work loads network-first and falls back to the cached shell, or the offline page, when the connection drops', async () => {
+test('Today's work loads network-first and falls back to the cached shell, or the offline page, when the connection drops', async () => {
   const sw = await installed();
   const online = await sw.fetchEvent('/crew/job.html?jobId=job-a', { mode: 'navigate' });
   assert.equal(await online.response.text(), 'network /crew/job.html', 'online navigations always use the fresh page');
@@ -189,7 +189,7 @@ test('the kill switch unregisters the worker and removes the shell cache', async
   assert.equal(unreachable.state.unregistered, 0, 'an unreachable config never disables offline support');
 });
 
-test('Background Sync replays the signed-in account’s queued actions and asks to retry while offline', async () => {
+test('Background Sync replays the signed-in account's queued actions and asks to retry while offline', async () => {
   const indexedDB = fakeIndexedDB(), sent = [];
   const api = (url, method, body) => {
     if (url.pathname === '/api/hub-auth') return basic(Response.json({ ok: true, user: 'Crew.One' }));
@@ -210,12 +210,12 @@ test('Background Sync replays the signed-in account’s queued actions and asks 
   const synced = await sw.dispatch('sync', { tag: 'egc-field-outbox' });
   assert.equal(synced.settled[0].status, 'fulfilled');
   assert.deepEqual(sent.map(body => [body.requestId, body.expectedRevision]), [['00000000-0000-4000-8000-000000000101', 'server-rev']]);
-  assert.deepEqual(indexedDB.rows('egc-field-outbox', 'actions').map(row => row.user), ['Crew.Two'], 'another account’s action stays queued');
+  assert.deepEqual(indexedDB.rows('egc-field-outbox', 'actions').map(row => row.user), ['Crew.Two'], 'another account's action stays queued');
   assert.equal(sw.messages.at(-1).type, 'egc-field-outbox-changed'); assert.equal(sw.messages.at(-1).applied, 1);
   assert.equal((await sw.cached()).some(([, path]) => path.startsWith('/api/')), false);
 });
 
-test('the precached shell matches the versioned files Today’s work and the offline page load', () => {
+test('the precached shell matches the versioned files Today's work and the offline page load', () => {
   const job = read('crew/job.html'), offline = read('crew/offline.html'), assets = [...worker.matchAll(/'(\/(?:crew\/[a-z-]+|app-touch)\.(?:js|css)\?v=[^']+)'/g)].map(match => match[1]);
   for (const path of [...job.matchAll(/(?:src|href)="(\/(?:crew\/[^"]+|app-touch\.css)\?v=[^"]+)"/g)].map(match => match[1])) assert.ok(assets.includes(path), `${path} must be precached for offline reloads`);
   assert.doesNotMatch(offline, /<link\b|<script\b/, 'the offline page is self-contained: it renders signed out and offline');
@@ -227,7 +227,7 @@ test('the precached shell matches the versioned files Today’s work and the off
   // the sign-in helper are the public crew files the home page loads too, and the page works without them.
   const schedule = read('crew/schedule.html');
   for (const path of [...schedule.matchAll(/(?:src|href)="(\/(?:crew\/schedule[^"]*|app-touch\.css)\?v=[^"]+)"/g)].map(match => match[1])) assert.ok(assets.includes(path), `${path} must be precached for offline reloads`);
-  assert.match(schedule, /<script src="\/crew\/schedule\.js\?v=20261022livestatus" defer><\/script>/);
+  assert.match(schedule, /<script src="\/crew\/schedule\.js\?v=20261023jobops" defer><\/script>/);
   assert.match(read('crew/schedule.js'), /navigator\.serviceWorker\.register\('\/crew\/sw\.js', \{ scope: '\/crew\/' \}\)/);
 });
 
@@ -272,7 +272,7 @@ function gatedSite({ env = STAFF_ENV, accept = '*/*' } = {}) {
 }
 const PUBLIC_KEYS = ['/app-touch.css?v=20260930mobiletouch', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/manifest-knock.webmanifest', '/crew/manifest.webmanifest', '/crew/offline.html'];
 const STAFF_KEYS = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20261013compat', '/crew/field-payments.css?v=20260929fieldpay2', '/crew/field-payments.js?v=20261013compat', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20261012storage', '/crew/job-completion-handoff.js?v=20261016w19verify', '/crew/job.css?v=20261017buylinks', '/crew/job.html', '/crew/job.js?v=20261022offlinetap', ...KNOCK_PRESENT, '/crew/knock.html', ...SCHEDULE_ASSETS, ...MENU_ASSETS];
-const PAGE_KEYS = new Set(['/crew/job.html', '/crew/knock.html', '/crew/schedule.html', '/crew/menu.html']);
+const PAGE_KEYS = new Set(['/crew/job.html', '/crew/knock.html', '/crew/schedule.html', '/crew/job-operations.html', '/crew/menu.html']);
 const shellKeys = async sw => (await sw.cached()).filter(([name]) => name === SHELL_CACHE).map(([, path]) => path).sort();
 
 test('staff gate on: a signed-out install caches the public shell, refusals are never stored, and signing in fills in the job shell', async t => {
@@ -306,12 +306,13 @@ test('staff gate on: a signed-out install caches the public shell, refusals are 
   assert.equal(job.response.headers.get('cache-control'), 'private, no-store');
   assert.equal((await sw.fetchEvent('/crew/knock', { mode: 'navigate' })).response.status, 200, 'the canvassing page joins the shell on a signed-in load');
   assert.equal((await sw.fetchEvent('/crew/schedule', { mode: 'navigate' })).response.status, 200, 'so does the crew schedule page');
+  assert.equal((await sw.fetchEvent('/crew/job-operations', { mode: 'navigate' })).response.status, 200, 'and the scoped job operations shell');
   assert.equal((await sw.fetchEvent('/crew/menu', { mode: 'navigate' })).response.status, 200, 'and the What we sell page');
   for (const key of STAFF_KEYS.filter(key => !PAGE_KEYS.has(key))) assert.equal((await sw.fetchEvent(key)).response.status, 200, key);
   assert.deepEqual(await shellKeys(sw), [...PUBLIC_KEYS, ...STAFF_KEYS].sort(), 'a signed-in load fills in the job shell at runtime');
   sw.state.online = false;
   const offline = await sw.fetchEvent('/crew/job.html?jobId=synthetic-job-2', { mode: 'navigate' });
-  assert.equal(await offline.response.text(), readFileSync(new URL('../crew/job.html', import.meta.url), 'utf8'), 'Today’s work reloads offline from the signed-in copy');
+  assert.equal(await offline.response.text(), readFileSync(new URL('../crew/job.html', import.meta.url), 'utf8'), 'Today's work reloads offline from the signed-in copy');
 });
 
 test('staff gate on: a signed-in install caches the whole shell, pretty-URL redirects included, and never a sign-in page', async t => {
