@@ -11,7 +11,7 @@ export const stylesVersion='20261014a';
 export const googleFontsUrl='https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap';
 // Same analytics-loader.js version and GTM noscript fallback as the generated pages (ANALYTICS_LOADER_VERSION and
 // GTM_NOSCRIPT in _generate_site.py; tests/public-audit-fixes.test.mjs keeps them equal).
-export const analyticsLoaderVersion='20261008a';
+export const analyticsLoaderVersion='20261023b';
 export const gtmNoscript='<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-WXTBD8HG" height="0" width="0" style="display:none;visibility:hidden" title="Google Tag Manager"></iframe></noscript>';
 // Card images: one column up to 820px, two columns in the 1200px wrap above it.
 const cardSizes='(min-width: 1200px) 565px, (min-width: 821px) calc(50vw - 35px), calc(100vw - 36px)';

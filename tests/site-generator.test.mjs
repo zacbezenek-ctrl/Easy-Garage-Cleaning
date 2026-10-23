@@ -117,7 +117,7 @@ test('the site build reproduces the checked-in pages, twice, without touching pr
   }
   const sitemap = readFileSync(join(site, 'sitemap.xml'), 'utf8');
   assert.equal(sitemap.split('<loc>https://easygaragecleaning.com/before-after</loc>').length - 1, 1);
-  assert.match(sitemap, new RegExp(`<lastmod>${BUILD_DATE}</lastmod>`));
+  assert.doesNotMatch(sitemap, /<lastmod>/, 'build dates must not masquerade as per-page content changes');
   const llms = readFileSync(join(site, 'llms.txt'), 'utf8');
   assert.match(llms, /^- https:\/\/easygaragecleaning\.com\/before-after$/m);
   assert.doesNotMatch(llms, /node_modules|\.claude|worktrees|egc-platform|synthetic|client-login|business-hub|\/dispatch|hub-login-setup|message-templates|staff-login|\/employee|\/crew\/|venv|\.next|\.turbo|\.cache|lighthouse|test-results|field-qa/);
@@ -125,7 +125,7 @@ test('the site build reproduces the checked-in pages, twice, without touching pr
 
 test('the recorded build date is the single source the drift check rebuilds with', { skip }, t => {
   assert.match(BUILD_DATE, /^\d{4}-\d{2}-\d{2}$/, `${BUILD_DATE_FILE} must hold {"buildDate": "YYYY-MM-DD"}`);
-  assert.match(readFileSync(join(root, 'sitemap.xml'), 'utf8'), new RegExp(`<lastmod>${BUILD_DATE}</lastmod>`), `sitemap.xml was not built with ${BUILD_DATE}.\n${REBUILD_HINT}`);
+  assert.doesNotMatch(readFileSync(join(root, 'sitemap.xml'), 'utf8'), /<lastmod>/, 'omit unverified per-page modification dates');
   const temp = mkdtempSync(join(tmpdir(), 'egc-build-date-'));
   t.after(() => rmSync(temp, { recursive: true, force: true }));
   const file = join(temp, 'site-build.json');

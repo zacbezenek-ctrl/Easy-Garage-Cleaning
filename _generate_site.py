@@ -13,6 +13,8 @@ import re
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
+from _seo_metadata import BUSINESS_PROFILES, normalize_schema_metadata
+from _public_experience import apply_public_experience
 
 ROOT = Path(__file__).parent
 SITE = "https://easygaragecleaning.com"
@@ -715,7 +717,7 @@ def dedupe_mobile_sheet_css(text):
     return text[:first + len(block)] + text[first + len(block):].replace(block, "")
 
 # analytics-loader.js is served immutable: every change to it bumps this version.
-ANALYTICS_LOADER_VERSION = "20261008a"
+ANALYTICS_LOADER_VERSION = "20261023b"
 GTAG_BLOCK = """<!-- Analytics events queue immediately; vendor libraries load after interaction. -->
 <script src="/analytics-loader.js?v=""" + ANALYTICS_LOADER_VERSION + """" defer></script>
 """
@@ -1390,13 +1392,10 @@ def business_schema():
         "priceRange": "$$",
         "knowsAbout": KNOWS_ABOUT,
         "address": {"@type": "PostalAddress", "addressLocality": "Fort Collins", "addressRegion": "CO", "postalCode": "80525", "addressCountry": "US"},
-        "geo": {"@type": "GeoCoordinates", "latitude": 40.585260, "longitude": -105.084419},
         "areaServed": AREA_SERVED,
         "openingHoursSpecification": [{"@type": "OpeningHoursSpecification", "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], "opens": "07:00", "closes": "19:00"}],
         "founder": {"@type": "Person", "name": "Zac Bezenek", "url": f"{SITE}/about.html"},
-        "sameAs": [
-            "https://www.google.com/maps/place/Fort+Collins,+CO",
-        ],
+        "sameAs": BUSINESS_PROFILES.copy(),
         "hasOfferCatalog": offer_catalog(),
     }
 
@@ -1462,11 +1461,6 @@ def website_schema():
                 "@type": "ContactAction",
                 "name": "Book online",
                 "target": f"{SITE}/book.html",
-            },
-            {
-                "@type": "SearchAction",
-                "target": {"@type": "EntryPoint", "urlTemplate": f"{SITE}/faq.html?q={{search_term_string}}"},
-                "query-input": "required name=search_term_string",
             },
         ],
     }, ensure_ascii=False)
@@ -2576,7 +2570,7 @@ def render_about():
 
 def render_projects_index():
     title = "Project Gallery | Garage Cleanouts Fort Collins CO"
-    desc = "Customer-approved garage cleanout project stories from Easy Garage Cleaning in Northern Colorado."
+    desc = "See real garage cleanout photos from Easy Garage Cleaning in Northern Colorado. Explore before-and-after results and plan your free walkthrough."
     canonical = f"{SITE}/projects/"
     cards = '<article class="project-card reveal" id="projects-empty"><p class="project-card-meta">Published with permission</p><h3>Customer-approved stories</h3><p>New project stories appear here only after the customer approves public use. In the meantime, see real project photos on our home page.</p><a href="/#work" class="project-card-link content-link">View project photos →</a></article>'
     schema = json.dumps([
@@ -2645,7 +2639,7 @@ def render_privacy_policy():
 <h2>How We Use Your Information</h2>
 <p>We use this information to answer requests, conduct walkthroughs, prepare estimates, schedule and deliver service, process payments, support customers, operate employee workflows, prevent abuse, keep business records, and measure or improve our advertising and website. We do not sell or rent customer contact information. We do not use SMS opt-in data for unrelated advertising.</p>
 <h2>Cookies &amp; Tracking</h2>
-<p>Our public marketing pages use Google Analytics, Microsoft Clarity, and the Meta Pixel. These providers may use cookies or similar technology and receive device identifiers, IP-derived location, page and campaign information, and interaction data for analytics and advertising measurement. Vendor libraries load after a short delay or your first interaction. You can limit cookies and interest-based advertising through your browser, device, and provider settings.</p>
+<p>Our public marketing pages use Google Analytics, Microsoft Clarity, and the Meta Pixel. These providers may use cookies or similar technology and receive device identifiers, IP-derived location, page and campaign information, and interaction data for analytics and advertising measurement. Google Analytics loads asynchronously once the page HTML is ready; other vendor libraries load after a short delay or your first interaction. You can limit cookies and interest-based advertising through your browser, device, and provider settings.</p>
 <h2>Data Retention</h2>
 <p>We retain information for as long as reasonably necessary to provide service, maintain business and payment records, resolve disputes, prevent fraud, and meet legal obligations. Retention varies by record type. You may request deletion, subject to records we must or reasonably need to keep.</p>
 <h2>Data Security</h2>
@@ -3245,7 +3239,9 @@ AI crawlers allowed — see robots.txt
 def generate_sitemap(urls):
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
     for loc, priority in urls:
-        lines += [f"  <url><loc>{loc}</loc><lastmod>{TODAY}</lastmod><changefreq>monthly</changefreq><priority>{priority}</priority></url>"]
+        # Build time is not each page's last significant modification. Omit this
+        # optional field until per-page content dates are maintained reliably.
+        lines += [f"  <url><loc>{loc}</loc><changefreq>monthly</changefreq><priority>{priority}</priority></url>"]
     lines.append("</urlset>")
     (ROOT / "sitemap.xml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -3703,7 +3699,8 @@ def inject_blog_related_links(text, filename):
     pub = BLOG_PUBLISHED.get(filename, TODAY)
     body = enrich_blog_content(m.group(2), filename, pub)
     read_m = article_read_time(body)
-    header = article_header_html("", pub, read_m) if "article-hero-strip" not in text else ""
+    # An authored byline already supplies its publication date and reading time.
+    header = article_header_html("", pub, read_m) if not re.search(r'class="article-meta(?:\s|\")', text) else ""
     toc = article_toc_html(body) if read_m >= 4 and "article-toc" not in text else ""
     related = related_posts_html(filename) if "related-posts" not in text else ""
     if "compare-scroll" not in body:
@@ -4499,11 +4496,12 @@ def patch_static_pages():
         text = re.sub(r'/analytics-loader\.js\?v=[^"\']+', '/analytics-loader.js?v=' + ANALYTICS_LOADER_VERSION, text)
         text = re.sub(r'^[ \t]+$', '', text, flags=re.M)
         text = re.sub(r'/styles\.css\?v=[^"\']+', '/styles.css?v=' + STYLES_VERSION, text)
+        text = re.sub(r'/fb-capture\.js\?v=[^"\']+', '/fb-capture.js?v=20261023a', text)
         has_public_form = bool(re.search(r'<form[^>]*class=["\'][^"\']*(?:lead-form-lite|multi-step-form)', text, re.I))
         if has_public_form and 'fb-capture.js' not in text:
-            text = text.replace('</body>', '<script src="/fb-capture.js?v=20260903c" defer></script>\n</body>', 1)
+            text = text.replace('</body>', '<script src="/fb-capture.js?v=20261023a" defer></script>\n</body>', 1)
         elif not has_public_form:
-            text = re.sub(r'\s*<script src="/fb-capture\.js\?v=20260903c" defer></script>', '', text)
+            text = re.sub(r'\s*<script src="/fb-capture\.js\?v=20261023a" defer></script>', '', text)
         guarded = enforce_walkthrough_first_copy(text)
         if guarded != original:
             path.write_text(guarded, encoding="utf-8")
@@ -4862,6 +4860,8 @@ def main():
             continue
         original = page.read_text(encoding="utf-8")
         updated = declutter_public_page(original, page.name == "index.html" and page.parent == ROOT)
+        updated = apply_public_experience(updated, page.relative_to(ROOT), ROOT)
+        updated = normalize_schema_metadata(updated)
         if page.name == "flat-rate-junk-removal-fort-collins-co.html":
             updated = preserve_curbside_intent(updated)
         if updated != original:

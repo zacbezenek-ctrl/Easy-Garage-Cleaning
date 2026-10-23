@@ -67,6 +67,25 @@
   // Hub records the lead once; changed answers are a new inquiry.
   var sent = typeof WeakMap === 'function' ? new WeakMap() : null;
 
+  function measureReceipt(response, entry) {
+    // A successful HTTP request alone is not proof of a stored inquiry.
+    // This distinct event never implies an appointment, sale or payment.
+    if (!response || !response.ok || typeof response.json !== 'function') return;
+    return response.json().then(function (receipt) {
+      var status = receipt && receipt.receipt && receipt.receipt.status;
+      var recorded = ['syncing', 'synced', 'failed', 'held', 'abandoned'].indexOf(status) !== -1;
+      var delivered = receipt && receipt.highlevel && receipt.highlevel.synced === true;
+      if (!receipt || receipt.ok !== true || (!recorded && !delivered) || entry.measured) return;
+      if (!/^(?:www\.)?easygaragecleaning\.com$/.test(location.hostname) || typeof window.gtag !== 'function') return;
+      entry.measured = true;
+      // Never send contact details, submitted answers or the inquiry identifier.
+      window.gtag('event', 'website_inquiry_received', {
+        send_to: 'G-CV7HJ2QGHX', method: 'website_relay',
+        receipt_status: recorded ? status : 'delivered'
+      });
+    }).catch(function () {}); // Measurement must never affect delivery or retries.
+  }
+
   function payloadFor(f) {
     var fd = new FormData(f);
     var pick = function () { for (var i = 0; i < arguments.length; i++) { var v = fd.get(arguments[i]); if (v != null && String(v).trim()) return String(v); } return ''; };
@@ -105,7 +124,7 @@
       var body = JSON.stringify(payload);
       if (window.fetch) {
         fetch('/api/web-lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true })
-          .then(function (r) { entry.state = r && r.ok ? 'sent' : 'failed'; }, function () { entry.state = 'failed'; });
+          .then(function (r) { entry.state = r && r.ok ? 'sent' : 'failed'; return measureReceipt(r, entry); }, function () { entry.state = 'failed'; });
       } else if (navigator.sendBeacon) {
         entry.state = navigator.sendBeacon('/api/web-lead', body) ? 'sent' : 'failed';
       }
