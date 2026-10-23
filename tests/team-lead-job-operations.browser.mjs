@@ -38,7 +38,12 @@ const server = createServer(async (incoming, outgoing) => {
         ? await operations[isWrite ? 'post' : 'get']({ request, env })
         : await field[isWrite ? 'onRequestPost' : 'onRequestGet']({ request, env });
       if (url.pathname === '/api/field-jobs' && isWrite && response.ok) jobs.rows.set('jobs/job-complete', { ...complete, ...fieldStore.get('jobs/job-complete'), revision: 'completion-r2' });
-      if (loseSave && isWrite && response.ok && url.pathname === '/api/job-operations') { loseSave = false; outgoing.destroy(); return; }
+      if (loseSave && isWrite && response.ok && url.pathname === '/api/job-operations') {
+        // Send headers and an incomplete body so Chromium cannot transparently
+        // retry the transport before the page exercises its explicit retry UI.
+        loseSave = false; outgoing.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': '4096' });
+        outgoing.write('{"ok":'); setTimeout(() => incoming.socket.destroy(), 50); return;
+      }
       outgoing.writeHead(response.status, Object.fromEntries(response.headers)); outgoing.end(Buffer.from(await response.arrayBuffer())); return;
     }
     const pathname = url.pathname === '/crew/job-operations' ? '/crew/job-operations.html' : url.pathname;
