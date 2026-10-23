@@ -319,3 +319,20 @@ test('a refused quote save names each dispatch rule or overlap that stopped it, 
   assert.equal(saved.retrying, false);
   assert.notEqual(sent[1].body.requestId, sent[0].body.requestId, 'the refused request was released');
 });
+
+test('a job resumed without URL source saves its server-resolved walkthrough and retries unchanged', async () => {
+  const f = fixture(), original = f.deps.fetch;
+  f.deps.source = () => '';
+  f.deps.savedJobId = () => 'dispatch_job1';
+  f.deps.fetch = async (url, options) => url.startsWith('/api/walkthrough-handoff?')
+    ? reply({ ok: true, viewer: { id: 'sales.person' }, jobId: 'dispatch_job1', expectedRevision: 'r1', customerId: 'customer-1', sourceWalkthroughId: 'walk-1', sourceRevision: 'w1r' })
+    : original(url, options);
+  const resumed = createClient(f.deps);
+  f.lose(1);
+  await assert.rejects(resumed.save(f.draft()));
+  const sent = f.calls.at(-1).body;
+  assert.equal(sent.sourceWalkthroughId, 'walk-1');
+  assert.equal(sent.sourceRevision, 'w1r');
+  await createClient(f.deps).save(f.draft());
+  assert.deepEqual(f.calls.at(-1).body, sent);
+});
