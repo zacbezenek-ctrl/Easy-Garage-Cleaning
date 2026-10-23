@@ -57,7 +57,7 @@ async function authorizedJob(ctx, id, allowOperations = true) {
 async function requireWorkday(ctx, job, input = {}) {
   if (!ctx.visits || ctx.manager || ctx.jobOperations && input.action === 'complete') return;
   const today = fieldToday(new Date()), day = input.action === 'end_day' && [today, addDays(today, -1)].includes(input.visitDate) ? input.visitDate : today;
-  if (!await assignedOn(job, day, ctx.access)) throw fieldFailure(day === today ? 'You are not scheduled on this job today. Ask operations to add you to today's crew before recording work.' : `You were not scheduled on this job on ${day}. Send this end of day's notes to operations.`, 403, 'FIELD_JOB_NOT_ASSIGNED_TODAY');
+  if (!await assignedOn(job, day, ctx.access)) throw fieldFailure(day === today ? 'You are not scheduled on this job today. Ask operations to add you to today’s crew before recording work.' : `You were not scheduled on this job on ${day}. Send this end of day’s notes to operations.`, 403, 'FIELD_JOB_NOT_ASSIGNED_TODAY');
 }
 
 async function projection(ctx, job, events, options) {
@@ -137,7 +137,7 @@ export async function onRequestGet({ request, env }) {
       return reply(200, { ok: true, ...await detail(ctx, env, jobId, params.get('historyCursor') || '') });
     }
     const date = params.get('date') || fieldToday(), days = Number(params.get('days') || 1), status = params.get('status') || 'all';
-    if (!validDate(date) || !Number.isInteger(days) || days < 1 || days > 7 || !['all', 'active', 'completed', 'cancelled'].includes(status)) throw fieldFailure('Choose a valid Mountain date, 1-7 days and a supported status filter.');
+    if (!validDate(date) || !Number.isInteger(days) || days < 1 || days > 7 || !['all', 'active', 'completed', 'cancelled'].includes(status)) throw fieldFailure('Choose a valid Mountain date, 1–7 days and a supported status filter.');
     const end = new Date(`${date}T12:00:00Z`); end.setUTCDate(end.getUTCDate() + days - 1);
     const source = await ctx.store.listDays(date, end.toISOString().slice(0, 10), { walkthroughs: true }), jobs = [], walkthroughs = [];
     for (const job of source) {

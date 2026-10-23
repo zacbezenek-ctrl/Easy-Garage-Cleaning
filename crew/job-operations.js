@@ -46,7 +46,7 @@
     if (state.busy) return;
     // Retain the exact body and request ID after a lost response. Never silently
     // turn an uncertain save into a new operation or replay it under another user.
-    state.pending = { path, body }; state.busy = true; message.textContent = 'Saving.';
+    state.pending = { path, body }; state.busy = true; message.textContent = 'Saving…';
     try {
       const result = await request(path, body); state.pending = null;
       message.textContent = 'Saved.'; await load(); return result;
@@ -72,11 +72,11 @@
           try {
             const found = await request('/api/job-operations?view=search&q=' + encodeURIComponent(customer.value));
             const jobs = found.results.map(row => row.job).filter(job => job.customerId === customer.value);
-            sourceContainer.replaceChildren(); sourceJob = select(sourceContainer, 'sourceJobId', 'Prior job at this property (when applicable)', jobs.map(job => ({ id: job.id, name: [job.address, job.date, job.title].filter(Boolean).join(' � ') })), '');
+            sourceContainer.replaceChildren(); sourceJob = select(sourceContainer, 'sourceJobId', 'Prior job at this property (when applicable)', jobs.map(job => ({ id: job.id, name: [job.address, job.date, job.title].filter(Boolean).join(' · ') })), '');
           } catch (error) { notice(error); }
         });
       }), container);
-    } else form.append(h('p', {}, [job.customer, job.phone, job.address].filter(Boolean).join(' � ')));
+    } else form.append(h('p', {}, [job.customer, job.phone, job.address].filter(Boolean).join(' · ')));
     const title = field(form, 'title', 'Job title', job.title);
     const service = field(form, 'serviceType', 'Service', job.serviceType);
     const address = field(form, 'address', 'Job address', job.address);
@@ -144,7 +144,7 @@
     if (state.job) return edit(state.job);
     const section = h('section', {}, button('Create job', () => edit()), button('Refresh', load));
     const search = field(section, 'search', 'Search job history'); section.append(button('Search', async () => { const data = await request('/api/job-operations?view=search&q=' + encodeURIComponent(search.value)); list.replaceChildren(...data.results.map(row => jobRow(row.job))); }));
-    const jobRow = job => h('li', {}, button([job.customer || job.title || 'Job', job.date || 'Unscheduled', job.time || '', job.status].join(' � '), () => open(job.id)));
+    const jobRow = job => h('li', {}, button([job.customer || job.title || 'Job', job.date || 'Unscheduled', job.time || '', job.status].join(' · '), () => open(job.id)));
     const list = h('ul', {}, ...state.board.jobs.map(jobRow)); section.append(list); root.replaceChildren(section);
   }
   load().catch(notice);

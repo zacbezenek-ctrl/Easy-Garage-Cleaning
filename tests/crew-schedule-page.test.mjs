@@ -32,7 +32,7 @@ const SESSIONS = { ben: { user: 'ben.crew', role: 'crew' }, eli: { user: 'eli.te
 async function answer(who, url, jobs = JOBS) {
   const params = new URL(url, 'https://easygaragecleaning.com').searchParams, scope = params.get('scope'), session = SESSIONS[who];
   const canViewAll = who === 'eli';
-  if (scope === 'all' && !canViewAll) return Response.json({ ok: false, code: 'crew_schedule_forbidden', error: 'Every crew's schedule needs the Team lead or Manager role. Ask the owner.' }, { status: 403 });
+  if (scope === 'all' && !canViewAll) return Response.json({ ok: false, code: 'crew_schedule_forbidden', error: 'Every crew’s schedule needs the Team lead or Manager role. Ask the owner.' }, { status: 403 });
   const body = await crewSchedule({ session, env: {}, crews: CREWS, jobs, from: params.get('from'), to: params.get('to'), scope, now: new Date(NOW),
     access: { assigned: async row => (row.assignedCrew || []).includes(session.user), exactly: id => id === session.user }, names: { 'ana.lead': 'Ana Synthetic', 'ben.crew': 'Ben Synthetic', 'cara.crew': 'Cara Synthetic' } });
   return Response.json(body);
@@ -57,17 +57,17 @@ async function page({ respond, hint = null, online = true, prefs = {}, clock = {
 }
 // Each text node is a separate word group, as a browser lays the row's blocks out.
 const leaves = node => node.nodeType === 3 ? [node.data] : node.childNodes.flatMap(leaves);
-const text = node => leaves(node).map(part => part.trim()).filter(Boolean).join(' ').replace(/\s+/g, ' ').replace(/ $/, '');
+const text = node => leaves(node).map(part => part.trim()).filter(Boolean).join(' ').replace(/\s+/g, ' ').replace(/ →$/, '');
 
-test('a crew member sees today for their crew: their own jobs open the job page, a crewmate's is shown but locked', async () => {
+test('a crew member sees today for their crew: their own jobs open the job page, a crewmate’s is shown but locked', async () => {
   const { main, calls } = await page({ respond: url => answer('ben', url) });
   assert.deepEqual(calls, ['/api/crew-schedule?from=2026-10-16&to=2026-10-16&scope=mine']);
-  assert.equal(text(main.querySelector('h1')), 'My crew's schedule');
+  assert.equal(text(main.querySelector('h1')), 'My crew’s schedule');
   const rows = main.querySelectorAll('.job-row');
   assert.deepEqual(rows.map(row => [row.tagName, row.getAttribute('data-job')]), [['A', 'job_ben'], ['DIV', 'job_ana']]);
   assert.equal(rows[0].getAttribute('href'), '/crew/job.html?jobId=job_ben');
-  assert.match(text(rows[0]), /^9:30 AM-12:00 PM Alma � Fort Collins Garage cleanout � Crew 1 � Lead: Ben Synthetic You're on this job/);
-  assert.match(text(rows[1]), /1:00 PM-3:00 PM Bea � Fort Collins .*In progress Not on your assignment/);
+  assert.match(text(rows[0]), /^9:30 AM–12:00 PM Alma · Fort Collins Garage cleanout · Crew 1 · Lead: Ben Synthetic You’re on this job/);
+  assert.match(text(rows[1]), /1:00 PM–3:00 PM Bea · Fort Collins .*In progress Not on your assignment/);
   assert.equal(main.querySelectorAll('img').length, 0, 'customer text is never markup');
   assert.equal(main.querySelectorAll('.chips').length, 0, 'one crew: no crew switcher');
   assert.ok(!text(main).includes('990'), 'no money');
@@ -80,13 +80,13 @@ test('an estimator sees their own walkthroughs labelled Walkthrough, each openin
   const rows = main.querySelectorAll('.job-row');
   assert.deepEqual(rows.map(row => [row.tagName, row.getAttribute('data-job'), row.getAttribute('data-type'), row.getAttribute('href')]), [
     ['A', 'walk_gus', 'walkthrough', '/crew/gameplan.html?walkthroughId=walk_gus'], ['A', 'walk_gus_later', 'walkthrough', '/crew/gameplan.html?walkthroughId=walk_gus_later']]);
-  assert.match(text(rows[0]), /^10:00 AM-11:00 AM Fay � Fort Collins Walkthrough Walkthrough Your walkthrough$/);
-  assert.equal(rows[0].getAttribute('aria-label'), 'Open the game plan for the walkthrough at 10:00 AM-11:00 AM with Fay � Fort Collins');
+  assert.match(text(rows[0]), /^10:00 AM–11:00 AM Fay · Fort Collins Walkthrough Walkthrough Your walkthrough$/);
+  assert.equal(rows[0].getAttribute('aria-label'), 'Open the game plan for the walkthrough at 10:00 AM–11:00 AM with Fay · Fort Collins');
   assert.ok(!text(main).includes('Needs crew') && !text(main).includes('No crew yet'), 'a walkthrough never asks for a crew');
   // Someone on a crew who also holds a walkthrough sees it in its own block, apart from the crew's work.
   const shared = JOBS.map(row => row.id === 'walk_gus_later' ? { ...row, assignedCrew: ['gus.sales', 'ben.crew'] } : row);
   const ben = await page({ respond: url => answer('ben', url, shared) });
-  assert.deepEqual(ben.main.querySelectorAll('.crew-block h3').map(text), ['Crew 1 � Lead: Ana Synthetic', 'Your walkthroughs']);
+  assert.deepEqual(ben.main.querySelectorAll('.crew-block h3').map(text), ['Crew 1 · Lead: Ana Synthetic', 'Your walkthroughs']);
   assert.equal(ben.main.querySelector('[data-job="walk_gus_later"]').getAttribute('href'), '/crew/gameplan.html?walkthroughId=walk_gus_later');
   assert.equal(ben.main.querySelectorAll('[data-job="walk_gus"]').length, 0, 'another estimator\'s walkthrough never shows');
   const eli = await page({ respond: url => answer('eli', url), hint: { user: 'eli.team', capabilities: ['schedule.view'] } });
@@ -102,8 +102,8 @@ test('This week reads seven days from today, shows each day, and is remembered o
   assert.deepEqual(days.map(day => day.getAttribute('data-day')), ['2026-10-16', '2026-10-17', '2026-10-18', '2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22']);
   assert.match(text(days[0].querySelector('h2')), /Friday, Oct 16 Today/);
   assert.equal(text(days[1]), 'Saturday, Oct 17 No crew jobs.');
-  assert.match(text(days[4]), /9:30 AM Eve � Fort Collins .*Multi-day � through Wed, Oct 21/);
-  assert.match(text(days[5]), /Until 3:00 PM Eve � Fort Collins .*Continues � through Wed/);
+  assert.match(text(days[4]), /9:30 AM Eve · Fort Collins .*Multi-day · through Wed, Oct 21/);
+  assert.match(text(days[5]), /Until 3:00 PM Eve · Fort Collins .*Continues · through Wed/);
   assert.deepEqual(JSON.parse(view.local.getItem('egc.crew-schedule.v1')), { range: 'week', crew: 'all' });
   const again = await page({ respond: url => answer('ben', url), prefs: { 'egc.crew-schedule.v1': JSON.stringify({ range: 'week', crew: 'all' }) } });
   assert.equal(again.calls[0], '/api/crew-schedule?from=2026-10-16&to=2026-10-22&scope=mine');
@@ -115,8 +115,8 @@ test('a team lead reads every crew, switches between crews, and sees the work no
   assert.equal(text(view.main.querySelector('h1')), 'Every crew');
   const chips = () => view.main.querySelectorAll('.chips button');
   assert.deepEqual(chips().map(button => [button.getAttribute('data-crew'), text(button)]), [['all', 'All crews'], ['crew_one', 'Crew 1'], ['crew_two', 'Crew 2'], ['none', 'Not on a crew']]);
-  assert.deepEqual(view.main.querySelectorAll('.crew-block h3').map(text), ['Crew 1 � Lead: Ana Synthetic', 'Crew 2 � Lead: Cara Synthetic', 'Not on a crew'], 'every crew by priority, then the work on no crew');
-  assert.match(text(view.main.querySelector('[data-job="job_open"]')), /Dot � Fort Collins Garage cleanout � No crew yet Needs crew/);
+  assert.deepEqual(view.main.querySelectorAll('.crew-block h3').map(text), ['Crew 1 · Lead: Ana Synthetic', 'Crew 2 · Lead: Cara Synthetic', 'Not on a crew'], 'every crew by priority, then the work on no crew');
+  assert.match(text(view.main.querySelector('[data-job="job_open"]')), /Dot · Fort Collins Garage cleanout · No crew yet Needs crew/);
   assert.equal(view.main.querySelectorAll('a.job-row').length, 0, 'the team lead is on none of these jobs, so none opens');
   view.main.querySelector('[data-crew="crew_two"]').click();
   await view.settle();
@@ -125,10 +125,10 @@ test('a team lead reads every crew, switches between crews, and sees the work no
   assert.equal(chips().find(button => button.getAttribute('aria-pressed') === 'true').getAttribute('data-crew'), 'crew_two');
 });
 
-test('a stale hint falls back to the person's own crews; 401 asks to sign in; offline and outages say so', async () => {
+test('a stale hint falls back to the person’s own crews; 401 asks to sign in; offline and outages say so', async () => {
   const stale = await page({ respond: url => answer('ben', url), hint: { user: 'ben.crew', capabilities: ['schedule.view'] } });
   assert.deepEqual(stale.calls, ['/api/crew-schedule?from=2026-10-16&to=2026-10-16&scope=all', '/api/crew-schedule?from=2026-10-16&to=2026-10-16&scope=mine']);
-  assert.equal(text(stale.main.querySelector('h1')), 'My crew's schedule');
+  assert.equal(text(stale.main.querySelector('h1')), 'My crew’s schedule');
   const promoted = await page({ respond: url => answer('eli', url) });
   assert.deepEqual(promoted.calls.map(url => new URL(url, 'https://x.invalid').searchParams.get('scope')), ['mine', 'all'], 'a viewer the server says reads every crew gets every crew');
   const signedOut = await page({ respond: () => Response.json({ ok: false, code: 'crew_schedule_sign_in_required', error: 'Sign in to see your crew schedule.' }, { status: 401 }) });
@@ -136,14 +136,14 @@ test('a stale hint falls back to the person's own crews; 401 asks to sign in; of
   assert.equal(safeStaffNext('/crew/schedule'), '/crew/schedule', 'the sign-in page returns to the schedule');
   const offline = await page({ respond: () => { throw new Error('no network'); }, online: false });
   assert.deepEqual(offline.calls, []);
-  assert.match(text(offline.main), /You're offline\. The crew schedule loads when you reconnect\./);
+  assert.match(text(offline.main), /You’re offline\. The crew schedule loads when you reconnect\./);
   const down = await page({ respond: () => Response.json({ ok: false, code: 'crew_schedule_storage_unavailable', error: 'The crew schedule could not be loaded. Retry when connected.' }, { status: 503 }) });
   assert.match(text(down.main.querySelector('.notice')), /The crew schedule could not be loaded\. Retry when connected\. Try again/);
   const broken = await page({ respond: () => Response.json({ ok: true, scope: 'mine', groups: 'nope' }) });
   assert.match(text(broken.main.querySelector('.notice')), /incomplete/);
 });
 
-test('with no role flag the Hub lists no schedule.view, so a team lead's first open asks twice and later opens once', async () => {
+test('with no role flag the Hub lists no schedule.view, so a team lead’s first open asks twice and later opens once', async () => {
   // /api/hub-auth lists schedule.view only with EGC_STAFF_ROLE_ACCESS on; the server still answers canViewAll.
   const first = await page({ respond: url => answer('eli', url), hint: { user: 'eli.team', capabilities: [] } });
   assert.deepEqual(first.calls.map(url => new URL(url, 'https://x.invalid').searchParams.get('scope')), ['mine', 'all']);
@@ -158,9 +158,9 @@ test('with no role flag the Hub lists no schedule.view, so a team lead's first o
 });
 
 test('EGC_CREW_SCHEDULE=false: the page says the schedule is off, with nothing to retry', async () => {
-  const off = await page({ respond: () => Response.json({ ok: false, code: 'crew_schedule_disabled', error: 'The crew schedule is turned off. Ask your manager for this week's schedule.' }, { status: 404 }) });
+  const off = await page({ respond: () => Response.json({ ok: false, code: 'crew_schedule_disabled', error: 'The crew schedule is turned off. Ask your manager for this week’s schedule.' }, { status: 404 }) });
   assert.equal(off.calls.length, 1);
-  assert.match(text(off.main), /Schedule is off The crew schedule is turned off\. Ask your manager for this week's schedule\. Back to crew home/);
+  assert.match(text(off.main), /Schedule is off The crew schedule is turned off\. Ask your manager for this week’s schedule\. Back to crew home/);
   assert.equal(off.main.querySelector('a.btn').getAttribute('href'), '/crew/');
   assert.equal(off.main.querySelectorAll('button').length, 0, 'no Try again, Refresh or range buttons');
 });

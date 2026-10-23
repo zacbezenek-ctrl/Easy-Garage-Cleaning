@@ -125,7 +125,7 @@ test('API calls, non-GET requests, other origins and the kill-switch config are 
   assert.equal((await sw.cached()).some(([, path]) => path.startsWith('/api/')), false);
 });
 
-test('Today's work loads network-first and falls back to the cached shell, or the offline page, when the connection drops', async () => {
+test('Today’s work loads network-first and falls back to the cached shell, or the offline page, when the connection drops', async () => {
   const sw = await installed();
   const online = await sw.fetchEvent('/crew/job.html?jobId=job-a', { mode: 'navigate' });
   assert.equal(await online.response.text(), 'network /crew/job.html', 'online navigations always use the fresh page');
@@ -189,7 +189,7 @@ test('the kill switch unregisters the worker and removes the shell cache', async
   assert.equal(unreachable.state.unregistered, 0, 'an unreachable config never disables offline support');
 });
 
-test('Background Sync replays the signed-in account's queued actions and asks to retry while offline', async () => {
+test('Background Sync replays the signed-in account’s queued actions and asks to retry while offline', async () => {
   const indexedDB = fakeIndexedDB(), sent = [];
   const api = (url, method, body) => {
     if (url.pathname === '/api/hub-auth') return basic(Response.json({ ok: true, user: 'Crew.One' }));
@@ -210,12 +210,12 @@ test('Background Sync replays the signed-in account's queued actions and asks to
   const synced = await sw.dispatch('sync', { tag: 'egc-field-outbox' });
   assert.equal(synced.settled[0].status, 'fulfilled');
   assert.deepEqual(sent.map(body => [body.requestId, body.expectedRevision]), [['00000000-0000-4000-8000-000000000101', 'server-rev']]);
-  assert.deepEqual(indexedDB.rows('egc-field-outbox', 'actions').map(row => row.user), ['Crew.Two'], 'another account's action stays queued');
+  assert.deepEqual(indexedDB.rows('egc-field-outbox', 'actions').map(row => row.user), ['Crew.Two'], 'another account’s action stays queued');
   assert.equal(sw.messages.at(-1).type, 'egc-field-outbox-changed'); assert.equal(sw.messages.at(-1).applied, 1);
   assert.equal((await sw.cached()).some(([, path]) => path.startsWith('/api/')), false);
 });
 
-test('the precached shell matches the versioned files Today's work and the offline page load', () => {
+test('the precached shell matches the versioned files Today’s work and the offline page load', () => {
   const job = read('crew/job.html'), offline = read('crew/offline.html'), assets = [...worker.matchAll(/'(\/(?:crew\/[a-z-]+|app-touch)\.(?:js|css)\?v=[^']+)'/g)].map(match => match[1]);
   for (const path of [...job.matchAll(/(?:src|href)="(\/(?:crew\/[^"]+|app-touch\.css)\?v=[^"]+)"/g)].map(match => match[1])) assert.ok(assets.includes(path), `${path} must be precached for offline reloads`);
   assert.doesNotMatch(offline, /<link\b|<script\b/, 'the offline page is self-contained: it renders signed out and offline');
@@ -312,7 +312,7 @@ test('staff gate on: a signed-out install caches the public shell, refusals are 
   assert.deepEqual(await shellKeys(sw), [...PUBLIC_KEYS, ...STAFF_KEYS].sort(), 'a signed-in load fills in the job shell at runtime');
   sw.state.online = false;
   const offline = await sw.fetchEvent('/crew/job.html?jobId=synthetic-job-2', { mode: 'navigate' });
-  assert.equal(await offline.response.text(), readFileSync(new URL('../crew/job.html', import.meta.url), 'utf8'), 'Today's work reloads offline from the signed-in copy');
+  assert.equal(await offline.response.text(), readFileSync(new URL('../crew/job.html', import.meta.url), 'utf8'), 'Today’s work reloads offline from the signed-in copy');
 });
 
 test('staff gate on: a signed-in install caches the whole shell, pretty-URL redirects included, and never a sign-in page', async t => {
