@@ -108,6 +108,7 @@ function card(job,group){
   const actions=h('div',{class:'wt-card-actions'},primary,
     phone?h('a',{class:'hub-btn',href:'tel:'+phone,'aria-label':'Call '+(job.customer||'the customer')},'Call customer'):null);
   if(!field&&primary.textContent!=='Office follow-ups')actions.append(officeLink());
+  if(manager())actions.append(h('a',{class:'hub-btn',href:'/employee.html?view=estimator_coaching&walkthroughId='+encodeURIComponent(job.id)},'Coaching review'));
   if(field)actions.append(btn('Audio & transcript',()=>recordings(job),'wt-recordings',{disabled:S.busy,'aria-label':'Audio and transcript for '+(job.customer||'this walkthrough')}));
   if(current==='open'&&job.date)actions.append(btn('Reschedule',()=>open(job,'edit'),'',{disabled:S.busy,'aria-label':'Reschedule '+(job.customer||'this walkthrough')}));
   if(current==='open'||rebook)actions.append(btn('Cancel',()=>open(job,'schedule.cancel'),'danger',{disabled:S.busy,'aria-label':'Cancel the walkthrough for '+(job.customer||'this customer')}));

@@ -1,0 +1,37 @@
+/* Human-reviewed coaching uses the existing recordings and estimator accuracy views. */
+(function(){
+'use strict';
+const PATH='/api/estimator-coaching';
+let host=null,ctx=null,generation=0,dirty=false,busy=false,pending=null;
+function h(tag,props,...children){const node=document.createElement(tag);for(const [key,value]of Object.entries(props||{})){if(value==null||value===false)continue;if(key.startsWith('on'))node.addEventListener(key.slice(2),value);else if(key==='class')node.className=value;else node.setAttribute(key,String(value));}for(const child of children.flat(Infinity))if(child!=null)node.append(child instanceof Node?child:document.createTextNode(String(child)));return node;}
+const button=(label,click)=>h('button',{type:'button',class:'hub-btn',onclick:click},label);
+async function api(path,body){const fetcher=ctx?.hubFetch||fetch;const response=await fetcher(path,{credentials:'same-origin',cache:'no-store',...(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||'Coaching could not be loaded. Retry.');return data;}
+function base(){host.replaceChildren(h('header',{class:'hub-head'},h('div',{},h('h1',{},'Estimator coaching'),h('p',{},'Review the conversation, record evidence, and agree on one improvement.'))),h('p',{},h('a',{href:'/employee.html?view=job_actuals'},'Open estimator accuracy in Job actuals'),' · ',h('a',{href:'/employee.html?view=open_quotes'},'Open quote outcomes')));}
+function canLeave(){return !busy&&(!dirty||window.confirm('Leave this unsaved coaching review?'));}
+async function list(){if(!canLeave())return;dirty=false;pending=null;const token=++generation;base();const body=h('section',{class:'hub-card'},'Loading walkthroughs…');host.append(body);try{const data=await api(PATH);if(token!==generation)return;body.replaceChildren(h('h2',{},'Walkthroughs from the last 90 days'));const input=h('input',{type:'search',placeholder:'Search customer or estimator','aria-label':'Search walkthroughs'}),rows=h('div',{class:'coaching-visits'});body.append(input,rows);const draw=()=>{const query=input.value.toLowerCase();const found=data.visits.filter(v=>[v.customer,...v.estimators].join(' ').toLowerCase().includes(query));rows.replaceChildren(...found.map(v=>button(`${v.date} · ${v.customer} · ${v.estimators.join(', ')||'No estimator'} · ${v.outcome}`,()=>open(v.id))));if(!found.length)rows.append(h('p',{},'No walkthroughs match.'));};input.addEventListener('input',draw);draw();}catch(error){if(token===generation)body.replaceChildren(h('p',{role:'alert'},error.message),button('Retry',list));}}
+async function open(id){if(!canLeave())return;dirty=false;pending=null;const token=++generation;base();const body=h('section',{class:'hub-card'},'Loading review…');host.append(body);try{const data=await api(PATH+'?walkthroughId='+encodeURIComponent(id));if(token!==generation)return;drawReview(body,data);}catch(error){if(token===generation)body.replaceChildren(h('p',{role:'alert'},error.message),button('Retry',()=>open(id)),button('All walkthroughs',list));}}
+function drawReview(body,data){
+ const {visit,review,criteria}=data;body.replaceChildren(button('All walkthroughs',list),h('h2',{},`${visit.customer} · ${visit.date}`),h('p',{},`Outcome: ${visit.outcome}`));
+ const status=h('p',{role:'status'});body.append(button('Open audio & transcripts',()=>{if(!window.EGCRecordings?.open){status.textContent='Recordings are unavailable. Refresh the Hub and retry.';return;}Promise.resolve(window.EGCRecordings.open(visit.id)).catch(()=>{status.textContent='Recordings could not open. Retry.';});}));
+ if(review)body.append(h('p',{},`Last saved by ${review.reviewedBy} at ${review.reviewedAt}`));
+ if(!visit.estimators.length){body.append(h('p',{},'Link an estimator to this walkthrough before reviewing it.'),status);return;}
+ const form=h('form',{class:'coaching-form'}),fields=h('fieldset',{}),estimator=h('select',{name:'estimator',required:true},...visit.estimators.map(id=>h('option',{value:id},id))),source=h('select',{name:'source'},h('option',{value:'recording'},'Recording / transcript'),h('option',{value:'observation'},'Direct observation'));
+ const label=(title,input)=>h('label',{},h('span',{},title),input);
+ if(review&&visit.estimators.includes(review.estimator))estimator.value=review.estimator;
+ source.value=review?.source||'recording';fields.append(label('Estimator',estimator),label('Evidence source',source),h('p',{},'1 = needs work · 2 = adequate · 3 = strong. Leave missing evidence as Not observed. Include a timestamp or quote for recording evidence.'));
+ const controls={};for(const [id,title]of criteria){const rating=review?.ratings?.[id],select=h('select',{'aria-label':title+' rating'},h('option',{value:''},'Not observed'),...[1,2,3].map(score=>h('option',{value:score},String(score)))),evidence=h('textarea',{rows:2,maxlength:1000,placeholder:'What happened? Include a timestamp or short quote.'});select.value=rating?.score==null?'':String(rating.score);evidence.value=rating?.evidence||'';controls[id]={select,evidence};fields.append(h('section',{},h('h3',{},title),label('Rating',select),label('Evidence',evidence)));}
+ const next=h('textarea',{name:'nextStep',rows:3,maxlength:2000,required:true});next.value=review?.nextStep||'';const save=h('button',{type:'submit',class:'hub-btn primary'},'Save coaching review');fields.append(label('One improvement to practice on the next walkthrough',next),save);form.append(fields,status);body.append(form);
+ form.addEventListener('input',()=>{dirty=true;});form.addEventListener('change',()=>{dirty=true;});
+ form.addEventListener('submit',async event=>{event.preventDefault();if(busy)return;const ratings=Object.fromEntries(Object.entries(controls).map(([id,{select,evidence}])=>[id,{score:select.value===''?null:Number(select.value),evidence:evidence.value}]));
+ if(!pending)pending={walkthroughId:visit.id,requestId:crypto.randomUUID(),jobRevision:visit.revision,expectedRevision:review?.revision??null,estimator:estimator.value,source:source.value,ratings,nextStep:next.value};
+ busy=true;fields.disabled=true;save.textContent='Saving…';status.textContent='';const token=generation;
+ try{await api(PATH,pending);if(token!==generation)return;busy=false;dirty=false;pending=null;await open(visit.id);if(token+1===generation)host.append(h('p',{role:'status'},'Coaching review saved.'));}
+ catch(error){if(token!==generation)return;busy=false;status.replaceChildren(document.createTextNode(error.message+' Your review is kept. '),button('Retry same save',()=>form.requestSubmit()),button('Reload saved review',()=>{if(canLeave()){dirty=false;pending=null;void open(visit.id);}}));save.textContent='Retry same save';save.disabled=false;fields.disabled=false;for(const control of fields.querySelectorAll('input,select,textarea'))control.disabled=true;}
+ });
+}
+function mount(element,context={}){unmount();host=element;ctx=context;host.classList.add('egc-coaching','hub-screen');const id=new URLSearchParams(location.search).get('walkthroughId');if(id)void open(id);else void list();}
+function unmount(){generation++;host=null;ctx=null;dirty=false;busy=false;pending=null;}
+window.addEventListener('egc:signout',unmount);
+window.addEventListener('beforeunload',event=>{if(dirty||busy){event.preventDefault();event.returnValue='';}});
+window.EGCEstimatorCoaching={mount,unmount,canLeave};
+})();
