@@ -30,7 +30,7 @@ function drawReview(body,data){
  });
 }
 function mount(element,context={}){unmount();host=element;ctx=context;host.classList.add('egc-coaching','hub-screen');const id=new URLSearchParams(location.search).get('walkthroughId');if(id)void open(id);else void list();}
-function unmount(){generation++;host=null;ctx=null;dirty=false;busy=false;pending=null;}
+function unmount(){generation++;host?.replaceChildren();host?.classList.remove('egc-coaching','hub-screen');host=null;ctx=null;dirty=false;busy=false;pending=null;}
 window.addEventListener('egc:signout',unmount);
 window.addEventListener('beforeunload',event=>{if(dirty||busy){event.preventDefault();event.returnValue='';}});
 window.EGCEstimatorCoaching={mount,unmount,canLeave};
