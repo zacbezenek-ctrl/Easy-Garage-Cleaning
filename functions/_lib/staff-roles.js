@@ -79,6 +79,11 @@ const signedProfile = session => Boolean(session) && typeof session === 'object'
 export { staffRoleAccessEnabled };
 // EGC_STAFF_ROLE_ACCESS includes this flag, so one switch turns on the whole role model.
 export const staffRolePermissionsEnabled = env => env?.EGC_STAFF_ROLE_PERMISSIONS === 'true' || staffRoleAccessEnabled(env);
+// A separate, default-off switch: enabling cross-crew job operations never
+// enables the broader role-access model, dispatch, finance or customer sends.
+export const teamLeadJobOperationsEnabled = env => env?.EGC_TEAM_LEAD_JOB_OPERATIONS === 'true';
+export const JOB_OPERATION_CAPABILITIES = Object.freeze(['jobs.operate']);
+const jobOperationRoles = new Set(['owner', 'manager', 'team_lead']);
 
 // Unknown, duplicate and non-string entries are dropped; 'owner' is only kept for
 // the configured owner's signed profile. Returns null when nothing is stored.
@@ -145,6 +150,12 @@ export function capabilityMode(session, env) {
 const grantedManager = (session, env, legacy) => legacy ? hasBusinessAccess(session) && ['owner', 'manager'].includes(session.role) : capabilityRoles(session, env).includes('manager');
 
 export function can(session, capability, env = {}) {
+  if (capability === 'jobs.operate') {
+    if (!signedProfile(session) || !teamLeadJobOperationsEnabled(env)) return false;
+    if (isHubOwner(session)) return true;
+    const roles = sanitizeStaffRoles(session.staffRoles, session) || defaultStaffRoles(session);
+    return roles.some(role => jobOperationRoles.has(role));
+  }
   const access = accessOnly.has(capability), reset = resetOnly.has(capability), view = viewOnly.has(capability);
   if (!access && !reset && !view && !capabilities.has(capability)) throw new TypeError(`Unknown staff capability: ${capability}`);
   if (!signedProfile(session) || access && !staffRoleAccessEnabled(env) || reset && !staffPasswordResetEnabled(env)) return false;
@@ -164,11 +175,13 @@ export function can(session, capability, env = {}) {
 // to the owner and the owner's grants to managers (password.change follows the account, not a role).
 // schedule.view is answered with every flag off (TEAM-LEAD, above) but listed only with EGC_STAFF_ROLE_ACCESS on.
 export function capabilityNames(env = {}) {
-  const names = staffRoleAccessEnabled(env) ? [...STAFF_CAPABILITIES, ...ACCESS_CAPABILITIES, ...VIEW_CAPABILITIES] : STAFF_CAPABILITIES;
+  const original = staffRoleAccessEnabled(env) ? [...STAFF_CAPABILITIES, ...ACCESS_CAPABILITIES, ...VIEW_CAPABILITIES] : STAFF_CAPABILITIES;
+  const names = teamLeadJobOperationsEnabled(env) ? [...original, ...JOB_OPERATION_CAPABILITIES] : original;
   return staffPasswordResetEnabled(env) ? [...names, ...RESET_CAPABILITIES] : names;
 }
 export function capabilityMatrix(env = {}) {
-  const matrix = staffRoleAccessEnabled(env) ? Object.fromEntries(STAFF_ROLES.map(role => [role, [...ROLE_CAPABILITIES[role], ...ROLE_ACCESS_CAPABILITIES[role], ...ROLE_VIEW_CAPABILITIES[role]]])) : ROLE_CAPABILITIES;
+  const original = staffRoleAccessEnabled(env) ? Object.fromEntries(STAFF_ROLES.map(role => [role, [...ROLE_CAPABILITIES[role], ...ROLE_ACCESS_CAPABILITIES[role], ...ROLE_VIEW_CAPABILITIES[role]]])) : ROLE_CAPABILITIES;
+  const matrix = teamLeadJobOperationsEnabled(env) ? Object.fromEntries(STAFF_ROLES.map(role => [role, [...original[role], ...(jobOperationRoles.has(role) ? JOB_OPERATION_CAPABILITIES : [])]])) : original;
   if (!staffPasswordResetEnabled(env)) return matrix;
   const grants = managerGrants(env);
   return Object.fromEntries(STAFF_ROLES.map(role => [role, [...matrix[role], ...ROLE_RESET_CAPABILITIES[role], ...(role === 'manager' ? grants.filter(name => !matrix[role].includes(name)) : [])]]));
