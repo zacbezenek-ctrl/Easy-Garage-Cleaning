@@ -8,7 +8,7 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf
 
 test('homepage loads analytics outside the critical rendering path', () => {
   const html = read('index.html');
-  assert.match(html, /<script src="\/analytics-loader\.js\?v=20261008a" defer><\/script>/);
+  assert.match(html, /<script src="\/analytics-loader\.js\?v=20261023b" defer><\/script>/);
   assert.doesNotMatch(html, /<script[^>]+src="https:\/\/www\.googletagmanager\.com\/gtag\/js/);
   assert.doesNotMatch(html, /<script[^>]*>[\s\S]*?connect\.facebook\.net\/en_US\/fbevents\.js[\s\S]*?<\/script>/);
   assert.doesNotMatch(html, /<script[^>]*>[\s\S]*?www\.clarity\.ms\/tag[\s\S]*?<\/script>/);
@@ -212,7 +212,7 @@ test('every public lead form mirrors to HighLevel and carries its own consent di
     .filter((page) => /<form[^>]*class=["'][^"']*(?:lead-form-lite|multi-step-form)/i.test(page.html));
   assert.ok(pages.length >= 45, 'expected the full lead-form page set');
   for (const page of pages) {
-    assert.match(page.html, /<script[^>]+src="\/fb-capture\.js\?v=20260903c"[^>]*>/, `${page.name} does not load the current HighLevel mirror`);
+    assert.match(page.html, /<script[^>]+src="\/fb-capture\.js\?v=20261023a"[^>]*>/, `${page.name} does not load the current HighLevel mirror`);
     const forms = [...page.html.matchAll(/<form[^>]*class=["'][^"']*(?:lead-form-lite|multi-step-form)[^"']*["'][^>]*>([\s\S]*?)<\/form>/gi)];
     assert.ok(forms.length, `${page.name} has no readable lead form`);
     for (const form of forms) {
