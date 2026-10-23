@@ -1,6 +1,6 @@
-# Local proposal: Team Lead job operations
+# Team Lead job operations
 
-Prepared from `d2f35c8` (main including PR 268). This patch is local only. No remote branch, issue, pull request, deployment, live role change or environment change was created.
+Prepared from `d2f35c8` (main including PR 268). Publication, merge and activation are gated on the normal Linux CI, browser and emulator checks described below.
 
 ## Exact permission change
 
