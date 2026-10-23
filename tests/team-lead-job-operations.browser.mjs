@@ -104,6 +104,9 @@ try {
   await page.screenshot({ path: resolve(output, 'team-lead-mobile.png'), fullPage: true });
   assert.deepEqual(errors, []);
   console.log('Team Lead real-browser create, retry, assign, schedule, cancel, complete and flag/permission checks passed.');
+} catch (error) {
+  console.error(await page.locator('body').innerText());
+  throw error;
 } finally {
   await context.close(); await browser.close(); await new Promise(resolve => server.close(resolve)); globalThis.fetch = originalFetch;
 }

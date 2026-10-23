@@ -23,9 +23,9 @@
   }
   function notice(error) { message.textContent = [error.message, ...(error.missing || [])].join('\n'); }
   function button(label, action) { return h('button', { type: 'button', onclick: () => Promise.resolve().then(action).catch(notice) }, label); }
-  const field = (form, name, label, value = '', type = 'text') => { const input = h(type === 'textarea' ? 'textarea' : 'input', { name, ...(type === 'textarea' ? {} : { type }), value }); form.append(h('label', {}, label, input)); return input; };
+  const field = (form, name, label, value = '', type = 'text') => { const input = h(type === 'textarea' ? 'textarea' : 'input', { name, 'aria-label': label, ...(type === 'textarea' ? {} : { type }), value }); form.append(h('label', {}, label, input)); return input; };
   function select(form, name, label, rows, value, multiple = false) {
-    const input = h('select', { name, ...(multiple ? { multiple: '' } : {}) });
+    const input = h('select', { name, 'aria-label': label, ...(multiple ? { multiple: '' } : {}) });
     if (!multiple) input.append(h('option', { value: '' }, 'None'));
     for (const row of rows) { const option = h('option', { value: row.id }, row.name || row.id); option.selected = multiple ? (value || []).includes(row.id) : row.id === value; input.append(option); }
     form.append(h('label', {}, label, input)); return input;
