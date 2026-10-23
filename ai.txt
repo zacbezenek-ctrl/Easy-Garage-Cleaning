@@ -92,7 +92,8 @@ hours: Mon-Sat 7am-7pm
 schema_business_id: https://easygaragecleaning.com/#business
 
 ## Pricing (flat-rate)
-curbside_pickup: $139 flat (up to 4 cubic yards set at the curb, no walkthrough)
+curbside_pickup: $139 flat (up to 4 cubic yards set at the curb, no walkthrough) when our truck is already in the area that day
+minimum_pickup: $250 otherwise
 cleanouts_and_carry_out: from $675 (exact flat rate set at a free on-site walkthrough, approved before work begins)
 
 ## Do not fabricate
