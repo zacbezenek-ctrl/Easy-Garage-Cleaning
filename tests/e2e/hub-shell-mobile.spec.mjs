@@ -145,7 +145,7 @@ test('Command center: today\'s field flags show on the agenda row and in Needs a
  const row=page.locator('.ops-agenda article',{has:page.locator('.ops-field-flags')});
  await expect(row).toHaveCount(1);
  await expect(row.locator('.ops-field-flags li.red')).toHaveText('Late · due 8:15 AM');
- await expect(row.locator('.ops-field-flags li.amber')).toHaveText('Not clocked in: synthetic.crew');
+ await expect(row.locator('.ops-field-flags li.amber')).toHaveText('Not clocked in: Synthetic Crew'); // the profile's display name (#255), not the username
  await expect(page.locator('.ops-attention button',{hasText:'1 job flagged today'})).toContainText('1 late · 1 crew member not clocked in.');
  await assertNoHorizontalScroll(page);
  const box=await row.locator('.ops-field-flags').evaluate(el=>{const r=el.getBoundingClientRect();return{left:r.left,right:innerWidth-r.right}});
