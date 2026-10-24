@@ -111,14 +111,14 @@ test('the readiness probe consumes its body so the browser can finish the reques
   assert.deepEqual(h.panel(), ['cl-form']);
 });
 
-test('a link used a moment ago says so and offers the portal; other statuses do not', async () => {
+test('a link used a moment ago offers My visits; expired links request sign-in again', async () => {
   const used = harness({ search: '?status=used', fetch: answer(405) });
   await used.settle();
   assert.match(used.$('cl-status').textContent, /^That sign-in link was already used\. If you just tapped it, open your projects\. Otherwise wait 10 minutes/);
   assert.match(used.$('cl-status').textContent, /We send up to 3 links a day, so if no link arrives, text us at \(970\) 999-1818\.$/, 'the daily limit is named, with a way out');
   assert.deepEqual([used.$('cl-status').hidden, used.$('cl-status-portal').hidden], [false, false]);
   assert.deepEqual(used.replaced, [[null, '', '/client-login']], 'the status leaves the address bar');
-  assert.match(page, /<a id="cl-status-portal" class="cl-button secondary cl-status-link" href="\/customer-portal" hidden>Open my projects<\/a>/);
+  assert.match(page, /<a id="cl-status-portal" class="cl-button secondary cl-status-link" href="\/my-visits" hidden>Open my visits<\/a>/);
   const expired = harness({ search: '?status=expired', fetch: answer(405) });
   await expired.settle();
   assert.equal(expired.$('cl-status').textContent, 'That sign-in link expired or is no longer valid. Request a new one below.');

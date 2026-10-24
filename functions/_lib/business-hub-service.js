@@ -83,7 +83,7 @@ function registry(value, kind) {
 }
 // Copy first: Response.redirect() and fetch() results have immutable headers.
 function noStore(res) { const out = new Response(res.body, res); for (const [k, v] of [['Cache-Control', 'no-store'], ['X-Content-Type-Options', 'nosniff'], ['Referrer-Policy', 'no-referrer']]) out.headers.set(k, v); return out; }
-export function createBusinessHandler({ store, getStaff, finance, needsReview, projectCookie, clearProjectCookie, now = () => Date.now(), invites = null, waitUntil = null, actions = {}, exports: exporters = {}, decorate = [] }) {
+export function createBusinessHandler({ store, getStaff, finance, needsReview, projectCookie, clearProjectCookie, now = () => Date.now(), invites = null, waitUntil = null, actions = {}, exports: exporters = {}, decorate = [], canCreateJob = actor => actor?.businessAccess === true && ['owner', 'manager'].includes(actor.role) }) {
   const emailInvites = invites?.enabled === true && typeof invites.deliver === 'function';
   actions = registry(actions, 'action'); exporters = registry(exporters, 'export');
   // Every account the hub reads is marked as the stored record save() accepts, whatever store is injected.
@@ -315,7 +315,8 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
     return view;
   }
   const canSee = (ctx, propertyId) => ctx.staff || canSeeProperty(ctx.member, propertyId), scoped = ctx => scopedContext(ctx).account;
-  const helpers = Object.freeze({ save, requirePermission, requireManager, property, canSeeProperty: canSee, scoped, response, now, store: hubStore, finance, needsReview, snapshot });
+  const requireJobCreator = ctx => { requireManager(ctx); if (!canCreateJob(ctx.profile)) throw fail(403, 'Job creation requires the current dispatch permission.'); };
+  const helpers = Object.freeze({ save, requirePermission, requireManager, requireJobCreator, property, canSeeProperty: canSee, scoped, response, now, store: hubStore, finance, needsReview, snapshot });
   const operationId = value => { if (value != null && !isId(value)) throw fail(400, 'Reload the form and try again.'); return value ?? null; };
   return async function handle(request) {
     try {

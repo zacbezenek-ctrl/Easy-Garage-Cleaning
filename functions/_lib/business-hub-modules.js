@@ -15,8 +15,12 @@
    Register it with one import line (import * as name from './business-hub-<name>.js';) and one `name,` entry in MODULES;
    functions/api/business-hub.js does not change. createBusinessHandler still rejects built-in and malformed names. */
 import * as scope from './business-hub-scope.js';
+import * as billing from './business-hub-billing.js';
+import * as requests from './business-hub-requests.js';
 const MODULES = [
   scope,
+  billing,
+  requests,
 ];
 export function combineBusinessHubModules(modules) {
   const actions = {}, exporters = {}, decorate = [];

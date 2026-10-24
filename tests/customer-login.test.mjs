@@ -332,7 +332,7 @@ test('POST consumes the token once, opens an account session and lands on the cu
   h.time.advance(5 * MIN);
   const response = await h.verifyPost(token);
   assert.equal(response.status, 303);
-  assert.equal(response.headers.get('Location'), '/customer-portal');
+  assert.equal(response.headers.get('Location'), '/my-visits');
   assert.equal(response.headers.get('Cache-Control'), 'no-store');
   const cookies = response.headers.getSetCookie();
   assert.equal(cookies.length, 2);
@@ -357,7 +357,7 @@ test('POST consumes the token once, opens an account session and lands on the cu
 test('concurrent POSTs of one token open exactly one session', async t => {
   const { h, token } = await sendLink(t);
   const results = await Promise.all([1, 2, 3].map(() => h.verifyPost(token)));
-  assert.deepEqual(results.map(response => response.headers.get('Location')).sort(), ['/client-login?status=used', '/client-login?status=used', '/customer-portal']);
+  assert.deepEqual(results.map(response => response.headers.get('Location')).sort(), ['/client-login?status=used', '/client-login?status=used', '/my-visits']);
   assert.equal(h.sessions().length, 1);
 });
 
@@ -367,7 +367,7 @@ test('the token expires fifteen minutes after it is created, by the injected clo
   assert.equal((await h.verifyPost(token)).headers.get('Location'), '/client-login?status=expired');
   const second = await sendLink(t);
   second.h.time.advance(LOGIN_LINK_TTL_MS - 1);
-  assert.equal((await second.h.verifyPost(second.token)).headers.get('Location'), '/customer-portal');
+  assert.equal((await second.h.verifyPost(second.token)).headers.get('Location'), '/my-visits');
   assert.equal(h.sessions().length, 0);
 });
 
@@ -380,14 +380,14 @@ test('a session-version bump after the link was sent voids it; a record change m
   other.h.store.hooks.beforeCommit = writes => { if (!bumped && writes.some(write => write.collection === 'customer_sessions')) { bumped = true; other.h.store.edit('customers/customer-a', { name: 'Synthetic renamed' }); } };
   assert.equal((await other.h.verifyPost(other.token)).headers.get('Location'), '/client-login?status=retry');
   assert.equal(other.h.linkRows()[0].usedAt, null);
-  assert.equal((await other.h.verifyPost(other.token)).headers.get('Location'), '/customer-portal', 'the unused link still works');
+  assert.equal((await other.h.verifyPost(other.token)).headers.get('Location'), '/my-visits', 'the unused link still works');
 });
 
 test('a lost commit response still completes the exact sign-in it wrote', async t => {
   const { h, token } = await sendLink(t);
   h.store.hooks.loseResponse = writes => writes.some(write => write.collection === 'customer_sessions');
   const response = await h.verifyPost(token);
-  assert.equal(response.headers.get('Location'), '/customer-portal');
+  assert.equal(response.headers.get('Location'), '/my-visits');
   assert.equal(response.headers.getSetCookie().length, 2);
 });
 
@@ -406,7 +406,7 @@ test('cross-origin, originless and malformed verify POSTs are refused and leave 
   assert.equal((await h.verifyPost(token, { body: `token=${token}&token=${token}` })).headers.get('Location'), '/client-login?status=invalid');
   assert.equal((await h.verifyPost('A'.repeat(43))).headers.get('Location'), '/client-login?status=invalid', 'an unknown token');
   assert.equal(h.linkRows()[0].usedAt, null);
-  assert.equal((await nullOrigin('same-origin')).headers.get('Location'), '/customer-portal', 'a same-origin form that reports an opaque Origin still signs in');
+  assert.equal((await nullOrigin('same-origin')).headers.get('Location'), '/my-visits', 'a same-origin form that reports an opaque Origin still signs in');
 });
 
 test('a token for one customer can never open another customer\'s account or project', async t => {
@@ -431,7 +431,7 @@ test('a customer without an active project is signed in and told so, and any old
   const h = await harness(t);
   const { url } = await createLoginLink(h.store, h.settings, { customerId: 'customer-stale', sessionVersion: 0 }, h.time.iso(), { origin: ORIGIN });
   const response = await h.verifyPost(tokenFrom(url));
-  assert.equal(response.headers.get('Location'), '/client-login?status=signed_in');
+  assert.equal(response.headers.get('Location'), '/my-visits');
   const [account, portal] = response.headers.getSetCookie();
   assert.match(account, /^__Host-egc_customer=[A-Za-z0-9_-]{43};/);
   assert.equal(portal, 'egc_customer_portal=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0', 'a project cookie from an earlier sign-in on this browser is cleared');
@@ -585,7 +585,7 @@ test('production wiring: the default handlers and storage adapters complete a si
   assert.ok(ghl.sends()[0].body.message.includes(`https://easygaragecleaning.com/api/customer-login-verify?token=${token}`));
   assert.equal((await verify.get({ request: new Request(`${ORIGIN}/api/customer-login-verify?token=${token}`), env: settings })).status, 200);
   const signedIn = await verify.post({ request: verifyRequest(token), env: settings });
-  assert.deepEqual([signedIn.status, signedIn.headers.get('Location'), signedIn.headers.getSetCookie().length], [303, '/customer-portal', 2]);
+  assert.deepEqual([signedIn.status, signedIn.headers.get('Location'), signedIn.headers.getSetCookie().length], [303, '/my-visits', 2]);
   assert.equal(rest.keys('customer_sessions/').length, 1);
   const session = await readCustomerAccountSession(customerAccountStorage(settings), settings, new Request(ORIGIN, { headers: { Cookie: signedIn.headers.getSetCookie()[0].split(';')[0] } }), time.iso());
   assert.equal(session.customerId, 'customer-a');
@@ -595,7 +595,7 @@ test('production wiring: the default handlers and storage adapters complete a si
   await Promise.all(background);
   const second = tokenFrom(ghl.sends()[1].body.message);
   const raced = await Promise.all([1, 2].map(() => verify.post({ request: verifyRequest(second), env: settings })));
-  assert.deepEqual(raced.map(response => response.headers.get('Location')).sort(), ['/client-login?status=used', '/customer-portal'], 'a double tap on a real commit opens one session');
+  assert.deepEqual(raced.map(response => response.headers.get('Location')).sort(), ['/client-login?status=used', '/my-visits'], 'a double tap on a real commit opens one session');
   assert.equal(rest.keys('customer_sessions/').length, 2);
   assert.ok(!JSON.stringify([...rest.docs]).includes(token) && !JSON.stringify([...rest.docs]).includes(second), 'no raw token in Firestore');
   assert.ok(rest.requests.some(url => url.includes(':beginTransaction')), 'the customer fence runs in a transaction');
@@ -607,7 +607,7 @@ test('a business-linked project (B2B-SAFE) never gets a homeowner owner session 
   rows['jobs/job-a1'] = { ...rows['jobs/job-a1'], businessAccountId: 'biz_acme', customerPortalLinkVersion: 3 };
   const { h, token } = await sendLink(t, { rows });
   const response = await h.verifyPost(token);
-  assert.deepEqual([response.status, response.headers.get('Location')], [303, '/client-login?status=signed_in']);
+  assert.deepEqual([response.status, response.headers.get('Location')], [303, '/my-visits']);
   const cookies = response.headers.getSetCookie();
   assert.match(cookies[0], /^__Host-egc_customer=[A-Za-z0-9_-]{43};/, 'the account session still opens');
   assert.deepEqual(cookies.filter(cookie => cookie.startsWith('egc_customer_portal=')), ['egc_customer_portal=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0'], 'no project session is minted; an older one on this browser is cleared');
@@ -617,7 +617,7 @@ test('a business-linked project (B2B-SAFE) never gets a homeowner owner session 
   mixed['jobs/job-a0'] = { ...mixed['jobs/job-a1'], businessAccountId: 'biz_acme', date: '2026-09-23' };
   const second = await sendLink(t, { rows: mixed });
   const landed = await second.h.verifyPost(second.token);
-  assert.equal(landed.headers.get('Location'), '/customer-portal');
+  assert.equal(landed.headers.get('Location'), '/my-visits');
   const handoff = await verifyCustomerPortalSessionToken(second.h.settings, landed.headers.getSetCookie()[1].split(';')[0].split('=')[1], second.h.time().getTime());
   assert.deepEqual([handoff.jobId, handoff.actorId], ['job-a1', '']);
 });
@@ -708,7 +708,7 @@ test('a failed landing lookup leaves the link unspent and offers the same tap ag
   h.store.hooks.failRead = null;
   h.store.customerJobs = customerJobs;
   const retried = await h.verifyPost(token);
-  assert.deepEqual([retried.status, retried.headers.get('Location'), retried.headers.getSetCookie().length], [303, '/customer-portal', 2], 'the same link then signs in');
+  assert.deepEqual([retried.status, retried.headers.get('Location'), retried.headers.getSetCookie().length], [303, '/my-visits', 2], 'the same link then signs in');
   assert.equal(h.sessions().length, 1);
 });
 
