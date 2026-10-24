@@ -539,6 +539,17 @@ service cloud.firestore {
     match /customer_sessions/{documentId} {
       allow read, write: if false;
     }
+    // Account history requests and future reload ledgers are server-only.
+    // Access is checked by the authenticated APIs, never by browser SDK writes.
+    match /customerVisitRequests/{documentId} {
+      allow read, write: if false;
+    }
+    match /reload_credit_accounts/{documentId} {
+      allow read, write: if false;
+    }
+    match /reload_credit_operations/{documentId} {
+      allow read, write: if false;
+    }
 
     // Hub bridge command receipts hold the audited before/after and the
     // idempotency fingerprint for every registry write. Server-only.

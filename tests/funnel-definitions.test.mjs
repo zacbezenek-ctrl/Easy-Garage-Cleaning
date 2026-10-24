@@ -57,7 +57,9 @@ test('a check never writes: a missing Hub copy is reported as drift, importing t
   const dir = mkdtempSync(join(tmpdir(), 'egc-funnel-script-'));
   try {
     for (const path of ['package.json', 'scripts/funnel-definitions.mjs', 'functions/_lib/funnel-definitions.js', FUNNEL_DEFINITION_PATHS.canonical, FUNNEL_DEFINITION_PATHS.platformJson, FUNNEL_DEFINITION_PATHS.platformHash]) { mkdirSync(join(dir, path, '..'), { recursive: true }); cpSync(join(root, path), join(dir, path)); }
-    symlinkSync(join(root, 'node_modules'), join(dir, 'node_modules'), 'dir');
+    // A Windows directory junction has the same lookup behavior without
+    // requiring the machine-wide privilege needed for a directory symlink.
+    symlinkSync(join(root, 'node_modules'), join(dir, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
     const script = join(dir, 'scripts/funnel-definitions.mjs'), hub = join(dir, FUNNEL_DEFINITION_PATHS.hubModule);
     const run = (...args) => spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' });
     for (const args of [[], ['--check']]) {

@@ -71,16 +71,26 @@ export async function readCustomerAccountSession(store, env, request, now = new 
   return { id, revision: row.revision, customerId: row.customerId, sessionVersion: version, via: row.via, createdAt: row.createdAt, expiresAt: row.expiresAt, customer };
 }
 
-/** Ends this browser's session. Always returns the clearing cookie; a
- * session that cannot be marked is still unusable once the cookie is gone. */
-export async function signOutCustomerAccountSession(store, env, request, now = new Date().toISOString()) {
+/** Ends this browser's session. Legacy callers clear the cookie best-effort;
+ * strict callers receive a retryable error until revocation is verified. */
+export async function signOutCustomerAccountSession(store, env, request, now = new Date().toISOString(), { strict = false } = {}) {
   const token = readCookie(request, CUSTOMER_SESSION_COOKIE);
   let revoked = false;
   if (TOKEN.test(token)) {
     try {
       const id = await customerSessionId(env, token), row = await store.read(CUSTOMER_SESSIONS, id);
       if (row && !row.revokedAt) { await store.commit([{ collection: CUSTOMER_SESSIONS, id, revision: row.revision, patch: { revokedAt: now, revokedReason: 'signed_out' } }]); revoked = true; }
-    } catch { /* The cookie is cleared regardless. */ }
+    } catch {
+      if (strict) {
+        // A competing sign-out may already have ended the session. Otherwise
+        // keep the caller on its cleared-data retry screen until revocation is known.
+        try {
+          const id = await customerSessionId(env, token), row = await store.read(CUSTOMER_SESSIONS, id);
+          if (row && !row.revokedAt && Date.parse(row.expiresAt) > Date.parse(now)) throw unavailable();
+        } catch { throw unavailable(); }
+      }
+      // Legacy callers retain their best-effort cookie-clearing behavior.
+    }
   }
   return { revoked, cookie: clearCustomerSessionCookie() };
 }

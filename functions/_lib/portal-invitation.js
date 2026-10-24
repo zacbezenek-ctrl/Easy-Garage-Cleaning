@@ -3,6 +3,7 @@ import { customerPortalLinkAccount } from './customer-portal-revocation.js';
 import { firebaseServiceAccountConfigured, firestoreFetch } from './firebase-service-account.js';
 import { readJob, patchJob, decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js';
 import { pricesPendingApproval } from './quote-model.js';
+import { readMessagingSettings } from './messaging-settings.js';
 
 const API = 'https://services.leadconnectorhq.com';
 const PORTAL = 'https://easygaragecleaning.com/api/customer-portal-session';
@@ -59,6 +60,26 @@ function config(env) {
   return { token: env.HIGHLEVEL_API_KEY || env.GHL_API_KEY || '', locationId: env.HIGHLEVEL_LOCATION_ID || env.GHL_LOCATION_ID || '' };
 }
 
+// Shared pause policy, read through the server credential. A missing record
+// preserves the existing default; an unreadable or invalid record fails closed.
+async function invitationPause(env) {
+  try {
+    const settings = await readMessagingSettings({ read: async (collection, id) => {
+      const response = await firestoreFetch(env, `https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents/${collection}/${id}`);
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error('Messaging pause unavailable');
+      const document = await response.json();
+      if (!document || typeof document !== 'object' || Array.isArray(document) ||
+          typeof document.updateTime !== 'string' || !document.updateTime.trim() ||
+          (document.fields !== undefined && (!document.fields || typeof document.fields !== 'object' || Array.isArray(document.fields)))) {
+        throw new Error('Messaging pause document invalid');
+      }
+      return { ...decodeFirestoreFields(document.fields || {}), revision: document.updateTime };
+    } });
+    return settings.paused ? { status: 'paused', reason: 'messaging_paused' } : null;
+  } catch { return { status: 'settings_unavailable', reason: 'messaging_settings_unavailable' }; }
+}
+
 async function requestHighLevel(c, path, options = {}) {
   const response = await fetch(API + path, {
     ...options,
@@ -70,9 +91,11 @@ async function requestHighLevel(c, path, options = {}) {
 
 // Resolve only from the saved customer's details. An incoming request cannot
 // choose the destination of a bearer link, even if it supplies a contact ID.
-async function recipient(c, job) {
+async function recipient(c, job, beforeWrite) {
   let id = String(job.highlevelContactId || '');
   if (!id) {
+    const stopped = await beforeWrite();
+    if (stopped) return stopped;
     const { response, data } = await requestHighLevel(c, '/contacts/upsert', { method: 'POST', body: JSON.stringify({
       locationId: c.locationId, name: job.customer || '', phone: phone(job.phone) || undefined,
       email: email(job.email) || undefined, source: 'EGC accepted quote',
@@ -106,6 +129,8 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
   if (pricesPendingApproval(job)) return { status: 'not_approved', reason: 'prices_pending_approval' };
   if (!quoteApproved(job)) return { status: 'not_approved' };
   if (requireRequested && !job.customerPortalInvitationRequestedAt) return { status: 'not_requested' };
+  const paused = await invitationPause(env);
+  if (paused) return paused;
   let ledger;
   try { ledger = await readState(env, jobId); } catch { return { status: 'storage_unavailable' }; }
   const previous = ledger.state;
@@ -127,7 +152,7 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
   if (!customerPortalConfigured(env) || !c.token || !c.locationId) return save({ status: 'not_configured', reason: 'portal_or_highlevel' });
   if (!phone(job.phone) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email(job.email))) return save({ status: 'needs_contact', reason: 'no_phone_or_email' });
   let to;
-  try { to = await recipient(c, job); } catch { return save({ status: 'needs_contact' }); }
+  try { to = await recipient(c, job, () => invitationPause(env)); } catch { return save({ status: 'needs_contact' }); }
   if (!to.id) return save(to);
   // Do not send if an ordinary job edit changed the approval, contact, or
   // notification preference while HighLevel was being checked.
@@ -166,9 +191,12 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
   // called. A job that cannot be re-read never sends.
   let halt;
   try {
-    const latest = await readJob(env, jobId);
-    halt = !latest ? { status: 'needs_job' } : pricesPendingApproval(latest) ? { status: 'not_approved', reason: 'prices_pending_approval' } : businessAccountJob(latest) ? { status: 'suppressed', reason: 'business_account_job' }
-      : latest.notify === false ? { status: 'suppressed', reason: 'job_notifications_off' } : null;
+    halt = await invitationPause(env);
+    if (!halt) {
+      const latest = await readJob(env, jobId);
+      halt = !latest ? { status: 'needs_job' } : pricesPendingApproval(latest) ? { status: 'not_approved', reason: 'prices_pending_approval' } : businessAccountJob(latest) ? { status: 'suppressed', reason: 'business_account_job' }
+        : latest.notify === false ? { status: 'suppressed', reason: 'job_notifications_off' } : null;
+    }
   } catch { halt = { status: 'storage_unavailable' }; }
   if (halt) { const state = { ...base, ...halt }; return await settle(state) ? state : claimed; }
   let result;

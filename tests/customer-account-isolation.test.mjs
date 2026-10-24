@@ -14,7 +14,7 @@ import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 const code = expected => error => { assert.equal(error.code, expected); return true; };
 const signedOut = expected => error => { assert.deepEqual([error.code, error.status], [expected, 401]); return true; };
 const request = cookie => new Request(`${ORIGIN}/customer-portal`, { headers: cookie ? { Cookie: cookie } : {} });
-const JOB_KEYS = ['jobId', 'type', 'service', 'status', 'date', 'time', 'endTime', 'address', 'arrivalWindow'];
+const JOB_KEYS = ['jobId', 'type', 'service', 'status', 'date', 'endDate', 'time', 'endTime', 'address', 'arrivalWindow'];
 
 function accountRows() {
   return {
