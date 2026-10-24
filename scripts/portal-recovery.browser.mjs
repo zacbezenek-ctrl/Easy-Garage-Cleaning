@@ -24,7 +24,7 @@ async function assertVisitLinks(page,width){
 }
 try{
  for(const width of [320,390,1280]){
-  const context=await browser.newContext({viewport:{width,height:900},acceptDownloads:true});const page=await context.newPage();const errors=[],calls=[];let converted=false,signedOut=false,changes=[];
+  const context=await browser.newContext({viewport:{width,height:900},isMobile:width<700,hasTouch:width<700,deviceScaleFactor:width<700?3:1,acceptDownloads:true});const page=await context.newPage();const errors=[],calls=[];let converted=false,signedOut=false,changes=[];
   page.on('pageerror',error=>errors.push(error.message));
   const business=()=>({account:{id:accountId,company:'Synthetic Property Company',status:'active',billingEmail:recipient.email},viewer:{role:'staff',permissions:{view:true,request:true,team:true,staff:true,link:true,pay:true}},
     properties:[{id:propertyId,name:'Synthetic North',address:'100 Example Way',access:'Office-approved entrance',contact:'Synthetic contact'}],
