@@ -303,7 +303,11 @@ test('the shipped screens register cleanly for business viewers only and lazy-lo
   vm.runInNewContext(readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8'), context, { filename: 'employee-hub-screens.js' });
   assert.deepEqual(warnings, []);
   const registry = context.EGCHubScreens;
-  assert.deepEqual([...registry.list().map(entry => entry.id)], [...CREW_SHIPPED, ...PASSWORD_SHIPPED, ...TEAM_SHIPPED, ...COMMISSION_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED, ...CONTACT_SHIPPED]);
+  assert.deepEqual([...registry.list().map(entry => entry.id)], ['estimator_coaching', ...CREW_SHIPPED, ...PASSWORD_SHIPPED, ...TEAM_SHIPPED, ...COMMISSION_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED, ...CONTACT_SHIPPED]);
+  const coaching = registry.get('estimator_coaching');
+  assert.equal(coaching.capability, 'business');
+  assert.ok(registry.allowed(coaching, ['business']));
+  assert.ok(!registry.allowed(coaching, ['crew']));
   const inbox = registry.get('customer_messages');
   assert.deepEqual([inbox.group, inbox.label, inbox.capability, inbox.module, inbox.load.js, inbox.load.css], ['CLIENT WORK', 'Customer messages', 'customer_contact', 'EGCCustomerMessages', 'employee-customer-messages.js', 'employee-customer-messages.css']);
   assert.ok(!registry.allowed(inbox, ['crew', 'business']) && registry.allowed(inbox, ['crew', 'customer_contact']));

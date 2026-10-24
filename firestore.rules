@@ -766,6 +766,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Coaching notes and idempotency receipts are available only through the manager API.
+    match /estimatorCoaching/{documentId} { allow read, write: if false; }
+    match /estimatorCoachingReceipts/{documentId} { allow read, write: if false; }
+
     match /{document=**} {
       allow read, write: if false;
     }
