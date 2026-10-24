@@ -27,7 +27,7 @@ function suite(fetcher = async () => { throw new Error('Unexpected request'); })
   };
   context.window = context;
   const source = readFileSync(new URL('../employee-suite.js', import.meta.url), 'utf8')
-    .replace(/\}\)\(\);\s*$/, 'globalThis.ui={S,teamBoard,refreshPeople,trainingModules,trainingVersion};})();');
+    .replace(/\}\)\(\);\s*$/, 'globalThis.ui={S,teamBoard,refreshPeople,trainingModules,trainingVersion,trainingBoard,trainingLesson,trainingMatches};})();');
   vm.runInNewContext(source, context);
   const api = context.ui;
   api.S.accountState.loaded = true;
@@ -153,3 +153,15 @@ for (const failedSource of ['employee-hub', 'employee-accounts']) {
     assert.doesNotMatch(env.toasts.join(' '), /is on the team and can now sign in/);
   });
 }
+
+ test('SOP search finds instructions and completed SOPs remain readable without resubmission', () => {
+ const {api}=suite();
+ assert.equal(api.trainingMatches(api.trainingModules.find(x=>x.id==='property'),'ambiguous items'),true);
+ assert.equal(api.trainingMatches(api.trainingModules.find(x=>x.id==='property'),'  AMBIGUOUS   items '),true);
+ assert.equal(api.trainingMatches(api.trainingModules[0],'nonexistent'),false);
+ api.S.people.training=[{employee:'ZacB',version:api.trainingVersion,completed:['welcome'],pendingSignoffs:['safety']}];
+ assert.match(api.trainingBoard(),/Read SOP/);
+ for(const id of ['welcome','safety']) {const html=api.trainingLesson(api.trainingModules.find(x=>x.id===id));assert.match(html,/knowledge check is saved/);assert.doesNotMatch(html,/<form/);}
+ assert.match(api.trainingLesson(api.trainingModules.find(x=>x.id==='property')),/<form/);
+ api.S.trainingQuery='<script>';assert.doesNotMatch(api.trainingBoard(),/value="<script>/);
+ });
