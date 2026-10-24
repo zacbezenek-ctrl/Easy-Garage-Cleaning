@@ -18,9 +18,13 @@ const browser=await webkit.launch({headless:true});
 const accountId='a'.repeat(32),propertyId='b'.repeat(32),requestId='c'.repeat(32),reviewId='d'.repeat(32);
 const recipient={memberId:'e'.repeat(32),version:1,name:'Synthetic Billing',email:'billing@example.invalid'};
 const job={jobId:'synthetic_job',propertyId,service:'Synthetic garage cleanup',status:'completed',date:'2026-10-20',time:'09:00',quoteStatus:'accepted',quoteNumber:'Q-SYN',total:120,invoiceNumber:'INV-SYN',invoiceStatus:'issued',balance:120,paid:0,paymentNeedsReview:false};
+async function assertVisitLinks(page,width){
+ const smallLinks=await page.locator('a[href]').evaluateAll(links=>links.filter(link=>{const r=link.getBoundingClientRect();return r.width&&r.height&&(r.width<44||r.height<44);}).map(link=>({text:link.textContent.trim(),width:link.getBoundingClientRect().width,height:link.getBoundingClientRect().height})));
+ assert.deepEqual(smallLinks,[],`My visits links need 44px targets at ${width}`);
+}
 try{
  for(const width of [320,390,1280]){
-  const context=await browser.newContext({viewport:{width,height:900},acceptDownloads:true});const page=await context.newPage();const errors=[],calls=[];let converted=false,changes=[];
+  const context=await browser.newContext({viewport:{width,height:900},acceptDownloads:true});const page=await context.newPage();const errors=[],calls=[];let converted=false,signedOut=false,changes=[];
   page.on('pageerror',error=>errors.push(error.message));
   const business=()=>({account:{id:accountId,company:'Synthetic Property Company',status:'active',billingEmail:recipient.email},viewer:{role:'staff',permissions:{view:true,request:true,team:true,staff:true,link:true,pay:true}},
     properties:[{id:propertyId,name:'Synthetic North',address:'100 Example Way',access:'Office-approved entrance',contact:'Synthetic contact'}],
@@ -41,6 +45,7 @@ try{
     else data={ok:true};
    }else if(url.pathname==='/api/dispatch')data={ok:true,customers:[{id:'customer_one',name:'Synthetic Customer',email:'customer@example.invalid',phone:''}]};
    else if(url.pathname==='/api/customer-account'){
+    if(signedOut){await route.fulfill({status:401,contentType:'application/json',body:JSON.stringify({ok:false,error:'Sign in'})});return;}
     if(url.searchParams.get('format')==='ics'){await route.fulfill({headers:{'Content-Type':'text/calendar','Content-Disposition':'attachment; filename="visit.ics"'},body:'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n'});return;}
     if(payload?.action==='request_change'){changes.push({...payload,id:'synthetic_request',status:'submitted'});data={ok:true,request:changes.at(-1)};}
     else if(payload)data={ok:true,url:'/customer-portal'};
@@ -54,7 +59,9 @@ try{
   await page.getByRole('button',{name:'Send request for review'}).evaluate(button=>{button.click();button.click();});
   await page.getByText(/Reschedule request: submitted/).waitFor();assert.equal(calls.filter(x=>x.action==='request_change').length,1);
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),`My visits overflow at ${width}`);
+  await assertVisitLinks(page,width);
   await page.screenshot({path:resolve(out,`my-visits-${width}.png`),fullPage:true});
+  signedOut=true;await page.reload();await page.getByRole('link',{name:'Sign in again'}).waitFor();await assertVisitLinks(page,width);signedOut=false;
   await page.goto(origin+`/business-hub?staff=1&account=${accountId}`);await page.locator('[data-tab="requests"]').first().click();
   await page.locator('[data-business-convert]').click();await page.locator('[name="customerQuery"]').fill('Synthetic');await page.locator('[data-customer-search]').click();
   await page.locator('[name="customerId"] option[value="customer_one"]').waitFor({state:'attached'});await page.locator('[name="customerId"]').selectOption('customer_one');
