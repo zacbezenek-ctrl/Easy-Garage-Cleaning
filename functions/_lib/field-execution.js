@@ -219,6 +219,21 @@ export async function fieldFingerprint(actor, input) {
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ actor, input: normalize(input) }))))].map(value => value.toString(16).padStart(2, '0')).join('');
 }
 
+// A second issue while one is open is added to it, never written over it: the open issue keeps its id (the first
+// report's requestId), so a resolve form already open or queued offline still matches (resolve_issue checks issueId),
+// and each addition carries its time and author, the whole text capped at 4,000 characters. It stays crew-visible only
+// while every part is: a management-only addition makes the whole issue management-only, so no private note reaches
+// crew. After a resolve, a new issue starts with its own id and the resolved one moves to attentionHistory, as a
+// supervisor's flag does (job-signoff.js).
+const ISSUE_TEXT_MAX = 4000;
+function raiseIssue(state, stamp, requestId, visibility, reason) {
+  const current = state.attention && typeof state.attention === 'object' ? state.attention : null;
+  if (current?.status === 'open') return { attention: { ...current, reason: `${fieldText(current.reason)}\n\n${stamp.at} · ${stamp.actorName}: ${reason}`.trim().slice(0, ISSUE_TEXT_MAX),
+    visibility: current.visibility === 'crew' && visibility === 'crew' ? 'crew' : 'management', updatedAt: stamp.at, updatedBy: stamp.actorId, updatedByName: stamp.actorName } };
+  const past = Array.isArray(state.attentionHistory) ? state.attentionHistory : [];
+  return { ...(current ? { attentionHistory: [...past, current].slice(-20) } : {}), attention: { ...stamp, requestId, visibility, reason, status: 'open' } };
+}
+
 export function fieldCommand(job, actor, input, now = new Date().toISOString()) {
   const state = job.fieldExecution || {}, actorId = actor.user, actorName = actor.displayName || actor.user;
   const stamp = { at: now, actorId, actorName };
@@ -230,7 +245,7 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
       if (typeof input.body !== 'string' || !input.body.trim() || input.body.length > 4000) throw fieldFailure('Write a note of 1–4,000 characters.');
       if (input.visibility === 'management' && !actor.manager) throw fieldFailure('Only managers can add management-only notes.', 403);
       event.body = input.body.trim(); event.visibility = input.visibility === 'management' ? 'management' : 'crew'; event.summary = input.issue === true ? 'Issue reported' : 'Note added';
-      if (input.issue === true) patch = { fieldExecution: { ...state, attention: { ...stamp, requestId: input.requestId, visibility: event.visibility, reason: input.body.trim(), status: 'open' } } };
+      if (input.issue === true) patch = { fieldExecution: { ...state, ...raiseIssue(state, stamp, input.requestId, event.visibility, input.body.trim()) } };
       break;
     }
     case 'resolve_issue': {
@@ -294,7 +309,7 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
       const completion = { completedAt: now, actorId, actorName, notes: fieldText(input.notes), hasIssues: input.hasIssues, issueNotes: fieldText(input.issueNotes), evidencePhotoIds: fieldPhotos(job).map(photo => photo.id), ...(input.crewOnSite ? { crewOnSite: { people: input.crewOnSite.people, hours: input.crewOnSite.hours } } : {}), ...(Number.isSafeInteger(input.truckLoads) ? { truckLoads: input.truckLoads } : {}) };
       const checklist = fieldChecklist(job);
       const progress = stage => { const items = checklist.filter(item => stage === 'pre' ? ['departure', 'arrival'].includes(item.stage) : ['work', 'finish'].includes(item.stage)); return { completedAt: now, completedBy: actorId, completedCount: items.filter(item => item.completed).length, totalCount: items.length, standardItems: items }; };
-      patch = { status: 'completed', pipelineStatus: 'completed', completedAt: now, completedBy: actorId, closeoutNotes: completion.notes, fieldExecution: { ...state, activity: 'completed', completion, ...(input.hasIssues ? { attention: { ...stamp, requestId: input.requestId, visibility: 'crew', reason: completion.issueNotes, status: 'open' } } : {}) }, postJobProgress: progress('post'), postJobChecklist: progress('post'), preJobProgress: job.preJobProgress || progress('pre'), preJobChecklist: { ...(job.preJobChecklist || progress('pre')) }, afterPhotoCount: fieldPhotos(job).filter(photo => photo.category === 'after').length, completionEvidence: { kind: 'verified_field_execution', actorId, recordedAt: now, requestId: input.requestId, photoIds: completion.evidencePhotoIds } };
+      patch = { status: 'completed', pipelineStatus: 'completed', completedAt: now, completedBy: actorId, closeoutNotes: completion.notes, fieldExecution: { ...state, activity: 'completed', completion, ...(input.hasIssues ? raiseIssue(state, stamp, input.requestId, 'crew', completion.issueNotes) : {}) }, postJobProgress: progress('post'), postJobChecklist: progress('post'), preJobProgress: job.preJobProgress || progress('pre'), preJobChecklist: { ...(job.preJobChecklist || progress('pre')) }, afterPhotoCount: fieldPhotos(job).filter(photo => photo.category === 'after').length, completionEvidence: { kind: 'verified_field_execution', actorId, recordedAt: now, requestId: input.requestId, photoIds: completion.evidencePhotoIds } };
       patch.fieldCompletionSync = { requestId: input.requestId, status: 'pending', message: 'Work is saved. The internal CRM completion note and follow-up are awaiting verification.', createdAt: now, attempts: 0, requestedBy: actorId, requestedByName: actorName, providerContactId: fieldText(job.highlevelContactId, 200), title: 'EGC field completion', body: [`EGC job: ${job.id}`, `Work completed: ${now}`, `Completed by: ${actorName} (${actorId})`, `Services: ${fieldText(job.serviceType, 500) || 'Garage service'}`, `Work performed: ${completion.notes}`, `Verified before photos: ${fieldPhotos(job).filter(photo => photo.category === 'before').length}`, `Verified after photos: ${fieldPhotos(job).filter(photo => photo.category === 'after').length}`, `Required checklist: ${checklist.filter(item => item.required).length} complete`, `Issues / follow-up: ${completion.hasIssues ? completion.issueNotes : 'None reported'}`, 'This is an operational work-completion record. Payment status has not been changed.'].join('\n') };
       // FUN-20: a member visit is counted against its membership once, after this commit (garage-guard-visits.js); a counted one keeps its state when completed again.
       if (typeof job.membershipId === 'string' && job.membershipId && !['applied', 'reconciled'].includes(job.membershipVisit?.status)) patch.membershipVisit = { status: 'pending', membershipId: job.membershipId, requestId: input.requestId, createdAt: now };
