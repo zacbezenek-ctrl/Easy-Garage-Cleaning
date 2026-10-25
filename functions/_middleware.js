@@ -32,7 +32,9 @@ const CSP = [
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob: https:",
   "media-src 'self' blob: https:",
-  "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://api.web3forms.com https://www.google-analytics.com https://region1.google-analytics.com https://www.googletagmanager.com https://*.clarity.ms https://connect.facebook.net",
+  // Observed GA4 and Ads collection origins, per Google's tag-platform CSP guide.
+  // Keep these explicit: an analytics integration does not justify a blanket https: grant.
+  "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://api.web3forms.com https://www.google-analytics.com https://region1.google-analytics.com https://analytics.google.com https://www.google.com https://stats.g.doubleclick.net https://ad.doubleclick.net https://googleads.g.doubleclick.net https://www.googletagmanager.com https://*.clarity.ms https://connect.facebook.net",
   // The branded HighLevel form owns its scripts and submissions inside this cross-origin frame.
   // This permission does not enable the public embed or grant parent-page script/network access.
   "frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com https://maps.google.com https://www.google.com https://js.stripe.com https://checkout.stripe.com https://www.googletagmanager.com https://links.easygaragecleaning.com",

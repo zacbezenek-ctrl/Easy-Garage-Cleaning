@@ -36,6 +36,8 @@ def link_homepage(text):
         text = text[:nav_match.start()] + nav + text[nav_match.end():]
     text = add_inside(text, r'<aside class="nav-drawer"[\s\S]*?</aside>', '<a href="/blog/" class="drawer-link-row">', '<a href="/before-after" class="drawer-link-row">Before &amp; After</a>\n  ')
     text = add_inside(text, r'<div class="foot-col">\s*<h3>Company</h3>[\s\S]*?</div>', '</ul>', '<li><a href="/before-after">Before &amp; After</a></li>\n      ')
+    if 'data-gallery-cta="projects"' in text:
+        return text
     return add_inside(text, r'<section class="gallery" id="work"[\s\S]*?</section>', '</section>', '<div class="wrap" style="padding-top:24px"><a class="btn-primary" href="/before-after">Explore garage before &amp; after ideas →</a></div>\n')
 
 
@@ -44,7 +46,7 @@ def list_in_sitemap(s):
         return s
     if '</urlset>' not in s:
         raise RuntimeError('Expected sitemap urlset root')
-    return s.replace('</urlset>', f'  <url><loc>{GALLERY_URL}</loc><lastmod>2026-09-23</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>\n</urlset>', 1)
+    return s.replace('</urlset>', f'  <url><loc>{GALLERY_URL}</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>\n</urlset>', 1)
 
 
 def apply(root):

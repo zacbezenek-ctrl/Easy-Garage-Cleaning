@@ -29,8 +29,9 @@ function relayHarness(className = 'multi-step-form', { withCrypto = false, attri
   const listeners = [];
   const requests = [];
   const pixel = [];
+  const analytics = [];
   // The relay's HTTP outcome: a Response-like {ok} or a network failure.
-  const transport = { outcome: 'ok', next() { return this.outcome === 'offline' ? Promise.reject(new TypeError('offline')) : Promise.resolve({ ok: this.outcome === 'ok' }); } };
+  const transport = { outcome: 'ok', receipt: { ok: true }, next() { return this.outcome === 'offline' ? Promise.reject(new TypeError('offline')) : Promise.resolve({ ok: this.outcome === 'ok', json: async () => { if (this.receipt === 'invalid') throw new SyntaxError('invalid JSON'); return this.receipt; } }); } };
   const storage = new Map();
   const document = {
     readyState: 'complete', cookie: '_fbp=synthetic-fbp', referrer: 'https://example.test/ad',
@@ -40,16 +41,16 @@ function relayHarness(className = 'multi-step-form', { withCrypto = false, attri
     addEventListener(type, callback, options) { listeners.push({ type, callback, capture: options === true || options?.capture === true }); },
   };
   const context = {
-    document, location: { href: 'https://easygaragecleaning.com/book?fbclid=synthetic-click', search: '?fbclid=synthetic-click' },
+    document, location: { hostname: 'easygaragecleaning.com', href: 'https://easygaragecleaning.com/book?fbclid=synthetic-click', search: '?fbclid=synthetic-click' },
     URLSearchParams, Date,
     localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) },
     FormData: class { constructor(f) { this.values = new Map(f.values); } get(name) { return this.values.get(name) ?? null; } },
-    navigator: {}, window: { fetch: true, ...(withCrypto ? { crypto: webcrypto } : {}), fbq: (...args) => pixel.push(args) },
+    navigator: {}, window: { fetch: true, ...(withCrypto ? { crypto: webcrypto } : {}), fbq: (...args) => pixel.push(args), gtag: (...args) => analytics.push(args) },
     fetch(url, options) { requests.push({ url, options, body: JSON.parse(options.body) }); return transport.next(); },
   };
   vm.runInNewContext(source, context);
   return {
-    form, requests, pixel, context, transport,
+    form, requests, pixel, analytics, context, transport,
     submit(targetHandler = () => {}) {
       const event = { target: form, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
       for (const listener of listeners.filter(l => l.type === 'submit' && l.capture)) listener.callback(event);
@@ -163,4 +164,47 @@ test('FUN-13: book.html (data-meta-lead) reports the Meta Lead with the relayed 
   harness.form.bot = true;
   harness.submit();
   assert.equal(harness.pixel.length, 1, 'no Lead for a canceled duplicate or a bot');
+});
+
+test('GA measures a stored inquiry once after the server receipt, with no submitted details', async () => {
+  const h = relayHarness('multi-step-form', { withCrypto: true });
+  h.transport.receipt = { ok: true, inquiryId: 'private-id', receipt: { status: 'synced' }, name: 'Private name' };
+  h.submit();
+  assert.equal(h.analytics.length, 0, 'a submit attempt is not a receipt');
+  await settled();
+  assert.deepEqual(JSON.parse(JSON.stringify(h.analytics)), [['event', 'website_inquiry_received', {
+    send_to: 'G-CV7HJ2QGHX', method: 'website_relay', receipt_status: 'synced'
+  }]]);
+  h.submit(); await settled();
+  assert.equal(h.analytics.length, 1);
+});
+
+test('GA does not turn failed, canceled, unconfirmed or malformed submissions into inquiries', async () => {
+  for (const receipt of [{ ok: true }, { ok: false, receipt: { status: 'synced' } }, { ok: true, receipt: { status: 'unavailable' } }, 'invalid']) {
+    const h = relayHarness(); h.transport.receipt = receipt;
+    h.submit(); await settled();
+    assert.equal(h.analytics.length, 0);
+    h.submit(); assert.equal(h.requests.length, 1, 'measurement parsing never retries a delivered request');
+  }
+  for (const outcome of ['offline', 'server_error']) {
+    const h = relayHarness(); h.transport.outcome = outcome;
+    h.transport.receipt = { ok: true, receipt: { status: 'synced' } };
+    h.submit(); await settled(); assert.equal(h.analytics.length, 0);
+    h.transport.outcome = 'ok'; h.submit(); await settled();
+    assert.equal(h.analytics.length, 1, 'a successful retry is counted once');
+  }
+  const h = relayHarness(); h.submit(e => e.preventDefault()); await settled();
+  assert.equal(h.analytics.length, 0);
+});
+
+test('receipt measurement distinguishes recorded inquiries from delivery and excludes previews', async () => {
+  for (const status of ['syncing', 'failed', 'held', 'abandoned']) {
+    const h = relayHarness(); h.transport.receipt = { ok: true, receipt: { status } };
+    h.submit(); await settled(); assert.equal(h.analytics[0][2].receipt_status, status);
+  }
+  const delivered = relayHarness(); delivered.transport.receipt = { ok: true, highlevel: { synced: true } };
+  delivered.submit(); await settled(); assert.equal(delivered.analytics[0][2].receipt_status, 'delivered');
+  const preview = relayHarness(); preview.context.location.hostname = 'localhost';
+  preview.transport.receipt = { ok: true, receipt: { status: 'synced' } };
+  preview.submit(); await settled(); assert.equal(preview.analytics.length, 0);
 });
