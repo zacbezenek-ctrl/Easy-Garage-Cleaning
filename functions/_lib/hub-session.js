@@ -396,6 +396,9 @@ export async function verifyHubSessionToken(env, token, now = Date.now()) {
       return profile ? verified(token, staffRoleAccess(env, { ...profile, expiresAt: session.exp })) : null;
     }
     if (session.v !== 1 || !Object.hasOwn(users(env), session.u)) return null;
+    // SEC-2026-10 C-01: an account still stored in the legacy hash format has no live session either, so a session
+    // issued before sign-in started refusing that format does not keep working or renewing.
+    if (/^[a-f0-9]{64}$/i.test(String(userRecord(env, session.u)?.passwordHash || ''))) return null;
     // STAFF-SESSION: a changed password hash ends the session; one issued before pv lasts only until its own expiry.
     if (session.pv !== undefined && !safeEqual(session.pv, await credentialVersion(secret, userRecord(env, session.u)))) return null;
     const profile = getHubUserProfile(env, session.u);

@@ -252,7 +252,7 @@ test('a retired worker keeps nothing more: a file still loading when the page re
 
 // The worker against the real edge: functions/_middleware.js with EGC_STAFF_PAGE_GATE=on in front of the repo's static
 // files, and /api/hub-offline served by its real handler.
-const STAFF_ENV = Object.freeze({ EGC_STAFF_PAGE_GATE: 'on', HUB_OFFLINE_ENABLED: 'true', HUB_SESSION_SECRET: 'synthetic-hub-pwa-gate-secret-0123456789abcdef', HUB_AUTH_USERS_JSON: JSON.stringify({ 'synthetic.crew': { passwordHash: 'c'.repeat(64), displayName: 'Synthetic Crew', role: 'crew' } }) });
+const STAFF_ENV = Object.freeze({ EGC_STAFF_PAGE_GATE: 'on', HUB_OFFLINE_ENABLED: 'true', HUB_SESSION_SECRET: 'synthetic-hub-pwa-gate-secret-0123456789abcdef', HUB_AUTH_USERS_JSON: JSON.stringify({ 'synthetic.crew': { passwordHash: 'pbkdf2-sha256$100000$c3ludGhldGlj$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', displayName: 'Synthetic Crew', role: 'crew' } }) });
 const pages = createPagesHandler();
 function gatedSite(env = STAFF_ENV) {
   const phone = { cookie: '', edge: [] };

@@ -10,7 +10,7 @@ import { onRequest as page } from '../functions/internal/before-after.js';
 import { onRequest as assets } from '../functions/internal-gallery-assets/[[path]].js';
 globalThis.crypto ||= webcrypto;
 // Synthetic fixtures only, never a deployed account or credential.
-const env={HUB_SESSION_SECRET:'isolated-preview-unit-test-secret-not-for-deployment',HUB_AUTH_USERS_JSON:JSON.stringify({testowner:{passwordHash:'0'.repeat(64),role:'owner'},testmanager:{passwordHash:'0'.repeat(64),role:'manager'},testcrew:{passwordHash:'0'.repeat(64),role:'crew'}})};
+const env={HUB_SESSION_SECRET:'isolated-preview-unit-test-secret-not-for-deployment',HUB_AUTH_USERS_JSON:JSON.stringify({testowner:{passwordHash:'pbkdf2-sha256$100000$c3ludGhldGlj$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',role:'owner'},testmanager:{passwordHash:'pbkdf2-sha256$100000$c3ludGhldGlj$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',role:'manager'},testcrew:{passwordHash:'pbkdf2-sha256$100000$c3ludGhldGlj$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',role:'crew'}})};
 async function req(user='testowner',path='/internal/before-after',options={}){const token=await createHubSessionToken(env,user);return new Request('https://easygaragecleaning.com'+path,{...options,headers:{Cookie:'egc_hub_session='+token,...options.headers}});}
 
 test('24 complete pairs, exact existing assets, original origin and review states retained',()=>{

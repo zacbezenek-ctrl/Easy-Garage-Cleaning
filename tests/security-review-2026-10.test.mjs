@@ -124,3 +124,14 @@ test('C-01: a configured account stored in the legacy hash format is refused wit
   assert.equal((await authenticateHubCredential(currentEnv, 'ZacB', 'synthetic current password')).user, 'ZacB');
   assert.equal(await authenticateHubCredential(currentEnv, 'ZacB', 'a wrong guess'), null);
 });
+
+test('C-01: a session issued for an account still on a legacy hash stops working and is not renewed', async () => {
+  const { createHash } = await import('node:crypto');
+  const { createHubSessionToken, verifyHubSessionToken, hashHubCredential: currentHash } = await import('../functions/_lib/hub-session.js');
+  const legacy = createHash('sha256').update('TylerG:synthetic legacy password:egc-salt-2026').digest('hex');
+  const env = { HUB_SESSION_SECRET: 'synthetic-session-secret-for-legacy-session-tests', HUB_AUTH_USERS_JSON: JSON.stringify({ TylerG: { passwordHash: legacy, role: 'crew_lead' } }) };
+  const token = await createHubSessionToken(env, 'TylerG');
+  assert.equal(await verifyHubSessionToken(env, token), null, 'the old session is refused');
+  const current = { ...env, HUB_AUTH_USERS_JSON: JSON.stringify({ TylerG: { passwordHash: await currentHash('TylerG', 'synthetic new password'), role: 'crew_lead' } }) };
+  assert.equal((await verifyHubSessionToken(current, await createHubSessionToken(current, 'TylerG'))).user, 'TylerG', 'an account in the current format keeps its sessions');
+});
