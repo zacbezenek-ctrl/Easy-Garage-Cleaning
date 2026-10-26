@@ -134,7 +134,7 @@ test('a lost connection keeps the action queued with its request ID, and later r
   }
 });
 
-test('a status or End day tap whose direct send fails keeps when it was stored for its replays; other actions do not', async () => {
+test('a status or End day tap not sent at once keeps when it was stored for its replays; other actions do not', async () => {
   const { box } = outbox(), status = field('Crew.One', 'job-a', 'status', { status: 'dispatched' });
   const { item } = await box.enqueue(status);
   await box.flush({ user: 'Crew.One', direct: status.requestId, transport: transport({ field: () => fail('The server did not confirm this action.', 0, 'OUTBOX_NETWORK') }) });
@@ -151,12 +151,21 @@ test('a status or End day tap whose direct send fails keeps when it was stored f
   await box.flush({ user: 'Crew.One', direct: offline.requestId, transport: transport({ field: () => fail('Retry shortly', 503, '') }) });
   assert.equal(plain(await box.items('Crew.One'))[0].payload.tappedAt, '2026-09-22T14:00:00.000Z');
   await box.remove(offline.requestId);
-  // A note, and a status that was never a direct send, are not stamped.
+  // A note is never stamped. A status queued behind it, or sent by a sync that was already running, is: it was not
+  // sent at once, so its replay carries when it was stored even when it goes through on the first try.
   const note = field('Crew.One', 'job-a', 'note', { body: 'Synthetic note', issue: false, visibility: 'crew' }), behind = field('Crew.One', 'job-a', 'status', { status: 'arrived' });
-  await box.enqueue(note); await box.enqueue(behind);
+  await box.enqueue(note); const queued = await box.enqueue(behind);
+  assert.equal(queued.direct, false);
   await box.flush({ user: 'Crew.One', direct: note.requestId, transport: transport({ field: () => fail('The server did not confirm this action.', 0, 'OUTBOX_NETWORK') }) });
-  await box.flush({ user: 'Crew.One', transport: transport({ field: input => input.action === 'status' ? fail('The server did not confirm this action.', 0, 'OUTBOX_NETWORK') : undefined }) });
-  assert.deepEqual(plain(await box.items('Crew.One')).map(row => [row.payload.action, row.payload.tappedAt]), [['status', undefined]]);
+  const later = transport({ field: input => input.action === 'status' ? fail('The server did not confirm this action.', 0, 'OUTBOX_NETWORK') : undefined });
+  await box.flush({ user: 'Crew.One', transport: later });
+  assert.deepEqual(later.sent('field').map(input => [input.action, input.tappedAt]), [['note', undefined], ['status', queued.item.queuedAt]]);
+  assert.deepEqual(plain(await box.items('Crew.One')).map(row => [row.payload.action, row.payload.tappedAt]), [['status', queued.item.queuedAt]]);
+  await box.remove(behind.requestId);
+  const running = field('Crew.One', 'job-c', 'status', { status: 'dispatched' }), alone = await box.enqueue(running), sync = transport();
+  assert.equal(alone.direct, true, 'nothing waits ahead of it');
+  await box.flush({ user: 'Crew.One', transport: sync });
+  assert.equal(sync.sent('field')[0].tappedAt, alone.item.queuedAt, 'a running sync sent it, not the page at the tap');
 });
 
 test('a revision conflict on replay is surfaced and only an explicit retry re-sends the same action', async () => {

@@ -514,3 +514,30 @@ for (const [name, command] of [['FIELD_MULTIDAY_VISITS off', fieldCommand], ['FI
     assert.deepEqual(kinds(flags(visitRow(replayed, replayed.assignmentSegments[1]), { now: at(denver('2026-09-23', '08:15')) })), ['late'], 'not day 2\'s arrival');
   });
 }
+
+// Review of #279: the next tap usually waits behind the first one on a weak signal. On my way at 16:00 fails; Arrived at
+// 16:25 queues behind it and is never sent on its own. Both replay the next morning, and both are day 1's.
+for (const [name, command] of [['FIELD_MULTIDAY_VISITS off', fieldCommand], ['FIELD_MULTIDAY_VISITS on', fieldVisitCommand]]) {
+  test(`two weak-signal taps in a row, replayed the next day, are both the tap's day (${name})`, async () => {
+    const context = vm.createContext({ console, setTimeout, clearTimeout, Promise, JSON, URL, Error, TypeError, Map, Set, encodeURIComponent, indexedDB: fakeIndexedDB() });
+    context.self = context; vm.runInContext(source('crew/field-outbox.js'), context);
+    const clock = { at: denver('2026-09-22', '16:00') }, box = context.EGCFieldOutbox.create({ now: () => new Date(clock.at) });
+    const tapRow = (requestId, status) => ({ requestId, kind: 'field', user: 'crew.one', jobId: 'synthetic-flag-job', payload: { action: 'status', status, jobId: 'synthetic-flag-job', requestId, expectedRevision: 'seen-1', expectedUser: 'crew.one' } });
+    const enRoute = tapRow('00000000-0000-4000-8000-0000000000b1', 'dispatched'), arrived = tapRow('00000000-0000-4000-8000-0000000000b2', 'arrived');
+    const sent = [], wire = fails => ({ revision: async () => 'server-rev', field: async input => { sent.push(JSON.parse(JSON.stringify(input))); if (fails) throw Object.assign(new Error('The server did not confirm this action.'), { status: 0, code: 'OUTBOX_NETWORK' }); return { ok: true }; } });
+    assert.equal((await box.enqueue(enRoute)).direct, true);
+    await box.flush({ user: 'crew.one', transport: wire(true), direct: enRoute.requestId });
+    clock.at = denver('2026-09-22', '16:25');
+    assert.equal((await box.enqueue(arrived)).direct, false, 'Arrived waits behind On my way');
+    await box.flush({ user: 'crew.one', transport: wire(true) });
+    sent.length = 0;
+    await box.flush({ user: 'crew.one', transport: wire(false) });
+    assert.deepEqual(sent.map(input => [input.status, input.tappedAt]), [['dispatched', denver('2026-09-22', '16:00')], ['arrived', denver('2026-09-22', '16:25')]]);
+    let row = twoDay();
+    row = { ...row, ...command(row, tapper, sent[0], denver('2026-09-23', '07:30')).patch };
+    row = { ...row, ...command(row, tapper, sent[1], denver('2026-09-23', '07:31')).patch };
+    assert.deepEqual([row.dispatchedAt, row.arrivedAt], [denver('2026-09-22', '16:00'), denver('2026-09-22', '16:25')], 'both on day 1');
+    assert.equal(row.fieldExecution.visits?.['2026-09-23'], undefined, 'day 2\'s visit is not opened');
+    assert.deepEqual(kinds(flags(visitRow(row, row.assignmentSegments[1]), { now: at(denver('2026-09-23', '08:15')) })), ['late'], 'day 2 is still Late');
+  });
+}
