@@ -12,6 +12,9 @@ import { fieldFunnelType, fieldFunnelWrite } from '../_lib/job-funnel-events.js'
 import { fieldJobTime } from '../_lib/field-execution-time.js';
 import { fieldExpenseCloseoutMissing, fieldExpensesEnabled, requireFieldExpenseCloseout } from '../_lib/field-expenses.js';
 import { fieldCapabilities } from '../_lib/field-permissions.js';
+import { can } from '../_lib/staff-roles.js';
+import { projectOperationalJob } from '../_lib/job-operations.js';
+import { stripCrewMoneyDeep } from '../_lib/crew-money.js';
 import { fieldPaymentsReady } from './field-payments.js';
 import { canDispatch } from '../_lib/dispatch-permissions.js';
 import { jobStatusMovesTime } from '../_lib/employee-job-time.js';
@@ -37,14 +40,14 @@ async function context(request, env) {
   if (!session) throw fieldFailure('Sign in to the Employee Hub to open your jobs.', 401, 'FIELD_AUTH_REQUIRED');
   if (!firebaseServiceAccountConfigured(env)) throw fieldFailure('Secure job storage is not connected. Contact operations.', 503, 'FIELD_STORAGE_UNAVAILABLE');
   const manager = hasBusinessAccess(session), access = createJobAssignmentAccess(env, session), store = createFieldStore(env);
-  return { session, manager, access, store, visits: fieldVisitsEnabled(env) };
+  return { session, manager, access, store, visits: fieldVisitsEnabled(env), jobOperations: can(session, 'jobs.operate', env) };
 }
 
-async function authorizedJob(ctx, id) {
+async function authorizedJob(ctx, id, allowOperations = true) {
   if (!fieldId(id)) throw fieldFailure('Choose a valid job.');
   const job = await ctx.store.readJob(id);
   if (!job || !['job', 'cleanout', 'reorg'].includes(job.type) || job.recordType) throw fieldFailure('This job is unavailable. Open Today for your current assignments.', 404, 'FIELD_JOB_NOT_FOUND');
-  if (!ctx.manager && !await ctx.access.assigned(job)) throw fieldFailure('This job is not currently assigned to your account. Open Today for your assignments.', 403, 'FIELD_JOB_NOT_ASSIGNED');
+  if (!ctx.manager && !(allowOperations && ctx.jobOperations) && !await ctx.access.assigned(job)) throw fieldFailure('This job is not currently assigned to your account. Open Today for your assignments.', 403, 'FIELD_JOB_NOT_ASSIGNED');
   return job;
 }
 
@@ -52,7 +55,7 @@ async function authorizedJob(ctx, id) {
 // An end of day counts for the visit day it names when that is today or, for
 // one saved offline before midnight, yesterday.
 async function requireWorkday(ctx, job, input = {}) {
-  if (!ctx.visits || ctx.manager) return;
+  if (!ctx.visits || ctx.manager || ctx.jobOperations && input.action === 'complete') return;
   const today = fieldToday(new Date()), day = input.action === 'end_day' && [today, addDays(today, -1)].includes(input.visitDate) ? input.visitDate : today;
   if (!await assignedOn(job, day, ctx.access)) throw fieldFailure(day === today ? 'You are not scheduled on this job today. Ask operations to add you to today’s crew before recording work.' : `You were not scheduled on this job on ${day}. Send this end of day’s notes to operations.`, 403, 'FIELD_JOB_NOT_ASSIGNED_TODAY');
 }
@@ -89,6 +92,14 @@ async function detail(ctx, env, jobId, cursor = '') {
   const job = await authorizedJob(ctx, jobId);
   const [history, display, allowed] = await Promise.all([ctx.store.events(jobId, cursor), displayContext(ctx, env, [job]), capabilities(ctx, env, job)]);
   const view = await projection(ctx, job, history.events, { ...display(job), capabilities: allowed });
+  // All-crew operations never inherits the assigned lead's payment/expense UI,
+  // management notes, customer-send controls or general field-edit permission.
+  if (ctx.jobOperations && !ctx.manager && !allowed.assigned) return {
+    job: stripCrewMoneyDeep({ ...projectOperationalJob(view), expectedRevision: view.expectedRevision,
+      completionMissing: view.completionMissing, capabilities: allowed, canEdit: false,
+      visits: view.visits, completion: view.completion }),
+    photosAvailable: false, features: { jobCosts: false, fieldPay: false, fieldPayReview: false }, timezone: 'America/Denver',
+  };
   if (job.fieldCompletionTagEntry?.id) {
     const entry = await ghlTagOutboxStorage(env).read(GHL_TAG_OUTBOX, job.fieldCompletionTagEntry.id).catch(() => null);
     view.completionTags = entry ? ghlTagStatusView(entry, { at: Date.now(), job }) : { status: 'unknown' };
@@ -104,8 +115,9 @@ async function detail(ctx, env, jobId, cursor = '') {
   return { job: view, historyCursor: history.cursor, photosAvailable: fieldPhotosConfigured(env), features, timezone: 'America/Denver' };
 }
 
-function errorResponse(error) {
-  return reply(error.status || 503, { ok: false, code: error.code || 'FIELD_SERVICE_UNAVAILABLE', error: error.code ? error.message : 'Job services are temporarily unavailable. Your action has not been confirmed; retry to check its result.', ...(Array.isArray(error.missing) ? { missing: error.missing } : {}) });
+function errorResponse(error, redact = false) {
+  const body = { ok: false, code: error.code || 'FIELD_SERVICE_UNAVAILABLE', error: error.code ? error.message : 'Job services are temporarily unavailable. Your action has not been confirmed; retry to check its result.', ...(Array.isArray(error.missing) ? { missing: error.missing } : {}) };
+  return reply(error.status || 503, redact ? stripCrewMoneyDeep(body) : body);
 }
 
 export async function onRequestGet({ request, env }) {
@@ -211,7 +223,9 @@ export async function onRequestPost(handlerContext) {
     if (!mutationOriginAllowed(request)) throw fieldFailure('This job action must come from the Employee Hub.', 403, 'FIELD_ORIGIN_FORBIDDEN');
     ctx = await context(request, env); input = await readInput(request);
     if (input.expectedUser !== undefined && (typeof input.expectedUser !== 'string' || input.expectedUser.toLowerCase() !== ctx.session.user.toLowerCase())) throw fieldFailure('Your signed-in account changed. Sign in again before retrying this work.', 401, 'FIELD_ACCOUNT_CHANGED');
-    const job = await authorizedJob(ctx, input.jobId);
+    const job = await authorizedJob(ctx, input.jobId, input.action === 'complete');
+    const allCrewOperation = ctx.jobOperations && !ctx.manager && !await ctx.access.assigned(job);
+    if (allCrewOperation && (input.expectedUser !== ctx.session.user || Object.keys(input).some(key => !['action', 'jobId', 'requestId', 'expectedRevision', 'expectedUser', 'hasIssues', 'notes', 'issueNotes'].includes(key)))) throw fieldFailure('Refresh this account and use supported completion fields.', 403, 'FIELD_OPERATION_NOT_ALLOWED');
     fingerprint = await fieldFingerprint(ctx.session.user, input);
     const receipt = await ctx.store.readEvent(job.id, input.requestId);
     if (receipt && receipt.fingerprint !== fingerprint) throw fieldFailure('This action ID was already used for different information. Refresh before retrying.', 409, 'FIELD_IDEMPOTENCY_CONFLICT');
@@ -227,13 +241,14 @@ export async function onRequestPost(handlerContext) {
       if (receipt) throw fieldFailure('This action is pending verification. Retry shortly.', 409, 'FIELD_ACTION_PENDING');
       if (input.action === 'complete') await requireFieldExpenseCloseout(env, job, input);
       const result = (ctx.visits ? fieldVisitCommand : fieldCommand)(job, { ...ctx.session, manager: ctx.manager, capabilities: await capabilities(ctx, env, job) }, input, new Date().toISOString());
+      if (allCrewOperation) delete result.patch.fieldCompletionSync;
       // FUN-03: a dispatched/arrived/started/completed milestone commits its funnel event with the job and receipt, at the receipt's server time.
       const funnel = result.funnel ? [await fieldFunnelWrite(job, ctx.session, { requestId: input.requestId, type: fieldFunnelType(result.funnel.milestone), fromStatus: result.funnel.fromStatus, toStatus: result.funnel.toStatus }, result.event.createdAt)].filter(Boolean) : [];
-      const tags = input.action === 'complete' && fieldCompletionTagsEnabled(env) ? await fieldCompletionTagWrites({ job, patch: result.patch, requestId: input.requestId, now: result.event.createdAt }) : null;
+      const tags = !allCrewOperation && input.action === 'complete' && fieldCompletionTagsEnabled(env) ? await fieldCompletionTagWrites({ job, patch: result.patch, requestId: input.requestId, now: result.event.createdAt }) : null;
       if (tags) { result.patch.fieldCompletionTagEntry = tags.pointer; funnel.push(tags.write); }
       await ctx.store.commit(job, result.patch, { ...result.event, fingerprint }, null, funnel);
       if (tags) firstGhlTagAttempt(handlerContext, [tags.pointer.id], result.event.createdAt);
-      if (input.action === 'complete' && typeof handlerContext.waitUntil === 'function') {
+      if (!allCrewOperation && input.action === 'complete' && typeof handlerContext.waitUntil === 'function') {
         handlerContext.waitUntil(syncFieldCompletion(env, job.id, { actor: ctx.session }));
       }
       // A failed or skipped count stays 'pending' on the visit for a manager (/api/garage-guard-members).
@@ -248,6 +263,6 @@ export async function onRequestPost(handlerContext) {
     if (ctx && input && fingerprint && ['FIELD_STORAGE_UNAVAILABLE', 'FIELD_REVISION_CONFLICT'].includes(error.code)) {
       try { const receipt = await ctx.store.readEvent(input.jobId, input.requestId); if (receipt?.state === 'applied' && receipt.fingerprint === fingerprint) return reply(200, { ok: true, alreadyApplied: true, ...await detail(ctx, env, input.jobId) }); } catch { /* Original actionable error remains. */ }
     }
-    return errorResponse(error);
+    return errorResponse(error, ctx?.jobOperations === true && !ctx.manager);
   }
 }

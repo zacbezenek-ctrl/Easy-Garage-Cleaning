@@ -19,7 +19,7 @@ READY = (405, {'ok': False, 'code': 'CUSTOMER_LOGIN_METHOD_NOT_ALLOWED', 'error'
 def render_confirm_page(name='confirmPage'):
     # The confirm and retry pages are rendered by the real Pages Function, not a copy.
     script = f"import {{ {name} }} from './functions/api/customer-login-verify.js'; process.stdout.write(await {name}(process.argv[1]).text());"
-    return subprocess.run(['node', '--input-type=module', '-e', script, TOKEN], cwd=ROOT, check=True, capture_output=True, text=True, timeout=60).stdout
+    return subprocess.run(['node', '--input-type=module', '-e', script, TOKEN], cwd=ROOT, check=True, capture_output=True, text=True, encoding='utf-8', timeout=60).stdout
 
 class Handler(SimpleHTTPRequestHandler):
     confirm_html = ''
@@ -208,7 +208,7 @@ class ClientLoginBrowserTests(unittest.TestCase):
         page = self.open('/client-login?status=used')
         expect(page.locator('#cl-status')).to_contain_text('That sign-in link was already used. If you just tapped it, open your projects.')
         expect(page.locator('#cl-status')).to_contain_text('We send up to 3 links a day, so if no link arrives, text us at (970) 999-1818.')
-        expect(page.get_by_role('link', name='Open my projects')).to_have_attribute('href', '/customer-portal')
+        expect(page.get_by_role('link', name='Open my visits')).to_have_attribute('href', '/my-visits')
         self.audit(page)
         page.screenshot(path=str(OUT / 'client-login-used-375.png'), full_page=True)
         page = self.open(f'/api/customer-login-verify?token={TOKEN}')
@@ -224,7 +224,7 @@ class ClientLoginBrowserTests(unittest.TestCase):
         button.click(no_wait_after=True)
         page.wait_for_timeout(150)
         page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
-        expect(page.locator('#cl-status')).to_have_text("You’re signed in, but we couldn’t find an active project to open yet. Text us at (970) 999-1818 and we’ll help.")
+        expect(page.locator('#cl-status')).to_have_text("You're signed in. Open My visits to see your project history or contact us for help.")
         self.assertEqual(len(Handler.posts), 1)
         self.assertEqual(Handler.posts[0]['body'], f'token={TOKEN}')
         self.assertEqual(Handler.posts[0]['origin'], self.url)
@@ -248,7 +248,7 @@ class ClientLoginBrowserTests(unittest.TestCase):
         self.assertEqual(result['scripts'], 1, 'only the same-origin double-tap guard')
         page.screenshot(path=str(OUT / 'client-login-retry-375.png'), full_page=True)
         page.get_by_role('button', name='Try again').click()
-        expect(page.locator('#cl-status')).to_have_text("You’re signed in, but we couldn’t find an active project to open yet. Text us at (970) 999-1818 and we’ll help.")
+        expect(page.locator('#cl-status')).to_have_text("You're signed in. Open My visits to see your project history or contact us for help.")
         self.assertEqual([post['body'] for post in Handler.posts], [f'token={TOKEN}', f'token={TOKEN}'], 'the same link, tapped again')
         self.assertTrue(all(post['origin'] == self.url for post in Handler.posts))
 

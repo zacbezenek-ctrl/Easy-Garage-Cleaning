@@ -248,7 +248,7 @@ window.addEventListener('DOMContentLoaded',async()=>{if(await validSession())ope
 // already refuses its saves; say so, keep the draft on this device, and take the notice down if the access comes back.
 window.addEventListener('egc:access-changed',()=>{const shown=$('walkthrough-access-removed');if(EGCHubAuth.canRunWalkthrough()){shown?.remove();return}if(shown)return;const note=document.createElement('div');note.id='walkthrough-access-removed';note.setAttribute('role','alert');note.style.cssText='position:sticky;top:0;z-index:50;background:#fff4e5;color:#13203a;border-bottom:2px solid #e8581c;padding:12px 16px;font-weight:600';note.append('Walkthrough access was removed. Your draft is saved on this device. ');const back=document.createElement('a');back.href='/crew/';back.textContent='Back to crew home';note.append(back);document.body.prepend(note)});
 </script>
-<script src="/crew/quote-draft.js?v=20261021sale4" defer></script>
+<script src="/crew/quote-draft.js?v=20261023draft1" defer></script>
 <script src="/crew/gameplan-catalog.js?v=20261021field4" defer></script>
 <link rel="stylesheet" href="/crew/walkthrough-review.css?v=20261014">
 <script src="/crew/walkthrough-review.js?v=20261014" defer></script>

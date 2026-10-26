@@ -43,7 +43,9 @@ module.exports = {
   paths, pending, port, origin, minScore, reportDir, clientLoginFunction, clientLoginPath, reportDirFor,
   ci: {
     collect: {
-      startServerCommand: `node ${JSON.stringify(join(__dirname, 'serve.mjs'))}`,
+      // Forward slashes work on both platforms; JSON-escaped backslashes are
+      // not portable shell quoting for a Windows command string.
+      startServerCommand: `node ${JSON.stringify(join(__dirname, 'serve.mjs').replaceAll('\\', '/'))}`,
       startServerReadyPattern: 'EGC Lighthouse server listening on',
       startServerReadyTimeout: 20000,
       url: paths.map(path => origin + path),

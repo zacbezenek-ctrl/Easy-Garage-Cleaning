@@ -337,7 +337,7 @@
           let customerId = prepared.customerId;
           if (!customerId) customerId = (await request('/api/customer-resolve', { requestId: pending.resolveRequestId, customer: resolveCustomer(pending.draft.client) })).customer?.id;
           if (!customerId) throw new Error('The canonical customer could not be verified.');
-          pending.body = { action: 'save', actorId: user, requestId: pending.requestId, customerId, sourceWalkthroughId: source || '', sourceRevision: prepared.sourceRevision || '', ...(prepared.jobId ? { jobId: prepared.jobId, expectedRevision: prepared.expectedRevision } : {}), draft: pending.draft };
+          pending.body = { action: 'save', actorId: user, requestId: pending.requestId, customerId, sourceWalkthroughId: prepared.sourceWalkthroughId || source || '', sourceRevision: prepared.sourceRevision || '', ...(prepared.jobId ? { jobId: prepared.jobId, expectedRevision: prepared.expectedRevision } : {}), draft: pending.draft };
           remember(key, pending);
         }
         if (await d.actor() !== user) throw new Error('The signed-in account changed. Reopen the original account to recover this request.');

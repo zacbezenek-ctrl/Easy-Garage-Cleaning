@@ -2,7 +2,7 @@ import { mutateDispatch } from './dispatch-service.js';
 import { saveJobReads } from './dispatch-window-reads.js';
 import { requireQuoteAuthor } from './quote-permissions.js';
 import { authorCustomer, fullCustomerAccess, walkthroughVisible, jobCustomerAccess, jobRef, maskedCustomer, refPatch, restrictedAuthor, shownCustomerId } from './estimator-customer-access.js';
-import { assignmentKey, jobCrewNames } from './job-assignment.js';
+import { assignmentKey, createJobAssignmentAccess, jobCrewNames } from './job-assignment.js';
 import { localInstant } from './operations-portal-records.js';
 import { customerIdentityPatch } from './customer-identity.js';
 import { suggestedDurationMinutes } from './quote-duration.js';
@@ -406,9 +406,13 @@ export async function prepareHandoff(store, actor, query = {}, { env = {} } = {}
   const access = requireQuoteAuthor(actor, env);
   if (Object.keys(query).some(key => !['sourceWalkthroughId', 'jobId'].includes(key))) throw fail('invalid_request', 'The walkthrough lookup is invalid.', 400);
   for (const id of [query.sourceWalkthroughId, query.jobId].filter(Boolean)) if (!safeId(id)) throw fail('invalid_request', 'Choose a valid saved walkthrough or job.', 400);
-  const source = query.sourceWalkthroughId ? await store.read('jobs', query.sourceWalkthroughId) : null;
-  if (query.sourceWalkthroughId && (!source || source.type !== 'walkthrough' || source.recordType)) throw fail('source_missing', 'The source walkthrough could not be found.', 404);
-  let job = query.jobId ? await store.read('jobs', query.jobId) : null;
+  // A saved job is authoritative when the browser resumes without its walkthrough URL.
+  const selected = query.jobId ? await store.read('jobs', query.jobId) : null;
+  const sourceId = query.sourceWalkthroughId || selected?.sourceWalkthroughId || '';
+  if (sourceId && !safeId(sourceId)) throw fail('invalid_request', 'Choose a valid saved walkthrough or job.', 400);
+  const source = sourceId ? await store.read('jobs', sourceId) : null;
+  if (sourceId && (!source || source.type !== 'walkthrough' || source.recordType)) throw fail('source_missing', 'The source walkthrough could not be found.', 404);
+  let job = selected;
   if (query.jobId && !job) throw fail('job_missing', 'The selected job no longer exists. Review its history rather than creating a replacement.', 404);
   if (job && !operational(job)) throw fail('job_mismatch', 'The selected record is not an operational job.');
   if (source) {
@@ -420,7 +424,7 @@ export async function prepareHandoff(store, actor, query = {}, { env = {} } = {}
     if (job && (!operational(job) || job.sourceWalkthroughId !== source.id || source.customerId && job.customerId !== source.customerId)) throw fail('job_mismatch', 'The existing job and walkthrough do not share the same customer and source.');
   }
   const restricted = restrictedAuthor(actor, access, env);
-  if (job && !access.dispatcher && !authorsJob(job, source, actor, restricted, restricted && await walkthroughVisible(source, actor, env))) throw fail('job_forbidden', 'Only an operations manager or owner can open this job. Start from its walkthrough or quote draft.', 403);
+  if (job && !access.dispatcher && !authorsJob(job, source, actor, restricted, restricted && await walkthroughVisible(source, actor, env)) && !(restricted && await createJobAssignmentAccess(env, actor).assigned(job))) throw fail('job_forbidden', 'Only an operations manager or owner can open this job. Start from its walkthrough or quote draft.', 403);
   const customerId = job?.customerId || source?.customerId || '';
   const customer = customerId ? await store.read('customers', customerId) : null;
   if (customerId && !customer) throw fail('customer_missing', 'The linked customer is unavailable. Repair the customer link before saving.');
