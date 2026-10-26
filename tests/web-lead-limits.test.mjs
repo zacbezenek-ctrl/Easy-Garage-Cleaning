@@ -9,7 +9,7 @@ const ORIGIN = 'https://easygaragecleaning.com';
 const HOOK = 'https://hooks.example.invalid/catch/synthetic';
 const env = { HUB_SESSION_SECRET: 'synthetic-session-secret-for-web-lead-limit-tests', WEBSITE_LEAD_HOOK_URL: HOOK };
 
-function harness(t, { limitStore } = {}) {
+function harness(t, { limitStore, sync } = {}) {
   const memory = firestoreMemory(), synced = [], relayed = [], warnings = [];
   t.mock.method(globalThis, 'fetch', async input => {
     const url = String(input instanceof Request ? input.url : input);
@@ -19,13 +19,13 @@ function harness(t, { limitStore } = {}) {
   const handler = webLeadHandlers({
     now: () => new Date('2026-10-26T18:00:00Z'),
     storage: () => assert.fail('the receipt ledger is off in these tests'),
-    sync: async (_env, lead) => { synced.push(lead.phone); return { configured: true, synced: true }; },
+    sync: sync ? (env_, lead) => sync(lead, synced) : async (_env, lead) => { synced.push(lead.phone); return { configured: true, synced: true }; },
     warn: message => warnings.push(JSON.parse(message)),
     limitStore: limitStore || (() => webLeadStorage(env, (_env, url, init) => memory.fetch(url, init))),
   });
-  const post = ({ phone = '(970) 555-0100', ip = '198.51.100.7', headers = { Origin: ORIGIN } } = {}) => handler.post({ env, request: new Request(`${ORIGIN}/api/web-lead`, {
+  const post = ({ phone = '(970) 555-0100', ip = '198.51.100.7', headers = { Origin: ORIGIN }, extra = {} } = {}) => handler.post({ env, request: new Request(`${ORIGIN}/api/web-lead`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': ip, ...headers },
-    body: JSON.stringify({ name: 'Synthetic Lead', phone, sms_consent: 'yes', source: 'EGC Website' }),
+    body: JSON.stringify({ name: 'Synthetic Lead', phone, sms_consent: 'yes', source: 'EGC Website', ...extra }),
   }) });
   return { post, synced, relayed, warnings, memory };
 }
@@ -74,4 +74,26 @@ test('M-01: a counter outage lets the lead through instead of losing it', async 
   assert.equal((await h.post()).status, 200);
   assert.equal(h.synced.length, 1);
   assert.ok(h.warnings.some(w => w.event === 'web_lead_limit_unavailable'));
+});
+
+test('M-01: a Client hub help message over the limit is refused visibly (429), never answered as received', async t => {
+  const h = harness(t);
+  const help = { flow_type: 'client_hub_help', sms_consent: 'no' };
+  for (let i = 0; i < WEB_LEAD_LIMITS.phone.limit; i += 1) assert.equal((await h.post({ ip: `192.0.2.${i + 1}`, extra: help })).status, 200);
+  const refused = await h.post({ ip: '203.0.113.60', extra: help });
+  assert.equal(refused.status, 429);
+  const body = await refused.json();
+  assert.equal(body.ok, false);
+  assert.notEqual(body.accepted, true, 'the portal must not show "Message received"');
+  assert.match(body.error, /call/i);
+});
+
+test('M-01: a lead that fails to sync gives its counts back, so the customer\'s working retry still syncs', async t => {
+  let failing = true;
+  const h = harness(t, { sync: async (lead, synced) => { if (failing) throw new Error('HighLevel down'); synced.push(lead.phone); return { configured: true, synced: true }; } });
+  for (let i = 0; i < WEB_LEAD_LIMITS.phone.limit; i += 1) assert.equal((await h.post()).status, 502);
+  failing = false;
+  assert.equal((await h.post()).status, 200);
+  assert.equal(h.synced.length, 1, 'the retry after five failed tries reached HighLevel');
+  assert.equal(h.relayed.length, 1);
 });
