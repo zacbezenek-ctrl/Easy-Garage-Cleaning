@@ -24,6 +24,8 @@ import { catalogStorage, quoteBuilderEnabled, readCompositeState, requireCatalog
 import { GARAGE_SIZES, approvalRefusal, compositeApproval, compositeScope, fullnessOf, priceCompositeQuote } from './composite-quote.js';
 import { customerMoneyTotals } from './money-core.js';
 import { hasWinterSaleLine, signedWinterSale, winterSaleReaders } from './winter-sale.js';
+import { confirmNearbyTruck, pickupReaders, savedOwnerWaiver, waiverAudit, waiverRecord } from './pickup-minimum.js';
+import { auditWrite } from './hub-audit.js';
 import { PAYMENT_TIME_ZONE, SIGNED_25_75, businessPaymentDate, quotePaymentDates, quotePaymentSchedule } from './quote-payment-policy.js';
 
 // FIX-CREW-PRICE-LEAK: every crew-visible copy of the brief is written without currency amounts.
@@ -630,7 +632,7 @@ export async function releaseAllHeldHandoffs(store, actor, now = new Date().toIS
  * card checkout opened for the earlier terms is expired, or reported as
  * checkout_needs_review, exactly as a quote draft revision does. */
 // replayOnly (REP-WALKTHROUGH, a Knock rep's unchanged resend): answer an earlier save from its receipt, never write.
-export async function saveWalkthroughHandoff(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, compositeState = compositeStateDefault, winterSale = winterSaleReaders, replayOnly = false } = {}) {
+export async function saveWalkthroughHandoff(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, compositeState = compositeStateDefault, winterSale = winterSaleReaders, pickup = pickupReaders, replayOnly = false } = {}) {
   const access = requireQuoteAuthor(actor, env);
   if (!plain(input) || Object.keys(input).some(key => !['actorId', 'requestId', 'customerId', 'sourceWalkthroughId', 'sourceRevision', 'jobId', 'expectedRevision', 'plan'].includes(key)) || !requestId(input.requestId) || !safeId(input.customerId) || input.jobId && !safeId(input.jobId)) throw fail('invalid_request', 'The accepted walkthrough needs a stable request and customer identity.', 400);
   if (input.actorId && input.actorId !== actor.user) throw fail('actor_changed', 'The signed-in employee changed. Reopen the original account to recover this request.', 403);
@@ -718,7 +720,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // other line that differs (builderMismatch), so the quote is built again before the homeowner signs.
   const chosen = !builderOn ? null : builderSent ? signedInput.quote.composite_pricing : savedSelection(previous);
   const legacy = signedWithoutLabor(previous, chosen), selection = withSignedGarage(withSignedFullness(chosen, plan), plan);
-  let builder = null, signedSale = null;
+  let builder = null, signedSale = null, pickupWaiver = null;
   if (selection) {
     builder = priceCompositeQuote(await compositeState(env), selection, { complete: true, requireLabor: !legacy });
     // EGC_WINTER_SALE: a saved sale quote signed in person gets the server's sale line for the signing day and the booked
@@ -728,6 +730,12 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     // Only the sale's own refusals are final; anything else (settings that fail verification, a read outage) stays a
     // retryable 503 handoff_unavailable.
     catch (error) { if (['winter_sale_ineligible', 'winter_sale_disabled'].includes(error?.code)) throw Object.assign(error, { code: `handoff_${error.code}`, status: 409 }); throw error; }
+    // Minimum pickup (pickup-minimum.js): a truck-nearby waiver is confirmed for the booked day and the signed address, or
+    // refused (409 handoff_pickup_waiver_unconfirmed, nothing saved).
+    // The owner's override saved for this very day (and reason) carries to anyone's signature.
+    const owned = builder?.compositePricing?.nearbyTruck ? savedOwnerWaiver(previous?.minimumWaiver || previous?.quoteDraft?.minimumWaiver, { date: plan.quote.job_date || '', reason: builder.compositePricing.nearbyTruck.reason }) : null;
+    const confirmed = owned || await confirmNearbyTruck({ priced: builder, owner: isOwner(actor), jobId: previous?.id || '', date: plan.quote.job_date || '', address: plan.client.address, nearbyJobs: date => pickup.nearby(env, date), prefix: 'handoff_' });
+    if (confirmed) pickupWaiver = owned || waiverRecord(confirmed, { reason: builder.compositePricing.nearbyTruck.reason, by: actor.user, at: now });
     const mismatch = builderMismatch(signedInput.quote, builder, Math.round(plan.quote.total * 100));
     if (mismatch) throw mismatch;
     // D-JUNK: a junk-only quote is $1,000 per truck with no Labor line, so it prices no garage work; the walkthrough the
@@ -829,6 +837,12 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       // The signed job's winter sale record: the one signed with it, else none once the signed estimate has no sale line.
       const saleRecord = signedSale || (hasWinterSaleLine(finance.estimate.lineItems) && previous?.quoteDraft?.winterSale) || null;
       if (plain(previous?.quoteDraft) && (saleRecord || plain(previous.quoteDraft.winterSale))) target.patch.quoteDraft = { ...(target.patch.quoteDraft || previous.quoteDraft), winterSale: saleRecord };
+      // The confirmed truck-nearby waiver, on the job and its quote draft (audited below).
+      // A signature without one clears an earlier revision's record, so it never holds the job to a day.
+      if (pickupWaiver || plain(previous?.minimumWaiver) || plain(previous?.quoteDraft?.minimumWaiver)) {
+        target.patch.minimumWaiver = pickupWaiver || null;
+        if (plain(previous?.quoteDraft)) target.patch.quoteDraft = { ...(target.patch.quoteDraft || previous.quoteDraft), minimumWaiver: pickupWaiver || null };
+      }
       const pendingNames = pricesPending ? builder.approval.blocked.map(row => row.name) : [];
       const roleWarnings = [...(crewIgnored ? [{ code: 'crew_assignment_ignored', jobId: target.id, message: 'Crew names were not saved. A manager assigns the crew in Dispatch.' }] : []), ...(soldNeedsCrew ? [{ code: 'sold_needs_crew', jobId: target.id, message: 'Sold: needs crew. A manager assigns the crew in Dispatch.' }] : []),
         ...(choiceDropped ? [{ code: 'crew_choice_unavailable', jobId: target.id, message: 'The chosen crew can no longer take this visit, so Dispatch assigned the first free crew instead.' }] : []),
@@ -861,6 +875,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       const dispatchReceipt = writes.find(write => write.collection === 'dispatchOperations' && write.id === receiptId);
       // The crew outcome a quote author may see (dispatch-crew-assign.js: status, crew name and priority only).
       const auto = dispatchReceipt?.patch?.metadata?.crewAutoAssigned, crewAuto = plain(auto) ? { status: auto.status, ...(auto.status === 'assigned' ? { crewName: typeof auto.crewName === 'string' ? auto.crewName : null, priority: Number.isInteger(auto.priority) ? auto.priority : null } : {}) } : null;
+      if (pickupWaiver) writes.push(waiverAudit(auditWrite, pickupWaiver, { actor, jobId: target.id, requestId: input.requestId, now }));
       writes.push({ collection: 'walkthroughHandoffs', id: receiptId, patch: { fingerprint, actorId: actor.user, customerId: customer.id, jobId: target.id, sourceWalkthroughId: source?.id || '', sourceRevision: source?.revision || '', originalJobRevision: previous?.revision || '', acceptedAt: plan.acceptance.accepted_at, amountCents: Math.round(plan.quote.total * 100), signature: plan.signature, plan: providerPayload, priorEstimate: previous?.estimate || null, priorAcceptance: previous?.acceptance || null, createdAt: now, warnings: [...(dispatchReceipt?.patch?.warnings || []), ...roleWarnings], ...(crewAuto ? { crewAuto } : {}) } });
       await store.commit(writes);
     },

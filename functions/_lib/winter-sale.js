@@ -37,6 +37,7 @@ import { commissionFor, divRoundHalfUp, laborCostCents, milliHours, normalizeCos
 import { jobActualsSettingsStorage, readJobActualsSettings, requireJobActualsOwner } from './job-actuals-settings.js';
 import { denverToday } from './dispatch-time.js';
 import { segmentDays } from './dispatch-segments.js';
+import { pickupFloorCents } from './pickup-minimum.js';
 
 export const winterSaleEnabled = env => env?.EGC_WINTER_SALE === 'true';
 export const WINTER_SALE_LINE_ID = 'winter-sale';
@@ -175,7 +176,7 @@ const wholeDollarsBelow = cents => Number.isSafeInteger(cents) && cents > 100 ? 
  * capCents}. capCents is the sale amount when the margin after it stays at the floor; otherwise the largest whole-dollar
  * amount that does (0: none). It is never the whole quote total. lineItems are the quote's own lines, without the sale.
  */
-export function winterSaleCap({ lineItems, manHours: quoted, junkOnly = false, costs, channel = 'none', settings = WINTER_SALE_DEFAULTS }) {
+export function winterSaleCap({ lineItems, manHours: quoted, junkOnly = false, costs, channel = 'none', settings = WINTER_SALE_DEFAULTS, minimumCents = 0 }) {
   const before = estimateTotals(lineItems).totalCents, loads = truckLoads({ estimate: { lineItems } }).count;
   // Truck loads take crew time the Labor line does not price (junk-only quotes have no Labor line at all): every quote
   // with loads costs junkManHoursPerLoad x its loads on top of its own man-hours, and without that setting its margin is
@@ -187,7 +188,8 @@ export function winterSaleCap({ lineItems, manHours: quoted, junkOnly = false, c
   const marginAt = cents => estimatedSaleMargin({ lineItems: cents ? [...lineItems, winterSaleLine(settings, cents)] : lineItems, manHours, costs, channel });
   const base = marginAt(0);
   if (!base.known) return { known: false, reason: base.reason };
-  const max = Math.min(settings.amountCents, wholeDollarsBelow(before)), ok = cents => { const margin = marginAt(cents); return margin.known && margin.marginBp >= settings.marginFloorBp; };
+  // minimumCents (pickup-minimum.js pickupFloorCents): a pickup never goes below the minimum pickup.
+  const max = Math.min(settings.amountCents, wholeDollarsBelow(before), before - minimumCents), ok = cents => { const margin = marginAt(cents); return margin.known && margin.marginBp >= settings.marginFloorBp; };
   if (max <= 0 || !ok(0)) return { known: true, capCents: 0 };
   if (ok(max)) return { known: true, capCents: max };
   // The margin falls as the discount grows: the largest whole-dollar amount still at the floor.
@@ -198,12 +200,12 @@ export function winterSaleCap({ lineItems, manHours: quoted, junkOnly = false, c
 
 /**
  * The decision for one quote. beforeCents: its total without the sale; today: the Denver day the quote is saved, sent
- * or signed; jobDate: its booked day or null; jobEnd: its last work day (multi-day jobs); requireJobDate: true at send and sign; cap: winterSaleCap for the quote;
+ * or signed; minimumCents: the total it never goes below (a pickup's minimum); jobDate: its booked day or null; jobEnd: its last work day (multi-day jobs); requireJobDate: true at send and sign; cap: winterSaleCap for the quote;
  * override: the owner's {reason} to give the full amount past the margin rule, honored only when ownerOverride is true.
  * {eligible, code, reason, overridden, amountCents}: reason is the plain words an estimator sees, amountCents the
  * amount the sale line takes off.
  */
-export function winterSaleDecision({ settings = WINTER_SALE_DEFAULTS, beforeCents, today, jobDate = null, requireJobDate = false, jobEnd = null, cap = null, override = null, ownerOverride = false, accepted = false }) {
+export function winterSaleDecision({ settings = WINTER_SALE_DEFAULTS, beforeCents, today, jobDate = null, requireJobDate = false, jobEnd = null, cap = null, override = null, ownerOverride = false, accepted = false, minimumCents = 0 }) {
   const no = (code, reason) => ({ eligible: false, code, reason, overridden: false, amountCents: 0 });
   // accepted: the customer accepted this sale on or before its sign-by day; a later revision keeps it on those terms.
   if (!realDate(today) || today > settings.signBy && !accepted) return no('sale_ended', `Not eligible: the sale ended ${dayText(settings.signBy)}.`);
@@ -212,7 +214,10 @@ export function winterSaleDecision({ settings = WINTER_SALE_DEFAULTS, beforeCent
   // A job that runs over several days is inside the window only when its last day is (jobEnd: winterSaleLastDay).
   if (jobDate && realDate(jobEnd) && jobEnd > settings.jobTo) return no('job_date_outside', `Not eligible: the job runs past ${dayText(settings.jobTo)}, outside ${window}.`);
   if (requireJobDate && !jobDate) return no('job_date_needed', `Book the job date (${window}) before sending a winter sale quote.`);
-  const full = Number.isSafeInteger(beforeCents) ? Math.min(settings.amountCents, wholeDollarsBelow(beforeCents)) : 0;
+  // A pickup never goes below the minimum pickup (minimumCents: pickup-minimum.js pickupFloorCents), override or not: one
+  // at the minimum gets no sale credit, so the sale line and the Minimum pickup line never show together.
+  const full = Number.isSafeInteger(beforeCents) ? Math.min(settings.amountCents, wholeDollarsBelow(beforeCents), beforeCents - minimumCents) : 0;
+  if (full <= 0 && minimumCents > 0 && Number.isSafeInteger(beforeCents) && beforeCents > 100) return no('at_minimum', 'Not eligible: a pickup never goes below the $250 minimum pickup.');
   if (full <= 0) return no('nothing_to_discount', 'Not eligible: the quote has no total to take the sale off.');
   const overridden = ownerOverride && plain(override) && typeof override.reason === 'string' && override.reason.trim().length >= 3;
   const forced = { eligible: true, code: 'owner_override', reason: 'Eligible (owner override).', overridden: true, amountCents: full };
@@ -306,8 +311,8 @@ export async function signedWinterSale(previous, builder, { quote, jobDate, now,
   if (!acceptedOn && realDate(validUntil) && validUntil < today) throw fail('ineligible', `This sale quote expired ${dayText(validUntil)}. Nothing was saved: save the quote again, then have the customer sign it.`, 409, { code: 'quote_expired' });
   // The cap reads the stored lines (they carry the goods cost split), as the save and the send did; the customer's line
   // is appended to both.
-  const cap = winterSaleCap({ lineItems: builder.storedLineItems, manHours: saleManHours(builder), junkOnly, costs: await readers.costs(env), channel: await saleChannel(env, readers, { junkOnly, sourceWalkthroughId }), settings });
-  const decision = winterSaleDecision({ settings, beforeCents: builder.totalCents, today, jobDate: jobDate || null, requireJobDate: true, cap, override: saved.override || null, ownerOverride: Boolean(saved.overridden && saved.override), accepted: Boolean(acceptedOn) });
+  const cap = winterSaleCap({ lineItems: builder.storedLineItems, manHours: saleManHours(builder), junkOnly, costs: await readers.costs(env), channel: await saleChannel(env, readers, { junkOnly, sourceWalkthroughId }), settings, minimumCents: pickupFloorCents(builder.breakdown) });
+  const decision = winterSaleDecision({ settings, beforeCents: builder.totalCents, minimumCents: pickupFloorCents(builder.breakdown), today, jobDate: jobDate || null, requireJobDate: true, cap, override: saved.override || null, ownerOverride: Boolean(saved.overridden && saved.override), accepted: Boolean(acceptedOn) });
   if (!decision.eligible) throw fail('ineligible', `${decision.reason} ${redo}`, 409, { code: decision.code });
   const savedLine = (Array.isArray(previous.estimate?.lineItems) ? previous.estimate.lineItems : []).find(isWinterSaleLine);
   const line = { ...winterSaleLine(settings, decision.amountCents), ...(typeof savedLine?.description === 'string' && savedLine.description ? { description: savedLine.description } : {}) };

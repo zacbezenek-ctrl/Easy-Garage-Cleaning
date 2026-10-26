@@ -12,6 +12,7 @@ import { hubRecordEligibility } from './funnel-definitions.js';
 import { JOB_LABOR_COSTS, laborCostVisible, laborOnJob, laborRecordPatch, legacyJobLabor, legacyLaborMove, validLaborCents } from './job-labor-private.js';
 import { cashPayment, funnelTimeAccepted, moneyEventWrites, paidInFullState } from './payment-events.js';
 import { winterSaleDateProblem } from './winter-sale.js';
+import { jobWaiver, pickupWaiverProblem } from './pickup-minimum.js';
 
 /**
  * M3 server-authoritative money mutations for one job:
@@ -515,6 +516,13 @@ async function execute(store, actor, input, now, fingerprint, receiptId, via, re
   if (!moneyJob(job)) throw fail('job_not_found', 'This job is not available for money changes.', 404);
   if (typeof job.revision !== 'string' || !job.revision) throw fail('storage_incomplete', 'The job has no verifiable revision. Retry.', 503);
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This job changed after you opened it. Refresh and review the latest money details.', 409);
+  // Minimum pickup: a truck-nearby price holds for the day it was confirmed (pickup-minimum.js pickupWaiverProblem).
+  if (input.action === 'estimate.record_approval') {
+    const waiver = jobWaiver(job), moved = Boolean(waiver && job.date && job.date !== waiver.date);
+    const sameDay = moved && typeof store.jobs === 'function' ? (await store.jobs(['address'])).filter(row => row?.date === job.date) : null;
+    const problem = pickupWaiverProblem(job, sameDay, { approving: true });
+    if (problem) throw fail('pickup_waiver_moved', problem, 409);
+  }
   // The staged versioned 25/75 policy is authored through quote drafts and
   // in-person walkthrough signatures (SIGNED_25_75, walkthrough-handoff.js). The
   // legacy editor would otherwise apply its separate 50% fallback or issue an

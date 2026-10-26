@@ -41,7 +41,7 @@ const stripeFor=env=>{const secret=stripeSecretKey(env);return secret?(path,opti
 // Anything else, crew openings included, is refused as before.
 const ownWalkthrough=(actor,env,store,knock,ids,at)=>selfWalkthroughSession(actor,env,ids,{readJob:id=>store().read('jobs',id),knock:knock(env),performer:person=>quoteAuthorAccess(person,env).author,now:at});
 // winterSale (tests): the sale's readers (winter-sale.js). compositeState (tests): the builder's pricing state; by default the library reads it (catalog-store.js readCompositeState).
-export function handoffHandlers({session=getHubSession,storage=dispatchStorage,walkthroughs=gameplanWalkthroughStorage,now=()=>new Date(),stripe=stripeFor,compositeState=null,winterSale:saleReaders=winterSale,knock=createKnockStore}={}) {
+export function handoffHandlers({session=getHubSession,storage=dispatchStorage,walkthroughs=gameplanWalkthroughStorage,now=()=>new Date(),stripe=stripeFor,compositeState=null,winterSale:saleReaders=winterSale,pickup=undefined,knock=createKnockStore}={}) {
   const priced = compositeState ? {compositeState} : {};
   return {
     async get({request,env}) {
@@ -76,7 +76,7 @@ export function handoffHandlers({session=getHubSession,storage=dispatchStorage,w
         // Off, the request is refused as before (not a signed walkthrough).
         if(quoteBuilderEnabled(env)&&input&&typeof input==='object'&&!Array.isArray(input)&&input.action==='prices.release'&&actor[SELF_WALKTHROUGH_REPLAY]!==true)return reply(200,await releaseHandoffPrices(store,actor,input,at,{env,...priced}));
         // A signed revision closes an open portal checkout for the earlier terms.
-        return reply(200,await saveWalkthroughHandoff(store,actor,input,at,{replayOnly:actor[SELF_WALKTHROUGH_REPLAY]===true,env,...priced,winterSale:saleReaders,checkouts:job=>expireStaleCheckout({store,job,stripe:stripe(env),now:at,mode:moneyTotalsMode(env)})}));
+        return reply(200,await saveWalkthroughHandoff(store,actor,input,at,{replayOnly:actor[SELF_WALKTHROUGH_REPLAY]===true,env,...priced,winterSale:saleReaders,...(pickup?{pickup}:{}),checkouts:job=>expireStaleCheckout({store,job,stripe:stripe(env),now:at,mode:moneyTotalsMode(env)})}));
       } catch(error) { return failure(error); }
     }
   };
