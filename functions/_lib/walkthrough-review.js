@@ -93,7 +93,10 @@ export async function saveWalkthroughReview(store,actor,input,now,{env={}}={}) {
   // Resaving what such an estimator was shown in place of someone else's entry keeps that entry.
   if(shown!==state.draft)for(const key of IDENTITY)if(key in incoming&&!mine(state,key,who)&&incoming[key]===(shown[key]??''))delete incoming[key];
   // A field is credited to whoever last changed it; resending it unchanged (the gameplan sends all three) credits no one.
-  const identityBy={...(plain(state.identityBy)?state.identityBy:{}),...(input.action==='amend'?{}:Object.fromEntries(IDENTITY.filter(key=>key in incoming&&incoming[key]!==(state.draft?.[key]??'')).map(key=>[key,actor.user])))};
+  // A masked estimator never saw the stored value, so their change is judged against what they were shown: what is
+  // left after the drop above is theirs, even when it happens to equal the stored value (echoing it back reveals nothing).
+  const masked=shown!==state.draft,changed=key=>key in incoming&&(masked||incoming[key]!==(state.draft?.[key]??''));
+  const identityBy={...(plain(state.identityBy)?state.identityBy:{}),...(input.action==='amend'?{}:Object.fromEntries(IDENTITY.filter(changed).map(key=>[key,actor.user])))};
   let data={...state.draft,...incoming},reason='';
   if(input.action==='amend'){if(state.stage!=='finalized')throw fail('invalid','Only a finalized capture needs an amendment.',400);reason=typeof input.reason==='string'?input.reason.trim():'';if(reason.length<3||reason.length>1000)throw fail('invalid','Explain the amendment in 3–1,000 characters.',400);data=state.draft;}
   const quote=await quoteFor(store,job,data),customer=await customerFor(store,job,who),gaps=walkthroughReviewGaps(shownDraft({...state,draft:data,identityBy},who),{verifiedPhotos:verifiedPhotos(job),quote,customer,job});

@@ -416,3 +416,38 @@ test('resuming a saved job by its id alone (no walkthrough in the URL) never han
   f.job(id).assignedCrew = [sales.user];
   assert.equal((await prepare(f, sales, { jobId: id })).status, 200);
 });
+
+test('a masked estimator who retypes exactly the stored address on a job saved before typed details were kept can still finalize', async () => {
+  const { f, id, post, get } = await maskedCapture();
+  // A job saved before this change keeps only {ref, by, name}: no typed phone or address to compare with.
+  const { ref, by, name } = f.job(id).authorCustomerRef;
+  f.job(id).authorCustomerRef = { ref, by, name };
+  assert.equal((await post(owner, { ...captureRest(), customerName: 'Jordan Example', address: '1 Typed Street' })).status, 200);
+  const shown = await get(sales);
+  assert.equal(shown.body.review.draft.address, '');
+  // They type the very address the office recorded; it is theirs now and the capture finalizes.
+  const finalized = await post(sales, { ...shown.body.review.draft, address: '1 Typed Street' }, 'finalize');
+  assert.equal(finalized.status, 200, finalized.text);
+  assert.deepEqual([finalized.body.review.stage, finalized.body.review.draft.address], ['finalized', '1 Typed Street']);
+  assert.equal(/Jordan/.test(finalized.text), false);
+});
+
+test('a masked estimator who retypes exactly the stored name on a draft saved by record id can finalize without overwriting anything', async () => {
+  const { walkthroughCaptureHandlers } = await import('../functions/api/walkthrough-capture.js');
+  const f = fixture();
+  f.rows.get('jobs/w1').assignedCrew = [sales.user];
+  const saved = await saveDraft(f, sales, { requestId: randomUUID(), customerId: 'ghl_provider7', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', draft: draft() });
+  assert.equal(saved.status, 200, saved.text);
+  const id = saved.body.job.id;
+  // The office reassigns the walkthrough away, so the estimator no longer sees the customer in full.
+  f.rows.get('jobs/w1').assignedCrew = [];
+  const capture = actor => walkthroughCaptureHandlers({ session: async () => actor, storage: () => f.store, now: () => new Date(NOW) });
+  const post = (actor, data, action = 'save') => call(capture(actor).post({ request: json('/api/walkthrough-capture', { action, jobId: id, requestId: randomUUID(), expectedRevision: f.job(id).walkthroughReview?.revision ?? 0, data }), env: ROLES }));
+  assert.equal((await post(owner, { ...captureRest(), customerName: 'Jordan Example', address: '1 Typed Street' })).status, 200);
+  const shown = await call(capture(sales).get({ request: new Request(`${SITE}/api/walkthrough-capture?jobId=${id}`), env: ROLES }));
+  assert.deepEqual([shown.body.review.draft.customerName, shown.body.review.draft.address], ['', '']);
+  const finalized = await post(sales, { ...shown.body.review.draft, customerName: 'Jordan Example', address: '1 Typed Street' }, 'finalize');
+  assert.equal(finalized.status, 200, finalized.text);
+  const stored = f.job(id).walkthroughReview.draft;
+  assert.deepEqual([stored.customerName, stored.address, stored.handoffNotes, f.job(id).walkthroughReview.stage], ['Jordan Example', '1 Typed Street', captureRest().handoffNotes, 'finalized']);
+});
