@@ -37,6 +37,7 @@
 import { webLeadTiming } from '../_lib/funnel-calendar.js';
 import { bookingSlotLead, bookingSlotWords } from '../_lib/booking-slots.js';
 import { bookingExplicitSlotsEnabled } from '../_lib/booking-slots-flag.js';
+import { clientAddressKey, consumeRollingLimit } from '../_lib/rate-limit.js';
 import { WEB_LEAD_FIELDS, envVar, highLevelConfig, receiveWebLead, syncHighLevelLead, webLeadAttributionUrl, webLeadHeld, webLeadInquiryId, webLeadLedgerOn, webLeadMeta, webLeadRelayHold, webLeadStorage } from '../_lib/web-lead-intake.js';
 
 const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
@@ -55,6 +56,36 @@ function originAllowed(request) {
   const referer = request.headers.get('Referer');
   if (!origin && !referer) return true;
   return ALLOWED_HOST_RE.test(hostOf(origin) || hostOf(referer));
+}
+
+// SEC-2026-10 M-01: a request with neither Origin nor Referer is still accepted (privacy tools and some browsers
+// strip both, and a lost lead costs more than spam) but logged as a count-only marker, so it can be refused later.
+const ORIGINLESS = JSON.stringify({ event: 'web_lead_originless' });
+const originless = request => !request.headers.get('Origin') && !request.headers.get('Referer');
+
+// SEC-2026-10 M-01: rolling limits per client address and per lead phone, counted before HighLevel and the text
+// relay. A real household (a resend, a second try with a fixed address) stays far below them; a script texting one
+// number or flooding from one address does not. Over a limit the visitor still sees success (the Web3Forms email
+// leg has the lead), but nothing is synced or texted.
+export const WEB_LEAD_LIMITS = Object.freeze({
+  ip: Object.freeze({ bucket: 'web_lead_ip', limit: 20, windowMs: 60 * 60 * 1000 }),
+  phone: Object.freeze({ bucket: 'web_lead_phone', limit: 5, windowMs: 24 * 60 * 60 * 1000 }),
+});
+const LIMITED = bucket => JSON.stringify({ event: 'web_lead_rate_limited', bucket });
+const LIMIT_UNAVAILABLE = JSON.stringify({ event: 'web_lead_limit_unavailable' });
+// Production always has the service account; without one (local preview, unit tests) there is no counter store.
+const defaultLimitStore = env => (String(env?.FIREBASE_SERVICE_ACCOUNT_JSON || '').trim() ? webLeadStorage(env) : null);
+
+// The first limit that refuses this lead, or ''. A counter outage lets the lead through (logged): never lose a lead.
+async function overLimit(store, env, { ip, phone }, at, warn, limits = WEB_LEAD_LIMITS) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  for (const [rule, key] of [[limits.ip, clientAddressKey(ip)], [limits.phone, `phone:${digits.length === 10 ? `1${digits}` : digits}`]]) {
+    try {
+      const hit = await consumeRollingLimit(store, env, { bucket: rule.bucket, key, limit: rule.limit, windowMs: rule.windowMs }, at);
+      if (!hit.allowed) return rule.bucket;
+    } catch { try { warn(LIMIT_UNAVAILABLE); } catch {} return ''; }
+  }
+  return '';
 }
 
 function normalizePhone(raw) {
@@ -139,7 +170,7 @@ export async function onRequestOptions() {
 // A count-only marker for leads delivered without a receipt: no lead data, ever.
 const RECEIPT_UNAVAILABLE = JSON.stringify({ event: 'web_lead_receipt_unavailable' });
 
-export function webLeadHandlers({ storage = webLeadStorage, now = () => new Date(), sync = syncHighLevelLead, warn = message => console.warn(message) } = {}) {
+export function webLeadHandlers({ storage = webLeadStorage, now = () => new Date(), sync = syncHighLevelLead, warn = message => console.warn(message), limitStore = defaultLimitStore } = {}) {
   async function post({ request, env }) {
     const json = (status, body) =>
       new Response(JSON.stringify(body), {
@@ -171,6 +202,12 @@ export function webLeadHandlers({ storage = webLeadStorage, now = () => new Date
     }
 
     const at = now();
+    if (originless(request)) { try { warn(ORIGINLESS); } catch {} }
+    const limiter = limitStore(env);
+    if (limiter) {
+      const bucket = await overLimit(limiter, env, { ip: request.headers.get('CF-Connecting-IP') || '', phone }, at.toISOString(), warn);
+      if (bucket) { try { warn(LIMITED(bucket)); } catch {} return json(200, { ok: true, accepted: true }); }
+    }
     const hook = resolveHook(env);
     const ledger = webLeadLedgerOn(env);
     // The browser's inquiry id makes a resent submission the same inquiry; the ledger assigns one when it is missing.

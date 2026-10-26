@@ -12,7 +12,7 @@ Each finding below was reproduced by a script run against the real modules, with
 | H-01 | High | Four Zapier "catch hook" addresses are in the public history; if any of those Zaps is still on, anyone can fire it (review-request texts, Meta conversions, crew/Jobber jobs). | **Owner action now** |
 | S-01 | High | Anyone could guess staff passwords, including the owner's, with no limit on attempts. | Fixed |
 | S-02 | High | A customer address, phone or email containing code ran that code in the owner's Hub, which could take over the owner session. | Fixed |
-| M-01 | Medium | The public lead form can be scripted to text any phone, flood team alerts, and overwrite an existing customer's name and email in HighLevel. | Open: fix this week |
+| M-01 | Medium | The public lead form can be scripted to text any phone, flood team alerts, and overwrite an existing customer's name and email in HighLevel. | Partly fixed (rate limits; missing-origin counted); contact-overwrite part waits for Cesar |
 | M-02 | Medium | Later visits on a company-managed project can still get a full owner portal link, which skips the company's member roles. | Open |
 | M-03 | Medium | Anonymous sign-ins (unknown usernames) and staff signups each read every employee account, which could burn the Firestore quota and take sign-in down. | Partly fixed (S-01 limits sign-in); signup open |
 | L-01 | Low | Signing out of the Hub doesn't kill a session that was already copied; it stays valid for up to 12 hours. | Open (pending sessions branch) |
