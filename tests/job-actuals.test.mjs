@@ -4,7 +4,7 @@
 process.env.TZ = 'Asia/Tokyo';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildJobActuals, timecardLabor, channelOf, commissionFor, divRoundHalfUp, jobActualsRow, jobActualsWindow, laborCostCents, milliHours, percentOf, summarizeJobActuals, truckLoads } from '../functions/_lib/job-actuals.js';
+import { buildJobActuals, timecardLabor, channelOf, commissionFor, divRoundHalfUp, divRoundSigned, jobActualsRow, jobActualsWindow, laborCostCents, milliHours, percentOf, summarizeJobActuals, truckLoads } from '../functions/_lib/job-actuals.js';
 import { jobActualsSettingsStorage, mutateJobActualsSettings, readJobActualsSettings, JOB_ACTUALS_SETTINGS, JOB_ACTUALS_SETTINGS_OPERATIONS } from '../functions/_lib/job-actuals-settings.js';
 import { jobActualsHandlers, JOB_ACTUALS_FIELDS } from '../functions/api/job-actuals.js';
 import { fieldChecklist, fieldCommand } from '../functions/_lib/field-execution.js';
@@ -362,4 +362,14 @@ test('the Job actuals screen shows commission and contribution to the owner only
   assert.match(owner.totals, /Contribution/); assert.match(owner.csvHead, /Commission channel,Commission,.*Contribution/);
   for (const [label, value] of Object.entries(manager)) if (typeof value === 'string') assert.doesNotMatch(value, /commission|contribution/i, label);
   assert.match(manager.table, /Gross margin/); assert.match(manager.totals, /Gross margin/); assert.match(manager.csvHead, /Labor cost,Dump,Truck,Gross margin,Gross margin %,Upper bound,Notes/);
+});
+
+// A travel-only job worked no hours on site: there is nothing to compare, so it shows no variance (not −100%) and stays
+// out of the billed-vs-actual totals. A signed percent keeps the size of its own rounding (−10.1%, never −10.0%).
+test('a travel-only job shows no variance and is left out of the compared totals; signed percents round on their size', () => {
+  const travel = jobActualsRow(garageJob(), { labor: { workHours: 0, travelHours: 2, incomplete: false } });
+  assert.deepEqual([travel.actual.manHours, travel.varianceManHours, travel.variancePercent], [0, null, null]);
+  assert.equal(summarizeJobActuals([travel]).comparedJobs, 0);
+  assert.deepEqual([divRoundSigned(-5, 10), divRoundSigned(5, 10), divRoundSigned(-101, 10), divRoundSigned(-104, 10), divRoundSigned(0, 3)], [-1, 1, -10, -10, 0]);
+  assert.equal(divRoundHalfUp(-5, 10), 0, 'half up alone would round −0.5 toward zero, unlike +0.5');
 });

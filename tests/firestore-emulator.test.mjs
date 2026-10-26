@@ -157,6 +157,37 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       }
       await environment.withSecurityRulesDisabled(async context=>assert.deepEqual((await context.firestore().doc('jobs/sold-job').get()).data().funnelSale,sale));
     });
+    await t.test('a job\'s supervisor sign-off and its history are written only by /api/job-signoff (SIGNOFF)',async()=>{
+      const signed={supervisorSignoff:{status:'signed',by:'zacb',byName:'Synthetic Owner',at:'2099-09-10T12:00:00.000Z',reason:'',requestId:'00000000-0000-4000-8000-000000000001'},supervisorSignoffHistory:[{status:'signed',by:'zacb',at:'2099-09-10T12:00:00.000Z'}]};
+      const seededJob={type:'job',customerId:'signoff-customer',status:'completed',...signed};
+      await environment.withSecurityRulesDisabled(context=>context.firestore().doc('jobs/signed-job').set(seededJob));
+      for(const db of [manager,partner]){
+        await assertSucceeds(db.doc('jobs/signed-job').set({opsNotes:'Synthetic note'},{merge:true}),'other named fields still save');
+        for(const [field,value] of Object.entries(signed)){
+          await assertFails(db.doc('jobs/signed-job').set({[field]:null},{merge:true}),`clearing ${field}`);
+          await assertFails(db.doc('jobs/signed-job').update({[field]:field==='supervisorSignoff'?{...value,by:'forged'}:[]}),`rewriting ${field}`);
+          await assertFails(db.doc('jobs/signed-job').update({[field]:FieldValue.delete()}),`deleting ${field}`);
+          await assertFails(db.doc('jobs/assigned').update({[field]:value}),`adding ${field}`);
+          await assertFails(db.doc(`jobs/forged-${field.toLowerCase()}`).set({type:'job',customerId:'signoff-customer',[field]:value}),`creating with ${field}`);
+        }
+      }
+      await environment.withSecurityRulesDisabled(async context=>assert.deepEqual((await context.firestore().doc('jobs/signed-job').get()).data().supervisorSignoff,signed.supervisorSignoff));
+    });
+    // SIGNOFF: who worked a job is also read from its audit log at sign-off time (functions/api/job-signoff.js), because a
+    // business SDK user can rewrite the job's own crew and field names but never the log. tests/job-signoff.test.mjs runs the
+    // handler on a job rewritten this way.
+    await t.test('a business user can rewrite a job\'s crew names but not its fieldEvents audit log (SIGNOFF)',async()=>{
+      const event={id:'00000000-0000-4000-8000-000000000071',action:'status',actorId:'TylerG',state:'applied',createdAt:'2099-09-10T12:00:00.000Z'};
+      await environment.withSecurityRulesDisabled(async context=>{
+        await context.firestore().doc('jobs/worked-job').set({type:'job',customerId:'signoff-customer',status:'completed',assignedCrew:['TylerG','crew1'],crewLead:'TylerG',startedBy:'TylerG',completedBy:'TylerG'});
+        await context.firestore().doc(`jobs/worked-job/fieldEvents/${event.id}`).set(event);
+      });
+      await assertSucceeds(partner.doc('jobs/worked-job').set({assignedCrew:['crew1'],crewLead:'crew1',startedBy:'crew1',completedBy:'crew1'},{merge:true}),'the job\'s own names can be rewritten');
+      await assertFails(partner.doc(`jobs/worked-job/fieldEvents/${event.id}`).update({actorId:'crew1'}),'rewriting the log');
+      await assertFails(partner.doc(`jobs/worked-job/fieldEvents/${event.id}`).delete(),'deleting from the log');
+      await assertFails(partner.doc('jobs/worked-job/fieldEvents/00000000-0000-4000-8000-000000000072').set({...event,actorId:'crew1'}),'adding to the log');
+      await environment.withSecurityRulesDisabled(async context=>assert.equal((await context.firestore().doc(`jobs/worked-job/fieldEvents/${event.id}`).get()).data().actorId,'TylerG'));
+    });
     await t.test('a job\'s paid-in-full crossing fields are written only by the server money writers (FUN-33)',async()=>{
       const crossing={paidInFullAt:'2099-09-10T12:00:00.000Z',paidInFullRevision:2,balanceReopenedAt:'2099-09-09T12:00:00.000Z',balanceReopenedReason:'estimate_revised',paymentEventIssue:{code:'funnel_event_invalid',sessionId:'cs_test_synthetic',at:'2099-09-10T12:00:00.000Z'}};
       const seededJob={type:'job',customerId:'paid-in-full-customer',status:'scheduled',payment:{amount:800,verified:true},...crossing};
@@ -223,7 +254,8 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
     await t.test('Client Login rate limits, sign-in links and customer sessions remain server-only even for business SDK sessions',async()=>{
       await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('rate_limits/rl_synthetic').set({bucket:'customer_login_ip',count:1});await db.doc('customer_login_links/ml_synthetic').set({customerId:'customer-a',usedAt:null});await db.doc('customer_sessions/cs_synthetic').set({customerId:'customer-a',sessionVersion:0});});
       for(const db of [publicDb,crew,lead,manager,partner]) for(const path of ['rate_limits/rl_synthetic','customer_login_links/ml_synthetic','customer_sessions/cs_synthetic']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({customerId:'customer-b'}));await assertFails(db.doc(path).update({usedAt:null,revokedAt:null,count:0}));await assertFails(db.doc(path).delete());}
-      for(const db of [publicDb,manager]) for(const name of ['rate_limits','customer_login_links','customer_sessions']){await assertFails(db.collection(name).get());await assertFails(db.doc(`${name}/forged`).set({customerId:'customer-a'}));}
+      for(const db of [publicDb,manager]) for(const name of ['rate_limits','customer_login_links','customer_sessions','customerVisitRequests','reload_credit_accounts','reload_credit_operations']){await assertFails(db.collection(name).get());await assertFails(db.doc(`${name}/forged`).set({customerId:'customer-a'}));}
+      for(const db of [publicDb,crew,lead,manager,partner]) for(const name of ['customerVisitRequests','reload_credit_accounts','reload_credit_operations']){const ref=db.doc(`${name}/synthetic`);await assertFails(ref.get());await assertFails(ref.set({customerId:'customer-b'}));await assertFails(ref.update({status:'forged'}));await assertFails(ref.delete());}
     });
     await t.test('hub bridge command receipts (audit and idempotency) remain server-only even for business SDK sessions',async()=>{
       for(const db of [publicDb,crew,manager]){const ref=db.doc('hub_command_operations/receipt');await assertFails(ref.get());await assertFails(ref.set({fingerprint:'forged',before:'null',after:'{}'}));await assertFails(ref.delete());}

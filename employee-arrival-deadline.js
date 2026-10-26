@@ -13,8 +13,11 @@
      are unknown, and then this flag is not shown.
    Arrival and dispatch count only when recorded today in Denver and after the visit was last restored (restoredAt, as
    customer-portal.js portalStatus does), or from the job's canonical status on its first visit: a restored or later-day
-   visit never inherits an earlier arrival. Today's evidence is arrivedAt/startedAt/dispatchedAt, or the last status tap
-   (fieldExecution.activity at activityAt: a later day's Working tap writes only that, field-execution.js fieldCommand).
+   visit never inherits an earlier arrival. The canonical status stands only while nothing on the job (start, arrival,
+   dispatch, last tap) is from an earlier day, so a job left working and moved to today has not arrived today. Today's
+   evidence is arrivedAt/startedAt/dispatchedAt, or the last status tap (fieldExecution.activity, dated by when it was
+   made on the phone, activityTappedAt, else when it reached the server, activityAt: a later day's Working tap writes
+   only that, field-execution.js fieldCommand). A tap queued offline yesterday and synced today is yesterday's.
    A multi-day visit record (visits[today].startedAt, field-execution-visits.js) is written by the day's first tap,
    whatever it was, so it shows the crew moving, never arrived. A job-level arrival today covers its later segments
    that day. */
@@ -50,20 +53,28 @@ function visitRow(job,segment=null){
 }
 // A field timestamp counts for this visit when it was recorded on the visit's Denver day, after any restore.
 function current(job,value,date){const ms=at(value),restored=at(job?.restoredAt);return ms!==null&&!(restored!==null&&ms<=restored)&&denverDate(ms)===date}
+// When the last status tap was made: on the phone (activityTappedAt, clamped by the server), else when it was saved.
+const tapTime=row=>row.fieldExecution?.activityTappedAt||row.fieldExecution?.activityAt;
 // The crew's last status tap, when it was made today (after any restore). An End day counts as today's arrival only
-// when it ended today's own visit: one saved offline and synced after midnight carries today's activityAt but ended
-// yesterday's visit (field-execution-visits.js end_day with visitDate), so it says nothing about today.
+// when it ended a visit started and ended today: one saved offline and synced after midnight ended yesterday's visit
+// (field-execution-visits.js end_day with visitDate), so it says nothing about today. A Pause made before a later
+// visit's scheduled start is not that visit's arrival; a Waiting is (crew on site early, waiting on the customer).
 function todayTap(row){
-  if(!current(row,row.fieldExecution?.activityAt,row.date))return'';
+  const when=tapTime(row);
+  if(!current(row,when,row.date))return'';
   const tap=String(row.fieldExecution?.activity||''),visit=row.fieldExecution?.visits?.[row.date];
-  if(tap!=='day_ended')return tap;
-  return visit?.status==='ended'&&!visit.endedLate&&current(row,visit.endedAt,row.date)?'arrived':'';
+  if(tap==='day_ended')return visit?.status==='ended'&&!visit.endedLate&&current(row,visit.startedAt,row.date)&&current(row,visit.endedAt,row.date)?'arrived':'';
+  if(tap==='paused'&&row.firstVisit===false){const start=startAt(row);if(start!==null&&at(when)<start)return'';}
+  return tap;
 }
+// Something on the job recorded on a Denver day before this visit's (after any restore): its canonical status is older.
+const before=(row,value)=>{const ms=at(value),restored=at(row?.restoredAt);return ms!==null&&!(restored!==null&&ms<=restored)&&denverDate(ms)<row.date};
+const stageToday=row=>row.firstVisit===true&&![row.startedAt,row.arrivedAt,row.dispatchedAt,tapTime(row)].some(value=>before(row,value));
 function arrived(row){
   const date=row.date;
-  return current(row,row.arrivedAt,date)||current(row,row.startedAt,date)||ARRIVED_TAPS.has(todayTap(row))||row.firstVisit===true&&ARRIVED.has(stage(row));
+  return current(row,row.arrivedAt,date)||current(row,row.startedAt,date)||ARRIVED_TAPS.has(todayTap(row))||stageToday(row)&&ARRIVED.has(stage(row));
 }
-const moving=row=>arrived(row)||current(row,row.dispatchedAt,row.date)||current(row,row.fieldExecution?.visits?.[row.date]?.startedAt,row.date)||MOVING_TAPS.has(todayTap(row))||row.firstVisit===true&&MOVING.has(stage(row));
+const moving=row=>arrived(row)||current(row,row.dispatchedAt,row.date)||current(row,row.fieldExecution?.visits?.[row.date]?.startedAt,row.date)||MOVING_TAPS.has(todayTap(row))||stageToday(row)&&MOVING.has(stage(row));
 function startAt(job){const minutes=clock(job?.time);return minutes===null?null:denverInstant(job?.date,minutes)}
 // The label dispatch saves with the default window (dispatch-arrival.js formatArrivalWindow), read back only in that form.
 function labelMinutes(label){
@@ -126,5 +137,10 @@ function flags(job,{now,crew=[],timeEntries=null}={}){
   }
   return output;
 }
-root.EGCArrivalDeadline=Object.freeze({flags,visitRow,arrivalDeadline,enRouteDeadline,startAt,denverDate,denverInstant,LATE_GRACE_MS,EN_ROUTE_LEAD_MS});
+// underway(row): the crew of this visit (a job or a visitRow) is en route or on site today: the same evidence that
+// clears Not en route. MANAGER-SLIP-ALERTS (employee-slip-alerts.js) stops alerting a visit once this is true. Only the
+// visit's own evidence counts: a later visit never inherits the job's canonical status, because End day leaves a job
+// worked on day 1 in_progress and day 2 would then look underway with nobody there.
+function underway(job,{now}={}){const nowMs=typeof now==='number'?now:Date.parse(now);if(!Number.isFinite(nowMs))return false;const row=job?.firstVisit===undefined?{...job,firstVisit:true}:job;return row.date===denverDate(nowMs)&&moving(row)}
+root.EGCArrivalDeadline=Object.freeze({flags,underway,visitRow,arrivalDeadline,enRouteDeadline,startAt,denverDate,denverInstant,LATE_GRACE_MS,EN_ROUTE_LEAD_MS});
 })(typeof window!=='undefined'?window:globalThis);

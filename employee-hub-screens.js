@@ -20,6 +20,7 @@ const KIT={js:'employee-ui-kit.js',css:'employee-ui-kit.css',v:'20260929mobilehu
 // this file is always loaded and a lazily loaded screen may never have run on the page.
 const MANIFEST=[
 {id:'crew_alerts',group:'MY EGC',label:'Schedule alerts',iconPath:'M12 3a6 6 0 0 0-6 6v4l-2 3h16l-2-3V9a6 6 0 0 0-6-6zM10 19a2 2 0 0 0 4 0',crewVisible:true,load:{js:'employee-crew-notifications.js',css:'employee-crew-notifications.css',v:'20260929editwipe'},module:'EGCCrewNotifications'},
+{id:'shift_swaps',group:'MY EGC',label:'Shift swaps',iconPath:'M7 7h11l-3-3M17 17H6l3 3',crewVisible:true,load:{js:'employee-shift-swaps.js',css:'employee-shift-swaps.css',v:'20261021swaps1'},module:'EGCShiftSwapsHome'},
 {id:'password',group:'MY EGC',label:'Password',iconPath:'M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5zM12 15v2',capability:'password',load:{js:'employee-staff-access.js',css:'employee-staff-access.css',v:'20261017access3'},module:'EGCStaffAccess'},
 {id:'team_directory',group:'MY EGC',label:'Team directory',iconPath:'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20c0-3 3-5 6-5s6 2 6 5M12 20c0-3 3-5 6-5s4 2 4 5',capability:'team_directory',load:{js:'employee-team-directory.js',css:'employee-team-directory.css',v:'20261017team1'},module:'EGCTeamDirectory'},
 {id:'my_commission',group:'MY EGC',label:'My commission',iconPath:'M12 3v18M17 7.5c0-1.9-2.2-3-5-3s-5 1.1-5 3 2.2 2.8 5 3.5 5 1.6 5 3.5-2.2 3-5 3-5-1.1-5-3',crewVisible:true,load:{js:'employee-estimator-commission.js',css:'employee-estimator-commission.css',v:'20261018commfix'},module:'EGCEstimatorCommission'},
@@ -28,31 +29,40 @@ const MANIFEST=[
 {id:'catalog',group:'SYSTEM',label:'Catalog & pricing',iconPath:'M4 4h7l9 9-7 7-9-9zM8 8h.01',capability:'owner',load:{js:'employee-catalog.js',css:'employee-catalog.css',v:'20261021field3'},module:'EGCCatalog'},
 {id:'dispatch_rules',group:'RUN THE BUSINESS',label:'Dispatch rules',iconPath:'M4 6h11M4 12h7M4 18h5M14 15l2.5 2.5L21 13',capability:'owner',load:{js:'employee-dispatch-settings.js',css:'employee-dispatch-settings.css',v:'20260929rules4'},module:'EGCDispatchSettings'},
 {id:'job_actuals',group:'RUN THE BUSINESS',label:'Job actuals',iconPath:'M4 20V10M10 20V4M16 20v-7M22 20H2',capability:'business',load:{js:'employee-job-actuals.js',css:'employee-job-actuals.css',v:'20261021ownerecon2'},module:'EGCJobActuals'},
+{id:'crew_performance',group:'RUN THE BUSINESS',label:'Crew performance',iconPath:'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20c0-3 2.7-5 6-5s6 2 6 5M15 13l2 2 4-4',capability:'business',load:{js:'employee-crew-performance.js',css:'employee-crew-performance.css',v:'20261021crewperf1'},module:'EGCCrewPerformance'},
 {id:'open_quotes',group:'RUN THE BUSINESS',label:'Open quotes',iconPath:'M6 3h9l3 3v15H6zM9 10h6M9 14h4M16 17l2 2 3-4',capability:'business',load:{js:'employee-open-quotes.js',css:'employee-open-quotes.css',v:'20261021openquotes2'},module:'EGCOpenQuotes'},
 {id:'reviews',group:'RUN THE BUSINESS',label:'Review queues',iconPath:'M9 3h6v3H9zM6 5h3v1h6V5h3v16H6zM9 13l2 2 4-4',capability:'business',load:{js:'employee-reviews.js',css:'employee-reviews.css',v:'20260930launchpolish'},module:'EGCReviews'},
 {id:'message_templates',group:'SYSTEM',label:'Message templates',iconPath:'M4 5h16v11H9l-5 4z',capability:'business',load:{js:'message-templates.js',css:'message-templates.css',v:'20260928crew'},module:'EGCMessageTemplates'},
 {id:'stocked_costs',group:'SYSTEM',label:'Stocked item costs',capability:'business',iconPath:'M4 7l8-4 8 4v10l-8 4-8-4zM4 7l8 4 8-4M12 11v10',load:{js:'employee-standard-costs.js',css:'employee-standard-costs.css',v:'20260928fun19'},module:'EGCStandardCosts'},
 {id:'staff',group:'RUN THE BUSINESS',label:'Staff directory',iconPath:'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2 20c0-3.5 3-6 7-6s7 2.5 7 6M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14c2.5.6 4 2.8 4 6',capability:'business',load:{js:'employee-staff.js',css:'employee-staff.css',v:'20261021roles'},module:'EGCStaff'},
 {id:'invoicing',group:'CLIENT WORK',label:'Invoicing',iconPath:'M6 3h9l3 3v15H6z M9 9h6 M9 13h6 M9 17h4',capability:'business',load:{js:'employee-money.js',css:'employee-money.css',v:'20260929invoicingr3'},module:'EGCMoney'},
+{id:'business_requests',group:'CLIENT WORK',label:'Business requests',capability:'business',load:{js:'employee-business-requests.js',v:'20261024requests1'},module:'EGCBusinessRequests'},
+{id:'customer_visit_requests',group:'CLIENT WORK',label:'Customer visit requests',capability:'business',load:{js:'employee-customer-requests.js',v:'20261024requests1'},module:'EGCCustomerRequests'},
 {id:'walkthroughs',group:'RUN THE BUSINESS',label:'Walkthroughs',iconPath:'M9 4h6l1 2h3v14H5V6h3zM9 13l2 2 4-4',capability:'business',load:{js:'employee-walkthroughs.js',css:'employee-walkthroughs.css',v:'20260929hubready1'},module:'EGCWalkthroughs'},
 {id:'purchase_list',group:'RUN THE BUSINESS',label:'Purchase list',iconPath:'M3 4h2l2.4 11h11.2L21 7H6.2M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM18 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',capability:'business',load:{js:'employee-purchase-list.js',css:'employee-purchase-list.css',v:'20261017purchase'},module:'EGCPurchaseList'},
 {id:'customer_messages',group:'CLIENT WORK',label:'Customer messages',iconPath:'M4 5h16v11H9l-5 4zM8 9h8M8 12h5',capability:'customer_contact',load:{js:'employee-customer-messages.js',css:'employee-customer-messages.css',v:'20261021inbox4'},module:'EGCCustomerMessages'},
 ];
-// Home widgets, one line each: {id, label, homes:['today'|'my_day',...], capability:'business'|'owner' or crewVisible:true, module:'EGCName', load?:{js, css, v}}.
+// Home widgets, one line each: {id, label, homes:['today'|'my_day',...], capability:'business'|'owner' or crewVisible:true, quiet?:true, module:'EGCName', load?:{js, css, v}}.
 // employee-suite.js renders one #ops-home-widgets node on the Command center (today) and on My day. mountHome() gives each
 // allowed widget its own slot there in this order, keeps the slot across background renders and unmounts it when the viewer
 // leaves that home. Without load the module is already on the page (a script tag in employee.html). The widget file defines
 // window.EGCName={mount(host,ctx), unmount(), refresh()}; ctx is the screen ctx plus {home, widget}.
 const HOME_WIDGETS=[
+  {id:'team_lead_summary',label:'Team performance',homes:['my_day'],capability:'team_lead_summary',quiet:true,module:'EGCTeamLeadSummary',load:{js:'employee-team-lead-summary.js',v:'20261024summary1'}},
   {id:'customer_messages',label:'Customer messages',homes:['today','my_day'],capability:'customer_contact',module:'EGCCustomerMessagesHome',load:{js:'employee-customer-messages.js',css:'employee-customer-messages.css',v:'20261021inbox4'}},
   {id:'overdue_followups',label:'Overdue follow-ups',homes:['today','my_day'],capability:'business',module:'EGCFollowupsHome'},
   // READINESS: tomorrow's jobs and what still stops each from rolling out ready (crew, lead, truck, time off, access notes).
   {id:'crew_readiness',label:'Tomorrow readiness',homes:['today','my_day'],capability:'business',module:'EGCReadiness',load:{js:'employee-readiness.js',css:'employee-readiness.css',v:'20261021ready1'}},
+  {id:'shift_swap_review',label:'Shift swaps to approve',homes:['today'],capability:'business',module:'EGCShiftSwapsReview',load:{js:'employee-shift-swaps.js',css:'employee-shift-swaps.css',v:'20261021swaps1'}},
+  {id:'job_signoff',label:'Completed: needs sign-off',homes:['today'],capability:'business',module:'EGCJobSignoff',load:{js:'employee-job-signoff.js',css:'employee-job-signoff.css',v:'20261021signoff1'}},
+  {id:'supervisor_followups',label:'Supervisor follow-ups',homes:['my_day'],crewVisible:true,quiet:true,module:'EGCSupervisorFollowUps',load:{js:'employee-job-signoff.js',css:'employee-job-signoff.css',v:'20261021signoff1'}},
   // Signed jobs held for the owner's prices: opening the Command center releases those a new pricing menu approves (POST /api/held-jobs).
   {id:'held_jobs',label:'Booked jobs waiting for prices',homes:['today'],capability:'business',module:'EGCHeldJobsHome',load:{js:'employee-held-jobs.js',v:'20261021held1'}},
   // Crew staffing (crew-ops): one line on the Command center; GET /api/crew-staffing also needs dispatch.write, and the line
   // stays empty for anyone it refuses. employee.html loads its files (Dispatch's Crews & vehicles uses them too).
   {id:'crew_staffing',label:'Crew staffing',homes:['today'],capability:'business',module:'EGCCrewStaffing'},
+  {id:'customer_visit_requests',label:'Customer visit requests',homes:['today'],capability:'business',module:'EGCCustomerRequestsHome',load:{js:'employee-customer-requests.js',v:'20261024requests1'}},
+  {id:'business_requests',label:'Business requests',homes:['today'],capability:'business',module:'EGCBusinessRequestsHome',load:{js:'employee-business-requests.js',v:'20261024requests1'}},
 ];
 const HOMES=new Set(['today','my_day']);
 const ID=/^[a-z][a-z0-9_]{1,47}$/,CAPABILITY=/^[a-z][a-z0-9_]{1,40}$/,MODULE=/^EGC[A-Za-z0-9]{1,40}$/,VERSION=/^[A-Za-z0-9._-]{1,40}$/,ICON=/^[MmLlHhVvCcSsQqTtAaZz0-9 .,-]{1,800}$/;
@@ -98,7 +108,9 @@ function registerWidget(spec){
   const crewVisible=spec.crewVisible===true,capability=spec.capability==null?'':String(spec.capability);
   if(crewVisible===Boolean(capability)||capability&&!CAPABILITY.test(capability))fail(id+' must declare exactly one of capability or crewVisible');
   if(!MODULE.test(String(spec.module||'')))fail(id+' needs a module name');
-  const entry=Object.freeze({id,label,homes:Object.freeze(homes),capability,crewVisible,module:String(spec.module),load:loadSpec(id,spec.load)});
+  // quiet:true: the slot stays hidden, with no loading bars or failure notice, until the module shows it (sets
+  // slot.hidden=false); for a card that is usually empty, so it never moves what is below it on a phone.
+  const entry=Object.freeze({id,label,homes:Object.freeze(homes),capability,crewVisible,module:String(spec.module),load:loadSpec(id,spec.load),...(spec.quiet===true?{quiet:true}:{})});
   homeDefs.set(id,entry);
   return entry;
 }
@@ -130,9 +142,12 @@ function asset(path,version){
   assets.set(url,promise);
   return promise;
 }
-async function ensure(entry){
+// live(): whether the caller still wants the files. A home closed by a sign-out while the kit loaded starts no further
+// file load, so the device keeps no staff file fetched after it signed out (forgetOfflineFiles).
+async function ensure(entry,live=()=>true){
   await Promise.all([asset(KIT.css,KIT.v),window.EGCHubKit?null:asset(KIT.js,KIT.v)]);
   if(!window.EGCHubKit)throw new Error('kit_unavailable');
+  if(!live())throw new Error('closed');
   if(entry.load)await Promise.all([entry.load.css?asset(entry.load.css,entry.load.v):null,entry.load.js?asset(entry.load.js,entry.load.v):null]);
 }
 function notice(host,entry,retry,what='screen'){
@@ -192,14 +207,14 @@ function widgetItem(entry,view,ctx){
   slot.className='hub-home-widget';slot.setAttribute('data-hub-widget',entry.id);
   const live=()=>home?.items.get(entry.id)===item,retry=()=>{if(live())void item.run();};
   item.run=async()=>{
-    skeleton(slot,entry);
-    try{await (entry.load?ensure(entry):asset(KIT.css,KIT.v));}catch{if(live())notice(slot,entry,retry,'section');return;}
+    if(entry.quiet){slot.hidden=true;slot.replaceChildren();}else skeleton(slot,entry);
+    try{await (entry.load?ensure(entry,live):asset(KIT.css,KIT.v));}catch{if(live()&&!entry.quiet)notice(slot,entry,retry,'section');return;}
     if(!live())return;
     const module=window[entry.module];
-    if(!module||typeof module.mount!=='function'){notice(slot,entry,retry,'section');return;}
+    if(!module||typeof module.mount!=='function'){if(!entry.quiet)notice(slot,entry,retry,'section');return;}
     slot.replaceChildren();item.module=module;item.mounted=true;
     try{await module.mount(slot,Object.freeze({...ctx,home:view,widget:entry.id}));}
-    catch(error){console.error('Hub home widget failed to mount',entry.id,error);if(live()){item.mounted=false;try{module.unmount?.();}catch{}notice(slot,entry,retry,'section');}}
+    catch(error){console.error('Hub home widget failed to mount',entry.id,error);if(live()){item.mounted=false;try{module.unmount?.();}catch{}if(entry.quiet)slot.hidden=true;else notice(slot,entry,retry,'section');}}
   };
   return item;
 }

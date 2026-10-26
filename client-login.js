@@ -13,7 +13,7 @@
     invalid: 'That sign-in link isn’t valid. Request a new one below.',
     retry: 'Your sign-in didn’t finish. Open the link from your text or email again.',
     unavailable: 'Sign-in is temporarily unavailable. Try your link again shortly, or text us for a secure link.',
-    signed_in: 'You’re signed in, but we couldn’t find an active project to open yet. Text us at (970) 999-1818 and we’ll help.'
+    signed_in: "You're signed in. Open My visits to see your project history or contact us for help."
   };
   var TIMEOUT_MS = 20000, PROBE_MS = 10000;
   var $ = function (id) { return document.getElementById(id); };
@@ -58,7 +58,7 @@
     if (!key || !Object.prototype.hasOwnProperty.call(STATUS, key)) return;
     var status = $('cl-status');
     status.textContent = STATUS[key]; status.hidden = false;
-    if (key === 'used') $('cl-status-portal').hidden = false;
+    if (key === 'used' || key === 'signed_in') $('cl-status-portal').hidden = false;
     try { window.history.replaceState(null, '', window.location.pathname); } catch (ignore) { /* The message still shows. */ }
   }
 

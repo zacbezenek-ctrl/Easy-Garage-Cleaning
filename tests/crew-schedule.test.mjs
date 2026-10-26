@@ -318,3 +318,18 @@ test('today\u2019s live state shows on today\u2019s row only, only when the crew
   for (const secret of ['Synthetic reason', 'gate locked', 'Synthetic visit notes', 'bays left', 'visits', 'endedLate', 'activityReason', 'statusReason', 'activityAt', '9705550142', '1250', 'Synthetic office note'])
     assert.ok(!text.includes(secret), `${secret} must not leave`);
 });
+
+test('a split job’s schedule rows show the arrival window only on the first visit, never on a later segment the same day or after', async () => {
+  const jobs = [job('job_split_day', { customer: 'Kai Synthetic', time: '08:00', endTime: '17:00', endDate: '2026-10-17', arrivalWindow: '8:00 AM – 9:00 AM', assignedCrew: ['ben.crew', 'cara.crew'], assignmentSegments: [
+    { id: 'seg-am', date: '2026-10-16', time: '08:00', endDate: '2026-10-16', endTime: '12:00', assignedCrew: ['ben.crew'], crewId: 'crew_one' },
+    { id: 'seg-pm', date: '2026-10-16', time: '13:00', endDate: '2026-10-16', endTime: '17:00', assignedCrew: ['cara.crew'], crewId: 'crew_two' },
+    { id: 'seg-next', date: '2026-10-17', time: '08:00', endDate: '2026-10-17', endTime: '12:00', assignedCrew: ['ben.crew'], crewId: 'crew_one' },
+  ] })];
+  const access = { assigned: async () => true, exactly: () => false };
+  const body = await crewSchedule({ session: SESSIONS.tyler, env: {}, from: '2026-10-16', to: '2026-10-17', scope: 'all', now: NOW, crews: CREWS, jobs, access, names: {} });
+  const windows = Object.fromEntries(rows(body).filter(row => row.id === 'job_split_day').map(row => [row.segmentId, row.arrivalWindow]));
+  assert.deepEqual(windows, { 'seg-am': '8:00 AM – 9:00 AM', 'seg-pm': '', 'seg-next': '' });
+  const plain = await crewSchedule({ session: SESSIONS.tyler, env: {}, from: '2026-10-16', to: '2026-10-16', scope: 'all', now: NOW, crews: CREWS, access,
+    jobs: [job('job_whole', { crewId: 'crew_one', assignedCrew: ['ben.crew'], arrivalWindow: '9:30 AM – 10:30 AM' })], names: {} });
+  assert.equal(rows(plain)[0].arrivalWindow, '9:30 AM – 10:30 AM', 'an unsplit job keeps its window');
+});

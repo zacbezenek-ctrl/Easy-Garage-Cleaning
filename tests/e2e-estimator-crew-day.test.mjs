@@ -25,6 +25,10 @@ import { catalogHandlers } from '../functions/api/catalog.js';
 import { purchaseListHandlers } from '../functions/api/purchase-list.js';
 import { crewScheduleHandlers } from '../functions/api/crew-schedule.js';
 import { staffDirectoryHandlers } from '../functions/api/staff-directory.js';
+import { jobSignoffHandlers } from '../functions/api/job-signoff.js';
+import { customerMoneyState, recordCustomerStripePayment } from '../functions/_lib/customer-payments.js';
+import { customerMoneyTotals } from '../functions/_lib/money-core.js';
+import { syncFieldCompletion } from '../functions/_lib/field-execution-sync.js';
 import * as fieldJobs from '../functions/api/field-jobs.js';
 import * as employeeHub from '../functions/api/employee-hub.js';
 import * as hubAuth from '../functions/api/hub-auth.js';
@@ -72,6 +76,7 @@ function hub() {
     '/api/purchase-list': purchaseListHandlers(),
     '/api/crew-schedule': crewScheduleHandlers(),
     '/api/staff-directory': staffDirectoryHandlers({ revocations: () => null }),
+    '/api/job-signoff': jobSignoffHandlers(),
     '/api/field-jobs': { get: fieldJobs.onRequestGet, post: fieldJobs.onRequestPost },
     '/api/employee-hub': { get: employeeHub.onRequestGet, post: employeeHub.onRequestPost },
     '/api/hub-auth': { get: hubAuth.onRequestGet },
@@ -79,11 +84,11 @@ function hub() {
   };
   // A session signed at the moment of the request (the test clock jumps days; a Hub session lasts one work day).
   const cookie = async user => (await createHubSessionCookie(ENV, user)).split(';')[0];
-  async function call(user, path, body, { method = body === undefined ? 'GET' : 'POST', env = ENV, headers = {} } = {}) {
+  async function call(user, path, body, { method = body === undefined ? 'GET' : 'POST', env = ENV, headers = {}, background = true } = {}) {
     const url = new URL(path, ORIGIN), handler = handlers[url.pathname];
     assert.ok(handler, `no handler for ${url.pathname}`);
     const request = new Request(url, { method, headers: { ...(user ? { Cookie: await cookie(user) } : {}), ...(method === 'POST' ? { Origin: ORIGIN, 'Content-Type': 'application/json' } : {}), ...headers }, ...(body === undefined ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }) });
-    const response = await handler[method.toLowerCase()]({ request, env, waitUntil: () => {} });
+    const response = await handler[method.toLowerCase()]({ request, env, ...(background ? { waitUntil: () => {} } : {}) });
     const text = await response.text();
     let json = null; try { json = JSON.parse(text); } catch {}
     return { status: response.status, body: json, text };
@@ -170,7 +175,7 @@ async function crewHome(api, user) {
   return { context, calls, card: () => element('crew-overview').innerHTML, next: () => element('next-work').innerHTML };
 }
 
-test('estimator to crew, one day through the real handlers: walkthrough, builder, send gate, signed handoff, owner approval, purchase list, crew schedule, grab list, clock and team directory', async t => {
+test('estimate through field completion, signoff, payment and recovered CRM handoff uses one canonical job with safe retries', async t => {
   const { fire, api, clock } = world(t, at(MON, '08:00'));
   const crews = await setUpCrews(api);
 
@@ -483,6 +488,85 @@ test('estimator to crew, one day through the real handlers: walkthrough, builder
   const weekendJob = fire.get(`jobs/${saturday.job.id}`);
   assert.deepEqual([saturday.autoCrew.status, saturday.autoCrew.crewName, weekendJob.crewId, weekendJob.assignedCrew, weekendJob.crewLead], ['assigned', 'Crew 3', crews['crew-3'].id, ['crew3.lead', 'crew3.mate'], 'crew3.lead']);
   assert.deepEqual((await api.ok('Crew3.Mate', '/api/crew-schedule')).groups.map(group => [group.crew.name, group.jobs.map(row => [row.date, row.time])]), [['Crew 3', [[SAT, '09:30']]]]);
+
+  // 9) Continue the same signed/approved/assigned job through closeout. Photo-upload transport has its own
+  // tests; these are previously verified photo records, as the field API reads them after an upload completes.
+  // An incomplete closeout cannot alter the job or its payment balance.
+  const fieldAction = async (user, action) => api.call(user, '/api/field-jobs', {
+    jobId: draft.id, requestId: randomUUID(), expectedRevision: job().updateTime, ...action,
+  });
+  const incomplete = await fieldAction('Crew1.Lead', { action: 'complete', notes: 'Completed the approved scope.', hasIssues: false, issueNotes: '' });
+  assert.equal(incomplete.status, 409);
+  assert.equal(job().status, 'scheduled');
+  const beforeCompletionMoney = customerMoneyState(job());
+  const checks = Object.fromEntries((await api.ok('Crew1.Lead', `/api/field-jobs?jobId=${draft.id}`)).job.checklist.map(item => [item.id, { completed: true, actorId: 'Crew1.Lead' }]));
+  fire.put(`jobs/${draft.id}`, { ...job(), fieldExecution: { ...job().fieldExecution, checks, photos: [
+    { id: '00000000-0000-4000-8000-000000000001', category: 'before', fileId: 'synthetic-before-file', verified: true, createdAt: iso(TUE, '09:30') },
+    { id: '00000000-0000-4000-8000-000000000002', category: 'after', fileId: 'synthetic-after-file', verified: true, createdAt: iso(TUE, '12:30') },
+  ] } });
+  for (const status of ['dispatched', 'arrived', 'in_progress']) {
+    const result = await fieldAction('Crew1.Lead', { action: 'status', status });
+    assert.equal(result.status, 200, result.text);
+  }
+  const completion = { jobId: draft.id, requestId: randomUUID(), expectedRevision: job().updateTime,
+    action: 'complete', notes: 'Completed the approved scope and reviewed it with the customer.', hasIssues: false, issueNotes: '' };
+  assert.equal((await api.call('Crew2.Lead', '/api/field-jobs', completion)).status, 403, 'another crew cannot close the assigned job');
+  const completed = await api.ok('Crew1.Lead', '/api/field-jobs', completion, { background: false });
+  assert.equal(completed.job.status, 'completed');
+  assert.deepEqual(customerMoneyState(job()), beforeCompletionMoney, 'work completion never fabricates payment');
+  assert.deepEqual(job().completionEvidence.photoIds, ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002']);
+  const completedAt = job().completedAt;
+  const eventsBeforeReplay = fire.list(`jobs/${draft.id}/fieldEvents`).length;
+  await api.ok('Crew1.Lead', '/api/field-jobs', completion, { background: false });
+  assert.equal(job().completedAt, completedAt, 'lost completion response replays its original result');
+  assert.equal(fire.list(`jobs/${draft.id}/fieldEvents`).length, eventsBeforeReplay);
+  assert.equal((await api.call('Crew1.Lead', '/api/field-jobs', { ...completion, notes: 'Different scope' })).status, 409);
+  const signoff = { action: 'sign_off', jobId: draft.id, requestId: randomUUID(), expected: 'none' };
+  assert.equal((await api.call('Crew1.Lead', '/api/job-signoff', signoff)).status, 403);
+  await api.ok('TylerG', '/api/job-signoff', signoff);
+  assert.equal((await api.ok('TylerG', '/api/job-signoff', signoff)).replayed, true);
+  assert.equal(job().supervisorSignoff.status, 'signed');
+  assert.deepEqual(customerMoneyState(job()), beforeCompletionMoney, 'signoff never fabricates payment');
+
+  // A verified Stripe result is synthetic input to the same canonical recorder used by the webhook and return.
+  // No Stripe or customer-facing request is made. Duplicate arrivals leave one payment and one final balance.
+  const paymentTime = iso(TUE, '13:00'), paymentAmount = beforeCompletionMoney.balance;
+  const checkout = { id: 'cs_test_full_flow_balance', object: 'checkout.session', mode: 'payment', status: 'complete', payment_status: 'paid',
+    currency: 'usd', amount_total: Math.round(paymentAmount * 100), livemode: false, client_reference_id: draft.id,
+    metadata: { kind: 'egc_customer_portal_payment', job_id: draft.id, payment_purpose: 'balance',
+      quote_revision: String(job().estimate.revision), quoted_total_cents: String(Math.round(beforeCompletionMoney.total * 100)) },
+    payment_intent: { id: 'pi_synthetic_full_flow', created: Math.floor(Date.parse(paymentTime) / 1000),
+      latest_charge: { id: 'ch_synthetic_full_flow', created: Math.floor(Date.parse(paymentTime) / 1000), payment_method_details: { type: 'card' } } } };
+  const paymentEnv = { ...ENV, FUNNEL_PAYMENT_EVENTS_ENABLED: 'true' };
+  const paid = await recordCustomerStripePayment(paymentEnv, checkout, draft.id, paymentTime);
+  assert.equal(paid.duplicate, false);
+  assert.equal((await recordCustomerStripePayment(paymentEnv, checkout, draft.id, paymentTime)).duplicate, true);
+  assert.deepEqual([customerMoneyState(job()).balance, customerMoneyTotals(job(), { unified: true }).balanceCents], [0, 0]);
+  assert.equal(job().payment.stripeSessions.filter(row => row.sessionId === checkout.id).length, 1);
+  assert.equal(job().supervisorSignoff.status, 'signed', 'payment retains the operational evidence');
+  assert.equal(job().completedAt, completedAt);
+  assert.deepEqual(api.sent.estimates, [], 'completion and payment do not enable customer messaging');
+
+  // The completion integration keeps the same idempotency key after an interrupted attempt. This exercises
+  // orchestration only: the note/follow-up provider is a local recorder and sends no customer communication.
+  const noteCalls = [], checkinCalls = [];
+  const integration = { now: () => new Date(paymentTime),
+    syncNote: async (_env, _actor, payload) => {
+      noteCalls.push(payload);
+      if (noteCalls.length === 1) throw Object.assign(new Error('Synthetic interrupted response'), { code: 'SYNTHETIC_UNCERTAIN', operationId: 'synthetic-outbox' });
+      return { note: { id: 'synthetic-note' }, outboxId: 'synthetic-outbox' };
+    },
+    checkin: async (_env, payload) => { checkinCalls.push(payload); return { status: 'exists', taskId: 'synthetic-existing-checkin' }; },
+  };
+  const integrationEnv = { ...ENV, EGC_OPERATIONS_ENABLED: 'true', EGC_OPERATIONS_SERVICE_AUTH: 'legacy' };
+  assert.equal((await syncFieldCompletion(integrationEnv, draft.id, integration)).status, 'error');
+  assert.equal(job().completedAt, completedAt, 'an uncertain integration never loses completed work');
+  assert.equal(customerMoneyState(job()).balance, 0, 'an uncertain integration never reopens money');
+  assert.equal((await syncFieldCompletion(integrationEnv, draft.id, integration)).status, 'synced');
+  assert.deepEqual(noteCalls[0], noteCalls[1], 'the retry uses the exact original completion intent');
+  await syncFieldCompletion(integrationEnv, draft.id, integration);
+  assert.deepEqual([noteCalls.length, checkinCalls.length], [2, 1], 'a verified completion never creates another note or check-in');
+  assert.equal(job().fieldCompletionSync.checkinTaskId, 'synthetic-existing-checkin');
 
   // Nothing in the whole day reached any service but the Hub's own Firestore.
   assert.deepEqual(fire.refused, []);

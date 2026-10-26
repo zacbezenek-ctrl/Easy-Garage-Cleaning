@@ -242,6 +242,28 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     customersByKey: key => query('customers', [...CUSTOMER_FIELDS, 'searchKeys'], 20000)({ field: 'searchKeys', op: 'ARRAY_CONTAINS', value: key }),
     // CREW-SCHEDULE (functions/api/crew-schedule.js): the crew records alone, and the work dated in a bounded window.
     crewResources: () => query('dispatchResources', CREW_RESOURCE_FIELDS, 2000)({ field: 'recordType', op: 'EQUAL', value: 'crew' }),
+    // SHIFT-SWAP (shift-swaps.js): swap requests by one field (from, to, or status IN the open states), masked to
+    // `fields`, complete and failing closed like every query here. Equality filters only: no composite index.
+    shiftSwaps: (spec, fields) => query('shiftSwaps', fields, 500)(spec),
+    // SIGNOFF (job-signoff.js): jobs completed since an ISO time (one range on completedAt, Firestore's automatic
+    // single-field index) and the jobs a supervisor marked as needing follow-up, both masked to `fields`.
+    completedJobsSince: (since, fields, limit = 5000) => query('jobs', fields, limit)({ field: 'completedAt', op: 'GREATER_THAN_OR_EQUAL', value: since }),
+    flaggedJobs: (fields, limit = 2000) => query('jobs', fields, limit)({ field: 'supervisorSignoff.status', op: 'EQUAL', value: 'flagged' }),
+    // SIGNOFF: the job's audit log entries (jobs/{id}/fieldEvents, written only by the server) left by these usernames,
+    // masked to what the "worked this job" check reads. One bounded read; more than `limit` rows is refused, not cut.
+    async fieldEventsBy(jobId, actors, limit = 1000) {
+      const values = [...new Set(actors.map(value => String(value || '')).filter(Boolean))].slice(0, 30);
+      if (!values.length) return [];
+      const response = await send(`${BASE}/jobs/${encodeURIComponent(jobId)}:runQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ structuredQuery: {
+        from: [{ collectionId: 'fieldEvents' }], select: { fields: ['actorId', 'action', 'state', 'category'].map(fieldPath => ({ fieldPath })) },
+        where: { fieldFilter: { field: { fieldPath: 'actorId' }, op: 'IN', value: { arrayValue: { values: values.map(stringValue => ({ stringValue })) } } } }, limit: limit + 1 } }) });
+      if (!response.ok) throw failure('dispatch_storage_unavailable', 'The job history could not be checked. Retry.');
+      const rows = await response.json().catch(() => null);
+      if (!Array.isArray(rows) || !rows.some(row => row?.document || typeof row?.readTime === 'string')) throw failure('dispatch_storage_incomplete', 'The job history came back incomplete. Retry.');
+      const events = rows.filter(row => row?.document).map(row => decodeFirestoreFields(row.document.fields || {}));
+      if (events.length > limit) throw failure('dispatch_storage_incomplete', 'The job history is too long to check here. Retry.');
+      return events;
+    },
     datedJobs, spanningJobs,
     customerKeyCoverage: () => customerCoverage(async body => aggregateCount(await post('runAggregationQuery', body))),
     async customerRecords(fields) {

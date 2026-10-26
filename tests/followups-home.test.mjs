@@ -283,7 +283,7 @@ test('the Command center mounts the overdue widget once into #ops-home-widgets a
   page.context.refresh();
   await page.flush();
   assert.equal(slot(page), mounted, 'renders move the same slot into the new home node');
-  assert.deepEqual(page.main().querySelectorAll('[data-hub-widget]').map(node => node.getAttribute('data-hub-widget')), ['overdue_followups', 'crew_readiness', 'held_jobs', 'crew_staffing'], 'the overdue widget, tomorrow readiness (READINESS), the held-jobs widget and crew staffing (crew-ops)');
+  assert.deepEqual(page.main().querySelectorAll('[data-hub-widget]').map(node => node.getAttribute('data-hub-widget')), ['overdue_followups', 'crew_readiness', 'shift_swap_review', 'job_signoff', 'held_jobs', 'crew_staffing', 'customer_visit_requests', 'business_requests'], 'the overdue widget, tomorrow readiness (READINESS), shift swaps to approve (SHIFT-SWAP), needs sign-off (SIGNOFF), the held-jobs widget and crew staffing (crew-ops)');
   assert.equal(operations(), 2, 'background renders do not refetch');
   await page.context.opsRefresh();
   await page.flush();
@@ -316,9 +316,11 @@ test('My day mounts the widget for business users only, filtered to the signed-i
   await crew.page.flush();
   assert.equal(crew.page.api.S.active, 'my_day');
   assert.ok(crew.page.main().querySelector('#ops-home-widgets'), 'the extension point renders for everyone');
-  assert.equal(crew.page.main().querySelector('[data-hub-widget]'), null, 'crew never gets a business widget');
+  // Crew get only crew-visible widgets (SIGNOFF: a crew lead's supervisor follow-ups, empty when there are none), never a
+  // business one.
+  assert.deepEqual(crew.page.main().querySelectorAll('[data-hub-widget]').map(node => node.getAttribute('data-hub-widget')), ['supervisor_followups'], 'crew never gets a business widget');
   assert.equal(crew.operations(), 0);
-  assert.deepEqual([...crew.page.context.EGCHubScreens.homeWidgets('my_day', crew.page.api.hubCapabilities()).map(entry => entry.id)], []);
+  assert.deepEqual([...crew.page.context.EGCHubScreens.homeWidgets('my_day', crew.page.api.hubCapabilities()).map(entry => entry.id)], ['supervisor_followups']);
 });
 
 test('a widget whose script is missing shows unavailable with Retry instead of an empty home', async () => {
@@ -337,7 +339,7 @@ test('a widget whose script is missing shows unavailable with Retry instead of a
 // The Command center also ships the held-jobs widget (employee-held-jobs.js: booked jobs waiting for prices).
 test('widget registration refuses ambiguous access, unknown homes, markup and bad modules, and ships the overdue widget', () => {
   const page = hubPage(), registry = page.context.EGCHubScreens;
-  assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness', 'held_jobs', 'crew_staffing']);
+  assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness', 'shift_swap_review', 'job_signoff', 'held_jobs', 'crew_staffing', 'customer_visit_requests', 'business_requests']);
   assert.deepEqual([...registry.homeWidgets('today', ['crew'])], []);
   const shipped = registry.homeWidgets('my_day', ['crew', 'business'])[0];
   assert.deepEqual({ ...shipped, homes: [...shipped.homes] }, { id: 'overdue_followups', label: 'Overdue follow-ups', homes: ['today', 'my_day'], capability: 'business', crewVisible: false, module: 'EGCFollowupsHome', load: null });
@@ -348,12 +350,12 @@ test('widget registration refuses ambiguous access, unknown homes, markup and ba
     { ...base, capability: undefined }, { ...base, crewVisible: true }, { ...base, label: '<b>x</b>' }, { ...base, module: 'window.alert' },
     { ...base, load: { js: 'https://example.invalid/x.js', v: '1' } }, null,
   ]) assert.throws(() => registry.registerWidget(spec), /Hub screen registry/, JSON.stringify(spec));
-  const held = registry.homeWidgets('today', ['crew', 'business'])[2];
+  const held = registry.homeWidgets('today', ['crew', 'business'])[4];
   assert.deepEqual({ ...held, homes: [...held.homes], load: { ...held.load } }, { id: 'held_jobs', label: 'Booked jobs waiting for prices', homes: ['today'], capability: 'business', crewVisible: false, module: 'EGCHeldJobsHome', load: { js: 'employee-held-jobs.js', css: null, v: '20261021held1' } });
   registry.registerWidget(base);
-  assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness', 'held_jobs', 'crew_staffing']);
-  assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business', 'owner']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness', 'held_jobs', 'crew_staffing', 'fixture_widget']);
-  assert.deepEqual([...registry.homeWidgets('my_day', ['crew', 'business', 'owner']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness']);
+  assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness', 'shift_swap_review', 'job_signoff', 'held_jobs', 'crew_staffing', 'customer_visit_requests', 'business_requests']);
+  assert.deepEqual([...registry.homeWidgets('today', ['crew', 'business', 'owner']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness', 'shift_swap_review', 'job_signoff', 'held_jobs', 'crew_staffing', 'customer_visit_requests', 'business_requests', 'fixture_widget']);
+  assert.deepEqual([...registry.homeWidgets('my_day', ['crew', 'business', 'owner']).map(entry => entry.id)], ['overdue_followups', 'crew_readiness', 'supervisor_followups']);
 });
 
 test('mountHome only mounts on a home, keeps order, and remounts when the viewer changes', async () => {
@@ -367,13 +369,13 @@ test('mountHome only mounts on a home, keeps order, and remounts when the viewer
   page.document.body.append(host);
   assert.deepEqual([...registry.mountHome('customers', host, ctx('alexk'))], []);
   assert.deepEqual([...registry.mountHome('today', null, ctx('alexk'))], []);
-  assert.deepEqual([...registry.mountHome('today', host, ctx('alexk'))], ['overdue_followups', 'crew_readiness', 'held_jobs', 'crew_staffing', 'fixture_b', 'fixture_a']);
+  assert.deepEqual([...registry.mountHome('today', host, ctx('alexk'))], ['overdue_followups', 'crew_readiness', 'shift_swap_review', 'job_signoff', 'held_jobs', 'crew_staffing', 'customer_visit_requests', 'business_requests', 'fixture_b', 'fixture_a']);
   await page.flush();
-  assert.deepEqual(host.children.map(node => node.getAttribute('data-hub-widget')), ['overdue_followups', 'crew_readiness', 'held_jobs', 'crew_staffing', 'fixture_b', 'fixture_a']);
+  assert.deepEqual(host.children.map(node => node.getAttribute('data-hub-widget')), ['overdue_followups', 'crew_readiness', 'shift_swap_review', 'job_signoff', 'held_jobs', 'crew_staffing', 'customer_visit_requests', 'business_requests', 'fixture_b', 'fixture_a']);
   assert.deepEqual(log, [['mount', 'b', 'today', 'fixture_b', 'alexk'], ['mount', 'a', 'today', 'fixture_a', 'alexk']]);
   const next = page.document.createElement('div');
   registry.mountHome('today', next, ctx('alexk'));
-  assert.deepEqual(next.children.map(node => node.getAttribute('data-hub-widget')), ['overdue_followups', 'crew_readiness', 'held_jobs', 'crew_staffing', 'fixture_b', 'fixture_a']);
+  assert.deepEqual(next.children.map(node => node.getAttribute('data-hub-widget')), ['overdue_followups', 'crew_readiness', 'shift_swap_review', 'job_signoff', 'held_jobs', 'crew_staffing', 'customer_visit_requests', 'business_requests', 'fixture_b', 'fixture_a']);
   assert.equal(host.children.length, 0);
   assert.equal(log.length, 2, 'moving to a new node does not remount');
   registry.mountHome('today', next, ctx('tylerg'));
@@ -412,4 +414,40 @@ test('Open follow-ups lands on the real Action Center overdue view, and unknown 
   await flush();
   assert.equal(host.querySelector('[data-ac-view="approvals"]').getAttribute('aria-selected'), 'true');
   center.unmount();
+});
+
+// SIGNOFF: a quiet widget (usually empty) stays hidden with no loading bars or failure notice until its module shows it,
+// so it never moves the clock card below it on a phone.
+test('a quiet widget stays hidden until its module shows it, and fails silently', async () => {
+  const page = hubPage({ loadRegistry: true }), registry = page.context.EGCHubScreens;
+  page.context.EGCFixtureQuiet = { mount(host) { host.append(page.document.createElement('p')); host.hidden = false; }, unmount() {} };
+  registry.registerWidget({ id: 'fixture_quiet', label: 'Fixture quiet', homes: ['my_day'], crewVisible: true, quiet: true, module: 'EGCFixtureQuiet' });
+  registry.registerWidget({ id: 'fixture_missing', label: 'Fixture missing', homes: ['my_day'], crewVisible: true, quiet: true, module: 'EGCFixtureMissing' });
+  const host = page.document.createElement('div');
+  page.document.body.append(host);
+  registry.mountHome('my_day', host, { identity: 'crew.one', role: 'crew', capabilities: ['crew'] });
+  const slot = id => host.querySelector(`[data-hub-widget="${id}"]`);
+  assert.equal(slot('fixture_missing').hidden, true, 'hidden before anything loads');
+  await page.flush();
+  assert.equal(slot('fixture_quiet').hidden, false, 'shown once the module has something');
+  assert.deepEqual([slot('fixture_missing').hidden, slot('fixture_missing').children.length], [true, 0], 'a missing module leaves no notice and no gap');
+  assert.equal(registry.homeWidgets('my_day', ['crew']).find(entry => entry.id === 'fixture_quiet').quiet, true);
+  assert.equal(registry.homeWidgets('today', ['crew', 'business']).find(entry => entry.id === 'overdue_followups').quiet, undefined, 'other widgets are unchanged');
+});
+
+test('a sign-out while the kit loads starts no load of the widget\'s own files, so the device keeps no copy fetched after it', async () => {
+  const page = hubPage({ loadRegistry: true }), registry = page.context.EGCHubScreens, held = [];
+  page.document.onAsset = node => held.push(node);
+  registry.registerWidget({ id: 'fixture_late', label: 'Fixture late', homes: ['my_day'], crewVisible: true, quiet: true, module: 'EGCFixtureLate', load: { js: 'employee-fixture-late.js', v: 't1' } });
+  const host = page.document.createElement('div');
+  page.document.body.append(host);
+  registry.mountHome('my_day', host, { identity: 'crew.one', role: 'crew', capabilities: ['crew'] });
+  await page.flush();
+  const src = node => node.getAttribute('src') || node.getAttribute('href') || '';
+  assert.ok(held.length && held.every(node => /employee-ui-kit/.test(src(node))), 'the kit loads first');
+  page.fire('egc:signout');
+  page.context.EGCHubKit = {};
+  for (const node of held.splice(0)) node.onload?.();
+  await page.flush();
+  assert.deepEqual(held.map(src), [], 'nothing more is fetched once signed out');
 });
