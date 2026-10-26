@@ -100,7 +100,8 @@ export function fieldEventProjection(event, manager = false) {
 export function fieldAttention(job, manager = false) {
   const issue = job.fieldExecution?.attention;
   if (!issue || !manager && issue.visibility !== 'crew') return null;
-  return { id: issue.requestId || `${issue.at || ''}:${issue.actorId || ''}`, status: issue.status === 'resolved' ? 'resolved' : 'open', reason: fieldText(issue.reason), reportedAt: issue.at || null, reportedBy: fieldText(issue.actorName || issue.actorId, 200), visibility: issue.visibility === 'crew' ? 'crew' : 'management', resolvedAt: issue.resolvedAt || null, resolvedBy: fieldText(issue.resolvedByName || issue.resolvedBy, 200), resolution: fieldText(issue.resolution), canResolve: manager && issue.status !== 'resolved' };
+  const additions = Number.isSafeInteger(issue.additions) && issue.additions > 0 ? `~${issue.additions}` : '';
+  return { id: `${issue.requestId || `${issue.at || ''}:${issue.actorId || ''}`}${additions}`, status: issue.status === 'resolved' ? 'resolved' : 'open', reason: fieldText(issue.reason), reportedAt: issue.at || null, reportedBy: fieldText(issue.actorName || issue.actorId, 200), visibility: issue.visibility === 'crew' ? 'crew' : 'management', resolvedAt: issue.resolvedAt || null, resolvedBy: fieldText(issue.resolvedByName || issue.resolvedBy, 200), resolution: fieldText(issue.resolution), canResolve: manager && issue.status !== 'resolved' };
 }
 
 const ownsSegment = (row, viewer) => Boolean(viewer) && row.assignedCrew.some(id => assignmentKey(id) === viewer);
@@ -187,17 +188,29 @@ export async function fieldFingerprint(actor, input) {
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ actor, input: normalize(input) }))))].map(value => value.toString(16).padStart(2, '0')).join('');
 }
 
-// A second issue while one is open is added to it, never written over it: the open issue keeps its id (the first
-// report's requestId), so a resolve form already open or queued offline still matches (resolve_issue checks issueId),
-// and each addition carries its time and author, the whole text capped at 4,000 characters. It stays crew-visible only
-// while every part is: a management-only addition makes the whole issue management-only, so no private note reaches
-// crew. After a resolve, a new issue starts with its own id and the resolved one moves to attentionHistory, as a
-// supervisor's flag does (job-signoff.js).
+// A second issue while one is open is added to it, never written over it, with its Denver date, time and author. The
+// whole text is capped at 4,000 characters, trimmed from the oldest part (the job history keeps every report in full).
+// Each addition changes the id the page sees (fieldAttention: the first report's requestId, then "~<additions>"), so a
+// resolve form loaded, or queued offline, before an addition gets FIELD_ISSUE_CHANGED instead of closing text its
+// manager never read. An addition also drops supervisorFlag: a sign-off closes only the follow-up a supervisor's flag
+// opened (job-signoff.js), never a crew report added to it. The issue stays crew-visible only while every part is: a
+// management-only addition makes the whole issue management-only, so no private note reaches crew. After a resolve, a
+// new issue starts with its own id and the resolved one moves to attentionHistory, as a supervisor's flag does.
 const ISSUE_TEXT_MAX = 4000;
+const denverClock = at => { try { return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit' }).format(new Date(at)); } catch { return ''; } };
+function issueText(previous, line) {
+  const whole = line.slice(0, ISSUE_TEXT_MAX), room = ISSUE_TEXT_MAX - whole.length - 2;
+  if (!previous || room < 2) return whole;
+  return previous.length <= room ? `${previous}\n\n${whole}` : `…${previous.slice(previous.length - room + 1)}\n\n${whole}`;
+}
 function raiseIssue(state, stamp, requestId, visibility, reason) {
   const current = state.attention && typeof state.attention === 'object' ? state.attention : null;
-  if (current?.status === 'open') return { attention: { ...current, reason: `${fieldText(current.reason)}\n\n${stamp.at} · ${stamp.actorName}: ${reason}`.trim().slice(0, ISSUE_TEXT_MAX),
-    visibility: current.visibility === 'crew' && visibility === 'crew' ? 'crew' : 'management', updatedAt: stamp.at, updatedBy: stamp.actorId, updatedByName: stamp.actorName } };
+  if (current?.status === 'open') {
+    const { supervisorFlag, ...rest } = current, at = new Date(stamp.at);
+    const line = `${denverToday(at)} ${denverClock(at)} · ${stamp.actorName}: ${reason}`;
+    return { attention: { ...rest, reason: issueText(fieldText(current.reason), line), additions: (Number.isSafeInteger(current.additions) ? current.additions : 0) + 1,
+      visibility: current.visibility === 'crew' && visibility === 'crew' ? 'crew' : 'management', updatedAt: stamp.at, updatedBy: stamp.actorId, updatedByName: stamp.actorName } };
+  }
   const past = Array.isArray(state.attentionHistory) ? state.attentionHistory : [];
   return { ...(current ? { attentionHistory: [...past, current].slice(-20) } : {}), attention: { ...stamp, requestId, visibility, reason, status: 'open' } };
 }
