@@ -37,6 +37,7 @@
 import { webLeadTiming } from '../_lib/funnel-calendar.js';
 import { bookingSlotLead, bookingSlotWords } from '../_lib/booking-slots.js';
 import { bookingExplicitSlotsEnabled } from '../_lib/booking-slots-flag.js';
+import { clientAddressKey, consumeRollingLimit, releaseRollingLimit } from '../_lib/rate-limit.js';
 import { WEB_LEAD_FIELDS, envVar, highLevelConfig, receiveWebLead, syncHighLevelLead, webLeadAttributionUrl, webLeadHeld, webLeadInquiryId, webLeadLedgerOn, webLeadMeta, webLeadRelayHold, webLeadStorage } from '../_lib/web-lead-intake.js';
 
 const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
@@ -55,6 +56,42 @@ function originAllowed(request) {
   const referer = request.headers.get('Referer');
   if (!origin && !referer) return true;
   return ALLOWED_HOST_RE.test(hostOf(origin) || hostOf(referer));
+}
+
+// SEC-2026-10 M-01: a request with neither Origin nor Referer is still accepted (privacy tools and some browsers
+// strip both, and a lost lead costs more than spam) but logged as a count-only marker, so it can be refused later.
+const ORIGINLESS = JSON.stringify({ event: 'web_lead_originless' });
+const originless = request => !request.headers.get('Origin') && !request.headers.get('Referer');
+
+// SEC-2026-10 M-01: rolling limits per client address and per lead phone, counted before HighLevel and the text
+// relay. A real household (a resend, a second try with a fixed address) stays far below them; a script texting one
+// number or flooding from one address does not. Over a limit a website lead still answers success (its Web3Forms
+// email leg has it) but nothing is synced or texted; Client hub help, which has no email copy, answers 429 so the
+// portal says it was not sent. A lead delivered nowhere (failed sync, no destination) gives its counts back.
+export const WEB_LEAD_LIMITS = Object.freeze({
+  ip: Object.freeze({ bucket: 'web_lead_ip', limit: 20, windowMs: 60 * 60 * 1000 }),
+  phone: Object.freeze({ bucket: 'web_lead_phone', limit: 5, windowMs: 24 * 60 * 60 * 1000 }),
+});
+const LIMITED = bucket => JSON.stringify({ event: 'web_lead_rate_limited', bucket });
+const LIMIT_UNAVAILABLE = JSON.stringify({ event: 'web_lead_limit_unavailable' });
+// Production always has the service account; without one (local preview, unit tests) there is no counter store.
+const defaultLimitStore = env => (String(env?.FIREBASE_SERVICE_ACCOUNT_JSON || '').trim() ? webLeadStorage(env) : null);
+
+// Counts the lead against each limit. Returns { bucket, release }: bucket names the limit that refused it ('' when
+// none did), and release() gives back what was counted, for a lead that ends up delivered nowhere (a failed HighLevel
+// sync, no destination). A counter outage lets the lead through (logged): never lose a lead.
+async function overLimit(store, env, { ip, phone }, at, warn, limits = WEB_LEAD_LIMITS) {
+  const digits = String(phone || '').replace(/\D/g, ''), counted = [];
+  const release = async () => { for (const options of counted) { try { await releaseRollingLimit(store, env, options, at); } catch {} } };
+  for (const [rule, key] of [[limits.ip, clientAddressKey(ip)], [limits.phone, `phone:${digits.length === 10 ? `1${digits}` : digits}`]]) {
+    const options = { bucket: rule.bucket, key, limit: rule.limit, windowMs: rule.windowMs };
+    try {
+      const hit = await consumeRollingLimit(store, env, options, at);
+      if (!hit.allowed) { await release(); return { bucket: rule.bucket, release: async () => {} }; }
+      counted.push(options);
+    } catch { try { warn(LIMIT_UNAVAILABLE); } catch {} return { bucket: '', release }; }
+  }
+  return { bucket: '', release };
 }
 
 function normalizePhone(raw) {
@@ -139,7 +176,7 @@ export async function onRequestOptions() {
 // A count-only marker for leads delivered without a receipt: no lead data, ever.
 const RECEIPT_UNAVAILABLE = JSON.stringify({ event: 'web_lead_receipt_unavailable' });
 
-export function webLeadHandlers({ storage = webLeadStorage, now = () => new Date(), sync = syncHighLevelLead, warn = message => console.warn(message) } = {}) {
+export function webLeadHandlers({ storage = webLeadStorage, now = () => new Date(), sync = syncHighLevelLead, warn = message => console.warn(message), limitStore = defaultLimitStore } = {}) {
   async function post({ request, env }) {
     const json = (status, body) =>
       new Response(JSON.stringify(body), {
@@ -171,6 +208,19 @@ export function webLeadHandlers({ storage = webLeadStorage, now = () => new Date
     }
 
     const at = now();
+    if (originless(request)) { try { warn(ORIGINLESS); } catch {} }
+    const limiter = limitStore(env);
+    let releaseLimits = async () => {};
+    if (limiter) {
+      const limit = await overLimit(limiter, env, { ip: request.headers.get('CF-Connecting-IP') || '', phone }, at.toISOString(), warn);
+      if (limit.bucket) {
+        try { warn(LIMITED(limit.bucket)); } catch {}
+        // Client hub help has no Web3Forms email copy: say so, so the portal shows its error and the customer calls.
+        if (body.flow_type === 'client_hub_help') return json(429, { ok: false, error: 'Too many messages were sent for this phone number today. Please call the office instead.' });
+        return json(200, { ok: true, accepted: true });
+      }
+      releaseLimits = limit.release;
+    }
     const hook = resolveHook(env);
     const ledger = webLeadLedgerOn(env);
     // The browser's inquiry id makes a resent submission the same inquiry; the ledger assigns one when it is missing.
@@ -191,7 +241,7 @@ export function webLeadHandlers({ storage = webLeadStorage, now = () => new Date
       try {
         result = await receiveWebLead({ store: storage(env), env, now: at.toISOString(), sync: value => sync(env, value), relay: () => relayLead(hook, relayed.flat, relayed.params) }, { lead, inquiryId, clientInquiryId: webLeadInquiryId(body.inquiry_id) === inquiryId, meta, held });
       } catch { result = { fallback: true }; }
-      if (!result.fallback) return json(result.status, result.body);
+      if (!result.fallback) { if (result.status >= 500) await releaseLimits(); return json(result.status, result.body); }
       // Nothing was sent yet: deliver the legacy way and say the receipt is missing.
       // Such a lead has no receipt or inquiry.received event (FUN-25 reconciles against HighLevel).
       receipt = { status: 'unavailable' };
@@ -209,6 +259,7 @@ export function webLeadHandlers({ storage = webLeadStorage, now = () => new Date
     catch {
       // A receipt that did land stays due, so the cron retries this lead.
       if (settleDelivered) unavailable();
+      await releaseLimits();
       return json(502, { ok: false, error: 'HighLevel lead sync failed' });
     }
 
@@ -229,7 +280,7 @@ export function webLeadHandlers({ storage = webLeadStorage, now = () => new Date
       if (settled) receipt = { status: 'synced' };
       else unavailable();
     }
-    if (!highlevel.configured && !relay.sent) return json(503, { ok: false, error: 'Lead destinations are not configured' });
+    if (!highlevel.configured && !relay.sent) { await releaseLimits(); return json(503, { ok: false, error: 'Lead destinations are not configured' }); }
     return json(200, { ok: true, ...(receipt ? { inquiryId, receipt } : {}), highlevel: highlevelAnswer, relay });
   }
 
