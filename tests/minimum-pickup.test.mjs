@@ -12,6 +12,7 @@ import { SENT_25_75 } from '../functions/_lib/quote-payment-policy.js';
 import { PICKUP_MINIMUM_CENTS, PICKUP_MINIMUM_LINE_ID, nearbyJob, pickupFloorCents, pickupWaiverProblem, serviceZip } from '../functions/_lib/pickup-minimum.js';
 import { mutateMoney } from '../functions/_lib/money-service.js';
 import { mutateDispatch } from '../functions/_lib/dispatch-service.js';
+import { mutateJobOperation } from '../functions/_lib/job-operations.js';
 import { WINTER_SALE_DEFAULTS, WINTER_SALE_LINE_ID, winterSaleDecision } from '../functions/_lib/winter-sale.js';
 import { HUB_AUDIT_COLLECTION } from '../functions/_lib/hub-audit.js';
 import { builderState, client, estimator, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
@@ -356,6 +357,7 @@ test('an unapproved waived job moved to a day with another job in its ZIP code c
   await mutateDispatch(f.store, owner, { action: 'schedule.update', requestId: randomUUID(), jobId: id, expectedRevision: f.job(id).revision, changes: { date: '2026-12-16', time: '09:30', endTime: '12:30' } }, NOW);
   assert.deepEqual([f.job(id).date, f.job(id).quoteDraft.minimumWaiver.date, f.job(id).quoteDraft.minimumWaiver.nearbyJobId], ['2026-12-16', '2026-12-16', 'job_other']);
   assert.equal(JSON.parse(movedAudits(f)[0].patch.after).nearbyJobId, 'job_other');
+  assert.equal(JSON.parse(movedAudits(f)[0].patch.before).nearbyJobId, 'job_neighbour', 'before is the waiver as it was');
   // The portal now approves it on its new day.
   portalStore(t, { [id]: structuredClone(f.job(id)) });
   const handlers = portalHandlers(NOW), cookie = await portalCookie(id, {}, Date.parse(NOW)), view = await portalView(handlers, cookie, portalEnv), shown = view.body.estimate;
@@ -368,4 +370,55 @@ test('the Business Hub rate card states the curbside condition too', () => {
   const sentences = [...source.matchAll(/'([^']*\$139[^']*)'/g)].map(match => match[1]);
   assert.ok(sentences.length >= 1);
   for (const text of sentences) assert.match(text, /when our truck is already in the area that day; otherwise the minimum pickup is \$250/);
+});
+
+// A waived sofa quote booked on DAY at ZIP_ADDRESS next to job_neighbour and sent (not approved).
+async function sentWaived() {
+  const q = quote(SOFA({ nearbyTruck: NEARBY })), f = fixture(ON), saved = await save(f, estimator, q), id = saved.job.id;
+  Object.assign(f.job(id), { date: DAY, time: '09:30', endTime: '12:30', address: ZIP_ADDRESS });
+  f.rows.set('jobs/job_neighbour', { ...NEIGHBOUR, revision: 'n1', customerId: 'c2', time: '13:00', endTime: '15:00' });
+  const ok = await preview(f, q, id, estimator, nearby([NEIGHBOUR]));
+  await sendQuoteDraft(f.store, estimator, { requestId: randomUUID(), jobId: id, expectedRevision: f.job(id).revision, confirmToken: ok.confirmToken }, NOW, { env: ON, compositeState: async () => q.state, winterSale: saleReaders, pickup: nearby([NEIGHBOUR]) });
+  const update = (changes, actor = owner) => mutateDispatch(f.store, actor, { action: 'schedule.update', requestId: randomUUID(), jobId: id, expectedRevision: f.job(id).revision, changes }, NOW);
+  const approveInPortal = async t => {
+    portalStore(t, { [id]: structuredClone(f.job(id)) });
+    const handlers = portalHandlers(NOW), cookie = await portalCookie(id, {}, Date.parse(NOW)), view = await portalView(handlers, cookie, portalEnv), shown = view.body.estimate;
+    return portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint, terms_version: shown.termsVersion, request_id: randomUUID() }, portalEnv);
+  };
+  return { f, q, id, update, approveInPortal };
+}
+
+test('a waived job unscheduled after send is never approved until its day is booked again, and a no-truck day is refused', async t => {
+  const { f, id, update, approveInPortal } = await sentWaived();
+  assert.equal(f.job(id).quoteDraft.minimumWaiver.zip, '80521', 'the waiver records the ZIP code it was confirmed for');
+  // "Keep unscheduled": the day is cleared.
+  Object.assign(f.job(id), { date: '', time: '', endTime: '', status: 'unscheduled', pipelineStatus: 'unscheduled' });
+  assert.match(pickupWaiverProblem(f.job(id), null, { approving: true }), /Book the job's day again before approving: the truck-nearby price was confirmed for 2026-12-14\./);
+  const refused = await approveInPortal(t);
+  assert.deepEqual([refused.status, refused.body.code], [409, 'CUSTOMER_PORTAL_PICKUP_DAY']);
+  await assert.rejects(mutateMoney(f.store, owner, { action: 'estimate.record_approval', requestId: randomUUID(), jobId: id, expectedRevision: f.job(id).revision, approvedBy: 'Synthetic Customer' }, NOW), { code: 'money_pickup_waiver_moved' });
+  // Booked again on a day with no truck nearby: refused (the job was never approved).
+  await assert.rejects(update({ date: '2026-12-16', time: '09:30', endTime: '12:30' }), { code: 'dispatch_pickup_waiver_moved' });
+});
+
+test('a new service ZIP code on the same day is checked like a new day: Dispatch, the Team Lead path and portal approval', async t => {
+  const other = '100 Fixture Lane, Fort Collins, CO 80525';
+  // Dispatch: no job in the new ZIP code that day.
+  const a = await sentWaived();
+  await assert.rejects(a.update({ address: other }), { code: 'dispatch_pickup_waiver_moved', message: /confirmed for another ZIP code \(80521\)/ });
+  // With a job in the new ZIP code that day, the waiver moves to it (zip and nearby job), audited.
+  a.f.rows.set('jobs/job_south', { ...NEIGHBOUR, id: 'job_south', revision: 's1', customerId: 'c3', time: '13:00', endTime: '15:00', address: '3 South Road, Fort Collins, CO 80525' });
+  await a.update({ address: other });
+  assert.deepEqual([a.f.job(a.id).quoteDraft.minimumWaiver.zip, a.f.job(a.id).quoteDraft.minimumWaiver.nearbyJobId], ['80525', 'job_south']);
+  // The Team Lead's job operations (#270) run the same Dispatch check.
+  const b = await sentWaived(), teamLead = { user: 'c1a', role: 'crew', businessAccess: false, staffRoles: ['team_lead'], displayName: 'Synthetic Team Lead' };
+  await assert.rejects(mutateJobOperation(b.f.store, teamLead, { action: 'schedule.update', requestId: randomUUID(), expectedUser: teamLead.user, jobId: b.id, expectedRevision: b.f.job(b.id).revision, changes: { address: other } }, NOW, { ...ON, EGC_TEAM_LEAD_JOB_OPERATIONS: 'true' }), { code: 'dispatch_pickup_waiver_moved' });
+  // Moved some other way: the portal refuses the approval.
+  const c = await sentWaived();
+  c.f.job(c.id).address = other;
+  const refused = await c.approveInPortal(t);
+  assert.deepEqual([refused.status, refused.body.code], [409, 'CUSTOMER_PORTAL_PICKUP_DAY']);
+  // A record from before the ZIP code was stored skips the ZIP comparison.
+  const legacy = { ...c.f.job(c.id), quoteDraft: { ...c.f.job(c.id).quoteDraft, minimumWaiver: { ...c.f.job(c.id).quoteDraft.minimumWaiver, zip: null } } };
+  assert.equal(pickupWaiverProblem(legacy, [], { approving: true }), null);
 });

@@ -87,23 +87,28 @@ export function pickupWaiverProblem(job, sameDayJobs = null, { approving = false
   const waiver = liveWaiver(job);
   if (!waiver) return null;
   if (waiver.pending) return approving ? 'The truck-nearby waiver on this quote has not been confirmed for a booked day yet. Send the quote again, which checks it.' : null;
-  const date = String(job?.date || '');
-  if (!date || date === waiver.date) return null;
-  const confirmed = `The truck-nearby price on this quote was confirmed for ${waiver.date || 'another day'}.`;
+  const date = String(job?.date || ''), zip = serviceZip(job?.address), zipMoved = waiverZipMoved(waiver, job);
+  // Unscheduled since it was confirmed: an approval waits for the day to be booked again (a reschedule checks that day).
+  if (!date) return approving && waiver.date ? `Book the job's day again before approving: the truck-nearby price was confirmed for ${waiver.date}.` : null;
+  if (date === waiver.date && !zipMoved) return null;
+  const confirmed = date === waiver.date ? `The truck-nearby price on this quote was confirmed for another ZIP code (${waiver.zip}).` : `The truck-nearby price on this quote was confirmed for ${waiver.date || 'another day'}.`;
   if (waiver.ownerOverride || !Array.isArray(sameDayJobs)) return `${confirmed} Save the quote again for ${date}: the $250 minimum pickup applies unless another job is booked that day in the same ZIP code, or the owner waives it.`;
-  return nearbyJob(sameDayJobs, { jobId: job.id, date, zip: serviceZip(job.address) }) ? null : `${confirmed} No other job is booked on ${date} in this job's ZIP code. Save the quote again (the $250 minimum pickup applies) or ask the owner.`;
+  return nearbyJob(sameDayJobs, { jobId: job.id, date, zip }) ? null : `${confirmed} No other job is booked on ${date} in this job's ZIP code. Save the quote again (the $250 minimum pickup applies) or ask the owner.`;
 }
+/** Whether the job's service ZIP code is no longer the one its waiver was confirmed for (a record without one: never). */
+export const waiverZipMoved = (waiver, job) => Boolean(waiver?.zip) && serviceZip(job?.address) !== waiver.zip;
 /** The waiver confirmed again for a job moved to a day with another job in its ZIP code (sameDayJobs: that day's jobs):
  * the record with its new day and nearby job, or null when nothing moves with it. */
 export function pickupWaiverMove(job, sameDayJobs) {
-  const waiver = liveWaiver(job), date = String(job?.date || '');
-  if (!waiver || waiver.pending || waiver.ownerOverride || !date || date === waiver.date) return null;
-  const found = nearbyJob(sameDayJobs, { jobId: job.id, date, zip: serviceZip(job.address) });
-  return found ? { ...waiver, date, nearbyJobId: found.id } : null;
+  const waiver = liveWaiver(job), date = String(job?.date || ''), zip = serviceZip(job?.address);
+  if (!waiver || waiver.pending || waiver.ownerOverride || !date || date === waiver.date && !waiverZipMoved(waiver, job)) return null;
+  const found = nearbyJob(sameDayJobs, { jobId: job.id, date, zip });
+  return found ? { ...waiver, date, zip, nearbyJobId: found.id } : null;
 }
 /** The audit of a waiver that moved with its job: kept (an approved or signed job) or confirmed again for the new day. */
-export const waiverNoteAudit = (auditWrite, waiver, { actor, via = 'hub', jobId, requestId, now, note, fromDate, toDate }) => auditWrite({ actor, via, action: 'quote.minimum_pickup.waiver_moved',
-  entity: { collection: 'jobs', id: jobId }, before: { date: fromDate, nearbyJobId: waiver.nearbyJobId ?? null }, after: { date: toDate, nearbyJobId: waiver.nearbyJobId ?? null, ownerOverride: waiver.ownerOverride === true }, requestId, reason: note, now });
+export const waiverNoteAudit = (auditWrite, waiver, { actor, via = 'hub', jobId, requestId, now, note, fromDate, toDate, previous = waiver }) => auditWrite({ actor, via, action: 'quote.minimum_pickup.waiver_moved',
+  entity: { collection: 'jobs', id: jobId }, before: { date: fromDate, nearbyJobId: previous?.nearbyJobId ?? null, zip: previous?.zip ?? null },
+  after: { date: toDate, nearbyJobId: waiver.nearbyJobId ?? null, zip: waiver.zip ?? null, ownerOverride: waiver.ownerOverride === true }, requestId, reason: note, now });
 
 /**
  * Confirms a quote's waiver. priced: the builder pricing (breakdown.pickup); date/address: the job's booked day and
@@ -118,7 +123,7 @@ export const pickupReaders = {
 };
 /** The Hub record of a confirmed waiver (quoteDraft.minimumWaiver): {by, at, reason, nearbyJobId, ownerOverride, date,
  * pending}. The nearby job's id stays here and in the audit, never in customer text. */
-export const waiverRecord = (confirmed, { reason, by, at }) => ({ by, at, reason, nearbyJobId: confirmed.nearbyJobId ?? null, ownerOverride: confirmed.ownerOverride === true, date: confirmed.date ?? null, pending: confirmed.pending === true });
+export const waiverRecord = (confirmed, { reason, by, at }) => ({ by, at, reason, nearbyJobId: confirmed.nearbyJobId ?? null, ownerOverride: confirmed.ownerOverride === true, date: confirmed.date ?? null, zip: confirmed.zip || null, pending: confirmed.pending === true });
 /** The audit of a waiver (hub_audit, in the same commit): who, when, the reason and the nearby job. */
 export const waiverAudit = (auditWrite, record, { actor, jobId, requestId, now, via = 'hub' }) => auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via, action: 'quote.minimum_pickup.waive',
   entity: { collection: 'jobs', id: jobId }, before: null, after: { nearbyJobId: record.nearbyJobId, ownerOverride: record.ownerOverride, date: record.date, pending: record.pending }, requestId, reason: record.reason, now });
@@ -131,8 +136,8 @@ export async function confirmNearbyTruck({ priced, owner = false, jobId = '', da
     throw fail(prefix, 'Book the job date first: the truck-nearby waiver needs another job booked the same day in the same ZIP code.');
   }
   const zip = serviceZip(address), found = zip ? nearbyJob(await nearbyJobs(date), { jobId, date, zip }) : null;
-  if (found) return { nearbyJobId: found.id, ownerOverride: false, date };
-  if (owner) return { nearbyJobId: null, ownerOverride: true, date };
+  if (found) return { nearbyJobId: found.id, ownerOverride: false, date, zip };
+  if (owner) return { nearbyJobId: null, ownerOverride: true, date, zip };
   throw fail(prefix, zip ? `No other job is booked on ${date} in this job's ZIP code, so the truck-nearby waiver can't apply. Remove the waiver (the $250 minimum pickup applies) or ask the owner.`
     : 'This job\'s address has no 5-digit ZIP code to find a nearby truck. Add it, remove the waiver (the $250 minimum pickup applies), or ask the owner.');
 }

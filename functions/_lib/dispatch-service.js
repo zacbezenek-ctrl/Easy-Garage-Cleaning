@@ -23,7 +23,7 @@ import { walkthroughStatusFields } from './walkthrough-state.js';
 import { dispatchReviewCleared, withQueueFacts } from './dispatch-queue.js';
 import { jobStartProblem } from './job-start-policy.js';
 import { winterSaleDateProblem, winterSaleLastDay } from './winter-sale.js';
-import { approvedJob, liveWaiver, pickupWaiverMove, pickupWaiverProblem, waiverNoteAudit } from './pickup-minimum.js';
+import { approvedJob, liveWaiver, pickupWaiverMove, pickupWaiverProblem, waiverNoteAudit, waiverZipMoved } from './pickup-minimum.js';
 import { auditWrite } from './hub-audit.js';
 import { DEFAULT_CREWS, NO_CREW, autoAssignedCrew, autoCrewJob, crewAssignment, crewAutoRecord, crewCode, crewCodeInput, crewJobDates, crewPickOrder, crewServes, eligibleCrews, handStaffed, projectCrewOpenings, serviceDaysInput } from './dispatch-crew-assign.js';
 import { dispatchOpenings } from './dispatch-openings.js';
@@ -655,8 +655,9 @@ async function executeDispatch(store, session, input, now, options = {}, context
     // needs another job booked that day in the same ZIP code. A signed handoff checks its own waiver (saleChecked).
     // A job the customer approved or signed keeps its waiver (the terms it was signed on), with an audited note; a waiver
     // confirmed again for a same-ZIP day moves with the job in this commit.
-    if (!cancel && current && options.saleChecked !== true && next.date && next.date !== current.date && liveWaiver(next)) {
-      const sameDay = finalJobs.filter(row => row?.date === next.date), audit = (waiver, note) => waiverNoteAudit(auditWrite, waiver, { actor: { id: session.user, kind: 'human', role: session.role }, jobId: id, requestId: input.requestId, now, note, fromDate: current.date, toDate: next.date });
+    // A new service ZIP code on the same day is checked like a new day (the waiver names the ZIP code it was confirmed for).
+    if (!cancel && current && options.saleChecked !== true && next.date && (next.date !== current.date || waiverZipMoved(liveWaiver(next), next)) && liveWaiver(next)) {
+      const sameDay = finalJobs.filter(row => row?.date === next.date), audit = (waiver, note) => waiverNoteAudit(auditWrite, waiver, { actor: { id: session.user, kind: 'human', role: session.role }, jobId: id, requestId: input.requestId, now, note, fromDate: current.date, toDate: next.date, previous: liveWaiver(current) });
       if (approvedJob(current)) writes.push(audit(liveWaiver(next), 'moved after approval; waiver kept'));
       else {
         const waiverMoved = pickupWaiverProblem(next, sameDay);
