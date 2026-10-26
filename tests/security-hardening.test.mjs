@@ -417,7 +417,8 @@ test('crew job rules limit assigned staff to operational fields', () => {
   assert.match(read('crew/postjob.html'), /Completing job work never records a payment/);
   assert.match(read('crew/postjob.html'), /result\.jobId!==ACTIVE\.jobId/);
   assert.match(read('functions/api/quo-send.js'), /readJob\(env, jobId\)/);
-  assert.match(read('functions/api/quo-send.js'), /await assignedToJob\(job, session, env\)/);
+  // The assignment check also takes the handler's clock (REP-WALKTHROUGH: job-assignment.js).
+  assert.match(read('functions/api/quo-send.js'), /await assignedToJob\(job, session, env, now\)/);
   assert.match(read('crew/prejob.html'), /job_id:ACTIVE\.jobId/);
 });
 

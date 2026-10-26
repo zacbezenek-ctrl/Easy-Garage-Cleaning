@@ -1,5 +1,10 @@
 import { hasBusinessAccess, listHubUserProfiles } from './hub-session.js';
 import { selfRunCardHidden, selfWalkthroughVisitId } from './knock-self-walkthrough.js';
+import { quoteAuthorAccess } from './quote-permissions.js';
+import { walkthroughPerformer } from './walkthrough-visit.js';
+
+// A handler clock for createJobAssignmentAccess: a function, a Date or an ISO instant; none keeps the default.
+export const assignmentClock = at => at === undefined || at === null || at === '' ? {} : { now: typeof at === 'function' ? at : () => new Date(at) };
 import { employeeAccountsConfigured, listEmployeeApplications } from './employee-accounts.js';
 
 // Usernames are case-insensitive, but punctuation and suffixes are identity.
@@ -19,8 +24,9 @@ export function jobCrewNames(job) {
 // REP-WALKTHROUGH: a Knock rep stays on the crew of their own self-run walkthrough (assignedCrew [rep]) after their right
 // to it ends (knock-self-walkthrough.js selfRunCardHidden), so assigned() stops counting them then: every assignment
 // gate (customer messages, the job room, uploads, sends) refuses them, and no stored job needs rewriting. Managers are
-// never affected, nor is a session granted that visit for this request (its window was checked on the request's
-// clock). now: the request's clock (the handler's injected one where it has it).
+// never affected, nor is anyone who runs walkthroughs in their own right (an estimator, a quote author: their visits
+// follow the ordinary rules), nor a session granted that visit for this request (its window was checked on the
+// request's clock). now: the request's clock (the handler's injected one where it has it).
 export function createJobAssignmentAccess(env, session, { now = () => new Date() } = {}) {
   const username = assignmentKey(session?.user);
   const displayName = assignmentKey(session?.displayName);
@@ -43,10 +49,14 @@ export function createJobAssignmentAccess(env, session, { now = () => new Date()
     return Boolean(displayName && key === displayName && await uniqueDisplayName());
   }
 
+  // Their own walkthrough right, never one a Knock rep's grant lends for a single visit.
+  let own;
+  const ownRight = () => own ??= !selfWalkthroughVisitId(session) && (walkthroughPerformer(session, env) || quoteAuthorAccess(session, env).author);
+
   async function assigned(job) {
     if (!job) return false;
     // A session granted this very visit (selfWalkthroughSession) was already checked against the request's own clock.
-    if (job.type === 'walkthrough' && !hasBusinessAccess(session) && selfWalkthroughVisitId(session) !== job.id && selfRunCardHidden(job, session, now())) return false;
+    if (job.type === 'walkthrough' && !hasBusinessAccess(session) && selfWalkthroughVisitId(session) !== job.id && !ownRight() && selfRunCardHidden(job, session, now())) return false;
     const names = Array.isArray(job.assignedCrew) ? job.assignedCrew : jobCrewNames(job);
     for (const name of names) if (await matches(name)) return true;
     return false;

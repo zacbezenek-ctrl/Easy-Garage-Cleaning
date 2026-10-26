@@ -4,7 +4,7 @@ import { saveJobReads } from './dispatch-window-reads.js';
 import { encodeFirestoreFields } from './firestore-job.js';
 import { commitConflict, commitFailure } from './firestore-errors.js';
 import { can } from './staff-roles.js';
-import { assignmentKey, createJobAssignmentAccess } from './job-assignment.js';
+import { assignmentClock, assignmentKey, createJobAssignmentAccess } from './job-assignment.js';
 import { canonicalJson, sha256Hex } from './funnel-definitions.js';
 import { recordingActorRole } from './operations-recording-approval.js';
 import { consumeRateLimit } from './rate-limit.js';
@@ -99,9 +99,9 @@ const occurrenceOf = visit => typeof visit?.walkthroughVisit?.startRequestId ===
 const declined = visit => visit?.walkthroughVisit?.recordingStatus === 'declined' || visit?.walkthroughOutcome?.recordingStatus === 'declined';
 /** The estimator is the rep who started the visit (a visit with no Start: a rep it is assigned to); owners and managers
  * (dispatch.write) may also send audio, read the notes and have them drafted. Only the estimator confirms them. */
-async function access(store, session, visit) {
+async function access(store, session, visit, now) {
   const env = store.env || {}, actor = assignmentKey(session.user), manager = can(session, 'dispatch.write', env);
-  const starter = startedBy(visit), estimator = starter ? starter === actor : Boolean(await store.assigned(session, visit));
+  const starter = startedBy(visit), estimator = starter ? starter === actor : Boolean(await store.assigned(session, visit, now));
   if (!manager && !estimator) throw fail('recording_source_forbidden', 'This walkthrough is not yours. Ask a manager to assign it to you.', 403);
   return { actor, manager, estimator };
 }
@@ -220,7 +220,7 @@ export async function transcribeWalkthroughPart(store, session, input, { openai,
   const request = partRequest(input), extension = audioExtension(request.file);
   if (!extension) throw fail('recording_audio_type_invalid', 'This audio type cannot be transcribed. Use the Hub recorder or an .m4a from Voice Memos.', 415);
   if (!request.file.size || request.file.size > NOTES_LIMITS.partBytes) throw fail('recording_size_invalid', 'Each part must be between 1 byte and 24 MB.', 400);
-  const visit = await visitFor(store, request.visitId), { actor } = await access(store, session, visit);
+  const visit = await visitFor(store, request.visitId), { actor } = await access(store, session, visit, now);
   if (declined(visit)) throw fail('recording_consent_declined', 'The customer declined recording, so no audio is transcribed for this walkthrough.');
   const occurrence = occurrenceOf(visit), sha = await audioDigest(request.file);
   // Replays first: a part already transcribed, or being transcribed now, never calls OpenAI again.
@@ -300,7 +300,7 @@ async function receiptReplay(store, requestId, fingerprint) {
   return Boolean(receipt);
 }
 async function currentState(store, session, visitId, now) {
-  const visit = await visitFor(store, visitId), who = await access(store, session, visit), occurrence = occurrenceOf(visit);
+  const visit = await visitFor(store, visitId), who = await access(store, session, visit, now), occurrence = occurrenceOf(visit);
   let doc = await store.read(WALKTHROUGH_NOTES, visit.id);
   // A Finish sent as declined (the customer withdrew consent on the iPad after a part was sent): the parts and the draft are
   // deleted the first time the visit is read, as the withdraw action deletes them. The view shows none of it either way.
@@ -350,7 +350,7 @@ async function draftNotes({ openai, apiKey, model, transcript }) {
 export async function draftWalkthroughNotes(store, session, input, { openai, apiKey, now = new Date().toISOString() } = {}) {
   const env = store.env || {}, actor = actorOf(session, env), request = actionRequest(input, 'draft', []);
   const visit = await visitFor(store, request.visitId);
-  await access(store, session, visit);
+  await access(store, session, visit, now);
   const fingerprint = sha256Hex(canonicalJson({ actor, action: 'draft', visitId: visit.id }));
   if (await receiptReplay(store, request.requestId, fingerprint)) return currentState(store, session, visit.id, now);
   const doc = await store.read(WALKTHROUGH_NOTES, visit.id), notes = notesOf(doc, occurrenceOf(visit));
@@ -384,7 +384,7 @@ export async function confirmWalkthroughNotes(store, session, input, { now = new
   const env = store.env || {}, actor = actorOf(session, env), request = actionRequest(input, 'confirm', ['expectedRevision', 'notes']);
   if (typeof request.expectedRevision !== 'string' || request.expectedRevision.length > 64) throw invalid('Refresh the notes before confirming them.');
   if (!plain(request.notes)) throw invalid('Send the notes to confirm.');
-  const visit = await visitFor(store, request.visitId), who = await access(store, session, visit);
+  const visit = await visitFor(store, request.visitId), who = await access(store, session, visit, now);
   if (!who.estimator) throw fail('walkthrough_notes_estimator_only', 'Only the estimator who did this walkthrough confirms its notes for the crew.', 403);
   const notes = cleanVisitNotes(request.notes);
   if (visitNotesEmpty(notes)) throw fail('walkthrough_notes_empty', 'Add at least one note or item before confirming.', 400);
@@ -419,7 +419,7 @@ export async function confirmWalkthroughNotes(store, session, input, { now = new
 export async function withdrawWalkthroughNotes(store, session, input, { now = new Date().toISOString() } = {}) {
   const env = store.env || {}, actor = actorOf(session, env), request = actionRequest(input, 'withdraw', []);
   const visit = await visitFor(store, request.visitId);
-  await access(store, session, visit);
+  await access(store, session, visit, now);
   await deleteTranscript(store, visit, occurrenceOf(visit), actor, now);
   return currentState(store, session, visit.id, now);
 }
@@ -460,7 +460,7 @@ export function walkthroughNotesStorage(env, fetcher = firestoreFetch) {
     async readMany(collection, ids) { try { return await dispatch.readMany(collection, ids); } catch { throw down(); } },
     // Every job whose sourceWalkthroughId is the visit, read as Dispatch and the quote draft read it (saveJobReads).
     async linkedJobs(visitId) { try { return await saveJobReads(dispatch).where('sourceWalkthroughId', visitId); } catch { throw down(); } },
-    assigned: (session, job) => createJobAssignmentAccess(env, session).assigned(job),
+    assigned: (session, job, at) => createJobAssignmentAccess(env, session, assignmentClock(at)).assigned(job),
     async commit(writes) {
       let response;
       try {

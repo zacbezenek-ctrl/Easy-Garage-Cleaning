@@ -128,9 +128,11 @@ export function createApprovedSendService({
   // Policies with the 'account_staff' role ask the caller twice: staffGate(actor) before the record is read, then
   // accountAccess(actor, account) for the resolved account. Both refuse unless injected, so the role stays closed by default.
   staffGate = () => false, accountAccess = async () => false,
-  assignment = actor => createJobAssignmentAccess(env, actor), reserve = () => {}, crewNotice = async () => null,
+  assignment = null, reserve = () => {}, crewNotice = async () => null,
 } = {}) {
   const now = () => { const value = clock(); return value instanceof Date ? value : new Date(value); };
+  // The assignment gate reads the same clock (a Knock rep's self-run visit ends on it: job-assignment.js).
+  const assignmentFor = assignment || (actor => createJobAssignmentAccess(env, actor, { now }));
   const linkProviders = { loginLink: context => context.audience === 'crew' ? 'https://easygaragecleaning.com/employee.html' : undefined, ...links };
   // The roster read once per service; `ok` is false when it could not be read.
   let rosterCache;
@@ -172,7 +174,7 @@ export function createApprovedSendService({
 
   async function authorize(ctx) {
     const { policy, actor, job, account } = ctx;
-    if (policy.roles.includes('assigned_crew') && job && actor.user) ctx.actorAssigned = await assignment(actor).assigned(job);
+    if (policy.roles.includes('assigned_crew') && job && actor.user) ctx.actorAssigned = await assignmentFor(actor).assigned(job);
     if (ctx.automated) return;
     if (actor.kind === 'customer') {
       if (ctx.source === 'portal' && policy.roles.includes('customer') && account && actor.customerAccountId === account.id) return;
@@ -289,7 +291,7 @@ export function createApprovedSendService({
   async function context(actor, input, keyMs) {
     const ctx = await prepare(actor, input, keyMs), { policy, job, account, overrides, automated } = ctx;
     // FIELD_LEAD_ONLY_COMPLETE narrows the crew's on-my-way send to the job's crew lead (fieldCapabilities.sendOnMyWay); status stays readable.
-    if (policy.kind === 'on_my_way' && fieldLeadOnlyComplete(env) && !automated && !(hasBusinessAccess(actor) && ['owner', 'manager'].includes(actor.role)) && !await fieldJobLead({ session: actor, job, access: assignment(actor) }).catch(() => false)) throw fail('messaging_forbidden', 'Only the crew lead or a manager can send the on-my-way message for this job.', 403);
+    if (policy.kind === 'on_my_way' && fieldLeadOnlyComplete(env) && !automated && !(hasBusinessAccess(actor) && ['owner', 'manager'].includes(actor.role)) && !await fieldJobLead({ session: actor, job, access: assignmentFor(actor) }).catch(() => false)) throw fail('messaging_forbidden', 'Only the crew lead or a manager can send the on-my-way message for this job.', 403);
     if (policy.audience === 'crew') {
       // A removal notice goes to someone no longer on the job; every other crew
       // message needs the recipient assigned now, by username or (on a legacy

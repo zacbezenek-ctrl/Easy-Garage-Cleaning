@@ -5,7 +5,7 @@ import { hasBusinessAccess } from './hub-session.js';
 import { can, capabilityMode, staffRoleAccessEnabled } from './staff-roles.js';
 import { WALKTHROUGH_DENIAL } from './quote-permissions.js';
 import { SELF_WALKTHROUGH_REPLAY, selfWalkthroughVisitId } from './knock-self-walkthrough.js';
-import { assignmentKey, createJobAssignmentAccess } from './job-assignment.js';
+import { assignmentClock, assignmentKey, createJobAssignmentAccess } from './job-assignment.js';
 import { employeeVaultReadOnly, employeeVaultSecret } from './employee-vault-key.js';
 import { commitVaultDocuments, readCollectionRecords, readOne, sealedFields } from './employee-vault.js';
 import { activeTimecard, authorizeTimecard } from './employee-timecards.js';
@@ -199,7 +199,7 @@ export async function recordWalkthroughVisit(store, session, input, now = new Da
   // occurrence: this action records the rebooked one and keeps the earlier one in the history.
   const previous = rebooked(visit) ? { record: started(visit) ? visit.walkthroughVisit : null, outcome: outcomeOf(visit) } : null;
   const record = !previous && started(visit) ? visit.walkthroughVisit : null, outcome = previous ? null : outcomeOf(visit), startedBy = record ? assignmentKey(record.startedBy) : '';
-  if (!manager && !booker && !(startedBy ? startedBy === actor : await store.assigned(session, visit))) throw fail('not_assigned', 'This walkthrough is not assigned to you. Ask a manager to assign it before recording it.', 403);
+  if (!manager && !booker && !(startedBy ? startedBy === actor : await store.assigned(session, visit, now))) throw fail('not_assigned', 'This walkthrough is not assigned to you. Ask a manager to assign it before recording it.', 403);
   if (request.expectedRevision !== visit.revision) throw fail('revision_conflict', 'This walkthrough changed. Refresh it and review before recording.');
 
   const writes = [], role = typeof session.role === 'string' && session.role ? session.role : null;
@@ -324,7 +324,7 @@ export async function walkthroughVisitState(store, session, query = {}, now = ne
     visit = await store.read('jobs', query.visitId);
     if (!visit || visit.type !== 'walkthrough' || visit.recordType) throw fail('not_found', 'This walkthrough visit could not be found. Refresh your schedule.', 404);
     const startedBy = started(visit) ? assignmentKey(visit.walkthroughVisit.startedBy) : '';
-    if (!manager && !booker && startedBy !== actor && !await store.assigned(session, visit)) throw fail('not_assigned', 'This walkthrough is not assigned to you.', 403);
+    if (!manager && !booker && startedBy !== actor && !await store.assigned(session, visit, now)) throw fail('not_assigned', 'This walkthrough is not assigned to you.', 403);
   }
   const lock = await store.read(WALKTHROUGH_VISIT_LOCKS, lockId(actor));
   const open = lock?.openVisitId ? await store.read('jobs', lock.openVisitId) : null;
@@ -349,7 +349,7 @@ export function walkthroughVisitStorage(env, fetcher = firestoreFetch) {
       try { return await dispatch.read(collection, id); }
       catch { throw fail('storage_unavailable', 'Walkthrough records could not be loaded. Retry.', 503); }
     },
-    assigned: (session, job) => createJobAssignmentAccess(env, session).assigned(job),
+    assigned: (session, job, at) => createJobAssignmentAccess(env, session, assignmentClock(at)).assigned(job),
     // The rep's own active shift, found as the Hub clock finds it: the per-employee time
     // lock, else a scan of the vault timecards. Two active shifts need a manager.
     async activeShift(session) {

@@ -6,8 +6,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import vm from './helpers/vm-realm.mjs';
-import { ON_ENV, builderState, fixture, owner, signedPlan } from './helpers/estimator-fixture.mjs';
-import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
+import { ON_ENV, builderState, estimator, fixture, owner, signedPlan } from './helpers/estimator-fixture.mjs';
+import { prepareHandoff, saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
 import { firstHandoffSigner, projectSetterAttribution, repRanWalkthrough } from '../functions/_lib/knock-setters.js';
 import { handoffHandlers } from '../functions/api/walkthrough-handoff.js';
 import { walkthroughVisitHandlers } from '../functions/api/walkthrough-visit.js';
@@ -374,4 +374,40 @@ test('every assignment gate shares the rule: assigned() stops counting the rep o
   // The endpoints that gate on assignment alone all go through it.
   for (const file of ['functions/api/quo-send.js', 'functions/api/drive-upload.js', 'functions/_lib/approved-send.js', 'functions/api/employee-hub.js', 'functions/api/crew-jobs.js'])
     assert.match(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), /createJobAssignmentAccess\(/, file);
+});
+
+// An estimator who also knocks (EGC_STAFF_ROLE_PERMISSIONS: a quote author whose customers are masked, #215) and does
+// their own door walkthrough runs it in their own right: once it is signed, and past the rep's window, it stays theirs
+// like any walkthrough they run, never locked like a Knock-only rep's.
+test('an estimator\'s own "do it now" visit, signed and then revised later, keeps their full access', async t => {
+  const f = fixture(BRIDGE);
+  f.rows.set('jobs/w1', { ...f.rows.get('jobs/w1'), ...selfRun('sales.person') });
+  const signed = await saveWalkthroughHandoff(f.store, estimator, { requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', plan: signedPlan(1) }, '2026-10-17T15:00:00.000Z', { env: BRIDGE });
+  const later = new Date('2026-10-25T15:00:00.000Z'), visit = f.rows.get('jobs/w1');
+  assert.ok(visit.convertedJobId, 'signed and converted');
+  // Every assignment gate (crew-jobs text, the job room, uploads, quo-send, approved sends) asks this.
+  assert.equal(await createJobAssignmentAccess(BRIDGE, estimator, { now: () => later }).assigned(visit), true, 'past the rep window, still theirs');
+  const prepared = await prepareHandoff(f.store, estimator, { jobId: signed.job.id }, { env: BRIDGE, now: later });
+  assert.equal(prepared.customerId, 'c1', 'the signed job reopens with its customer');
+  assert.ok(prepared.customer?.phone, 'and the customer\'s details');
+  const job = f.rows.get(`jobs/${signed.job.id}`);
+  const revised = await saveWalkthroughHandoff(f.store, estimator, { requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: visit.revision,
+    jobId: job.id, expectedRevision: job.revision, plan: signedPlan(1, { total: 1500 }) }, later.toISOString(), { env: BRIDGE });
+  assert.equal(revised.ok, true, 'a signed revision is not refused for a customer reference');
+  // And the customer text from /api/crew-jobs on that visit goes out.
+  let texts = 0;
+  t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
+    const url = String(input), method = options.method || 'GET';
+    if (url.includes('/documents:runQuery')) return Response.json([{ readTime: '2026-10-25T00:00:00Z' }]);
+    if (url.includes('services.leadconnectorhq.com/contacts/')) return Response.json({ contact: { id: 'provider1', locationId: 'location-synthetic', phone: '+19705550101' } });
+    if (url.includes('services.leadconnectorhq.com')) { texts++; return Response.json({ messageId: 'msg-synthetic', conversationId: 'conv-synthetic' }); }
+    const stored = f.rows.get('jobs/w1');
+    if (method === 'PATCH') f.rows.set('jobs/w1', { ...stored, ...decodeFirestoreFields(JSON.parse(options.body).fields) });
+    return new Response(JSON.stringify({ name: 'projects/egcw-1ec83/databases/(default)/documents/jobs/w1', updateTime: '2026-10-25T15:00:01.000000Z', fields: encodeFirestoreFields({ ...f.rows.get('jobs/w1'), phone: '(970) 555-0101', highlevelContactId: 'provider1' }) }), { status: 200 });
+  });
+  const env = { ...BRIDGE, FIREBASE_API_KEY: 'firebase-test-self-run', HIGHLEVEL_API_KEY: 'ghl-test-synthetic', HIGHLEVEL_LOCATION_ID: 'location-synthetic' };
+  const response = await crewJobsHandlers({ session: async () => estimator, now: () => later }).post({ env, request: new Request(`${ORIGIN}/api/crew-jobs`, {
+    method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'send_customer_message', jobId: 'w1', body: 'Following up on your quote', requestId: 'estimator-text-0001' }) }) });
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.equal(texts, 1);
 });

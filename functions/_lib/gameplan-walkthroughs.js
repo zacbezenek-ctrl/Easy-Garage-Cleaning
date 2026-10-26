@@ -72,7 +72,7 @@ export function gameplanWalkthroughStorage(env, fetcher = firestoreFetch) {
 export async function gameplanWalkthroughs(store, actor, query = {}, { env = {}, now = new Date() } = {}) {
   const access = requireQuoteAuthor(actor, env);
   if (!query || Object.keys(query).some(key => !['view', 'walkthroughId'].includes(key)) || query.view !== 'walkthroughs' || query.walkthroughId !== undefined && !safeId(query.walkthroughId)) throw fail('invalid_request', 'The walkthrough lookup is invalid.', 400);
-  const everyone = access.dispatcher || can(actor, 'schedule.book', env), assignment = createJobAssignmentAccess(env, actor), viewer = assignmentKey(actor.user);
+  const everyone = access.dispatcher || can(actor, 'schedule.book', env), assignment = createJobAssignmentAccess(env, actor, { now: () => now }), viewer = assignmentKey(actor.user);
   const visible = async visit => everyone || Boolean(viewer) && assignmentKey(visit.walkthroughVisit?.startedBy) === viewer || await assignment.assigned(visit);
   const walkthrough = visit => visit && visit.type === 'walkthrough' && !visit.recordType && safeId(visit.id);
   let requested = null;

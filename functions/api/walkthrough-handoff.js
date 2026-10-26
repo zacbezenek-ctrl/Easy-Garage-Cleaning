@@ -54,7 +54,7 @@ export function handoffHandlers({session=getHubSession,storage=dispatchStorage,w
         if(query.view==='crew_openings'&&crewAutoAssignEnabled(env))return reply(200,{...await handoffCrewOpenings(storage(env),actor,query,now(),{env}),viewer:{id:actor.user}});
         // view=walkthroughs: the gameplan's Today list and its requested walkthrough (gameplan-walkthroughs.js), no SDK read.
         if('view' in query)return reply(200,{...await gameplanWalkthroughs(walkthroughs(env),actor,query,{env,now:now()}),viewer:{id:actor.user}});
-        return reply(200,{...await prepareHandoff(storage(env),actor,query,{env}),viewer:{id:actor.user}});
+        return reply(200,{...await prepareHandoff(storage(env),actor,query,{env,now:now()}),viewer:{id:actor.user}});
       }
       catch(error) { return failure(error); }
     },
