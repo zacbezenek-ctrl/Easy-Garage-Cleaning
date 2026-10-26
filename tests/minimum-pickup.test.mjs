@@ -13,6 +13,7 @@ import { PICKUP_MINIMUM_CENTS, PICKUP_MINIMUM_LINE_ID, nearbyJob, pickupFloorCen
 import { mutateMoney } from '../functions/_lib/money-service.js';
 import { mutateDispatch } from '../functions/_lib/dispatch-service.js';
 import { mutateJobOperation } from '../functions/_lib/job-operations.js';
+import { mutateScheduledVisit } from '../functions/_lib/operations-scheduling.js';
 import { WINTER_SALE_DEFAULTS, WINTER_SALE_LINE_ID, winterSaleDecision } from '../functions/_lib/winter-sale.js';
 import { HUB_AUDIT_COLLECTION } from '../functions/_lib/hub-audit.js';
 import { builderState, client, estimator, fixture, menuItem, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
@@ -421,4 +422,64 @@ test('a new service ZIP code on the same day is checked like a new day: Dispatch
   // A record from before the ZIP code was stored skips the ZIP comparison.
   const legacy = { ...c.f.job(c.id), quoteDraft: { ...c.f.job(c.id).quoteDraft, minimumWaiver: { ...c.f.job(c.id).quoteDraft.minimumWaiver, zip: null } } };
   assert.equal(pickupWaiverProblem(legacy, [], { approving: true }), null);
+});
+
+test('an approved waived job moved to another ZIP code gets one "waiver kept" note, and later unrelated edits add none', async () => {
+  const { f, jobId } = await signedWaived();
+  const edit = changes => mutateDispatch(f.store, owner, { action: 'schedule.update', requestId: randomUUID(), jobId, expectedRevision: f.job(jobId).revision, changes }, NOW);
+  await edit({ address: '100 Fixture Lane, Fort Collins, CO 80525' });
+  const kept = movedAudits(f);
+  assert.equal(kept.length, 1);
+  assert.deepEqual([JSON.parse(kept[0].patch.before).zip, JSON.parse(kept[0].patch.after).zip, kept[0].patch.reason], ['80521', '80525', 'moved after approval; waiver kept']);
+  // Unrelated saves after it: a title, a new arrival time, the same address sent again.
+  await edit({ title: 'Pickup: side gate' });
+  await edit({ time: '10:00', endTime: '13:00' });
+  await edit({ address: '100 Fixture Lane, Fort Collins, CO 80525' });
+  assert.equal(movedAudits(f).length, 1, 'one note for the one move');
+  assert.equal(f.job(jobId).minimumWaiver.zip, '80521', 'the signed waiver is kept as it was signed');
+});
+
+test('an owner override carries to an estimator\'s signature only in its own ZIP code', async () => {
+  const q = quote(SOFA({ nearbyTruck: NEARBY })), f = fixture(ON), first = await save(f, estimator, quote(SOFA())), id = first.job.id;
+  Object.assign(f.job(id), { date: DAY, time: '09:30', endTime: '12:30', address: ZIP_ADDRESS });
+  await save(f, owner, q, { jobId: id });
+  assert.deepEqual([f.job(id).quoteDraft.minimumWaiver.ownerOverride, f.job(id).quoteDraft.minimumWaiver.zip], [true, '80521']);
+  // Unscheduled, the address moves to another ZIP code, then booked again on the same day.
+  const other = '100 Fixture Lane, Fort Collins, CO 80525';
+  Object.assign(f.job(id), { date: '', time: '', endTime: '' });
+  Object.assign(f.job(id), { address: other, date: DAY, time: '09:30', endTime: '12:30' });
+  const job = f.job(id), plan = signedPlan(1, { total: job.estimate.amountCents / 100, date: DAY, quote: { composite_pricing: q.priced.compositePricing, catalog_version: q.priced.menuVersion, line_items: job.estimate.lineItems.map(({ id, kind, name, description, quantity, unitCents, totalCents }) => ({ id, kind, name, description, quantity, unitCents, totalCents })) } });
+  plan.client.address = other;
+  await assert.rejects(saveWalkthroughHandoff(f.store, estimator, { actorId: estimator.user, requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: f.rows.get('jobs/w1').revision, jobId: job.id, expectedRevision: job.revision, plan }, NOW, { env: ON, compositeState: async () => q.state, winterSale: saleReaders, pickup: nearby() }), { code: 'handoff_pickup_waiver_unconfirmed', status: 409 });
+  // The send checks it the same way: the override is for 80521, not 80525.
+  await assert.rejects(preview(f, q, id), { code: 'quote_draft_pickup_waiver_unconfirmed' });
+});
+
+test('through the scheduling bridge, an approved waived job gets one "waiver kept" note for its ZIP move, none for a re-sent address', async () => {
+  const actor = { id: 'verified-grant', kind: 'integration', role: 'integration', workspace: 'egc' }, at = '2026-10-17T15:00:00.000Z';
+  const rows = new Map([['customers/customer-a', { id: 'customer-a', name: 'Synthetic customer', highlevelContactId: 'contact-a', revision: 'customer-r1' }]]);
+  let revision = 0;
+  const store = { read: async (c, id) => structuredClone(rows.get(`${c}/${id}`) || null), day: async date => [...rows.entries()].filter(([k, v]) => k.startsWith('jobs/') && v.date === date).map(([, v]) => structuredClone(v)),
+    commit: async writes => {
+      for (const w of writes) { const prior = rows.get(`${w.collection}/${w.id}`); if (w.revision ? prior?.revision !== w.revision : Boolean(prior)) throw Object.assign(new Error('schedule_revision_conflict'), { status: 409 }); }
+      for (const w of writes) rows.set(`${w.collection}/${w.id}`, { ...rows.get(`${w.collection}/${w.id}`), ...structuredClone(w.patch), id: w.id, revision: `r${++revision}` });
+      return {};
+    } };
+  const mutate = value => mutateScheduledVisit(store, actor, { requestId: randomUUID(), portalCustomerId: 'customer-a', ...value }, at);
+  const created = await mutate({ mode: 'create', kind: 'job', changes: { date: DAY, time: '09:30', endTime: '12:30', address: ZIP_ADDRESS } });
+  const visitId = created.visit?.id || created.id || [...rows.keys()].find(key => key.startsWith('jobs/visit_')).slice(5);
+  // The visit is a signed waived pickup (approved), its waiver confirmed for 80521.
+  const job = rows.get(`jobs/${visitId}`);
+  Object.assign(job, { estimate: { status: 'accepted', acceptanceMethod: 'in_person_signature', lineItems: [{ id: 'removal-special', totalCents: 7000 }] },
+    minimumWaiver: { by: estimator.user, at, reason: NEARBY.reason, nearbyJobId: 'job_neighbour', ownerOverride: false, date: DAY, zip: '80521', pending: false },
+    compositeQuote: { breakdown: { lines: [], pickup: { haulingOnly: true, minimumCents: 0, waived: true, waivedCents: 8000 } } } });
+  const update = changes => mutate({ mode: 'update', portalVisitId: visitId, expectedRevision: rows.get(`jobs/${visitId}`).revision, changes });
+  const kept = () => [...rows.entries()].filter(([key, row]) => key.startsWith(`${HUB_AUDIT_COLLECTION}/`) && row.action === 'quote.minimum_pickup.waiver_moved').map(([, row]) => row);
+  const other = '100 Fixture Lane, Fort Collins, CO 80525';
+  await update({ address: other });
+  assert.equal(kept().length, 1);
+  assert.deepEqual([JSON.parse(kept()[0].before).zip, JSON.parse(kept()[0].after).zip, kept()[0].via], ['80521', '80525', 'bridge']);
+  await update({ address: other });
+  await update({ title: 'Pickup: side gate' });
+  assert.equal(kept().length, 1, 'a re-sent address and an unrelated edit add no note');
 });

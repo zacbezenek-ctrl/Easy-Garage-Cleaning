@@ -18,7 +18,7 @@ import {bridgeCommandDenial,bridgeCommandPolicy} from '../../egc-platform/servic
 import {dispatchReviewCleared} from './dispatch-queue.js';
 import {jobStartProblem} from './job-start-policy.js';
 import {winterSaleDateProblem} from './winter-sale.js';
-import {approvedJob,liveWaiver,pickupWaiverProblem,waiverNoteAudit,waiverZipMoved} from './pickup-minimum.js';
+import {approvedJob,liveWaiver,pickupWaiverProblem,serviceZip,waiverNoteAudit,waiverZipMoved} from './pickup-minimum.js';
 import {auditWrite} from './hub-audit.js';
 import {autoAssignedCrew,crewAssignment,crewAutoAssignEnabled,crewAutoRecord,crewPickOrder,eligibleCrews,pickCrew} from './dispatch-crew-assign.js';
 const ROOT='projects/egcw-1ec83/databases/(default)/documents';
@@ -164,6 +164,8 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   // An approved or signed job keeps its waiver (the terms it was signed on), with an audited note below.
   // A new service ZIP code (address) on the same day is checked like a new day.
   const pickupMoving=input.mode==='update'&&Boolean(liveWaiver(current))&&(Boolean(changes.date)&&changes.date!==current.date||changes.address!==undefined&&waiverZipMoved(liveWaiver(current),{...current,...changes}));
+  // The kept note only when this update moves the job (a new day or service ZIP code), so a re-sent address adds none.
+  const pickupMovesNow=input.mode==='update'&&(Boolean(changes.date)&&changes.date!==current.date||changes.address!==undefined&&serviceZip(changes.address)!==serviceZip(current.address));
   const pickupKept=pickupMoving&&approvedJob(current)?liveWaiver(current):null;
   if(pickupMoving&&!pickupKept&&pickupWaiverProblem({...current,...changes}))throw failure('schedule_pickup_waiver_moved');
   if(input.mode==='update'&&changes.date&&changes.date!==current.date&&[current.estimate?.status,current.customerApproval?.status].some(status=>['accepted','approved'].includes(String(status||'').toLowerCase()))&&winterSaleDateProblem({...current,date:changes.date}))throw failure('schedule_winter_sale_date');
@@ -257,7 +259,7 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   const funnel=await visitFunnelWrites({action:input.mode,before:current,after:{...current,...patch},actor:eventActor(actor),via:eventVia(via),key:requestKey(input.requestId),source:{collection:'jobs',id:receiptId},reason:{...reason,lateCancel:patch.lateCancel},crewChanged:assigned,dimensions,now});
   Object.assign(patch,funnel.patch);
   const writes=[{collection:'jobs',id,revision:current?.revision,patch},...projectWrites,...identityWrites,...locks,...funnel.writes,{collection:'dispatchState',id:'revision',revision:dispatchGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}},{collection:'jobs',id:receiptId,patch:{recordType:'schedule_operation',fingerprint:hash,scheduleHash:await digest(scheduleState(next)),portalVisitId:id,actorId:actor.id,actorKind:actor.kind,requestId:input.requestId,mode:input.mode,before:current?{date:current.date,time:current.time,endTime:current.endTime,status:current.status,revision:current.revision}:null,after:{date:next.date,time:next.time,endTime:next.endTime,status:next.status},createdAt:now}}];
-  if(pickupKept)writes.push(waiverNoteAudit(auditWrite,pickupKept,{actor:{id:actor.id,kind:actor.kind,role:actor.role},via:'bridge',jobId:id,requestId:input.requestId,now,note:'moved after approval; waiver kept',fromDate:current.date,toDate:changes.date||current.date}));
+  if(pickupKept&&pickupMovesNow)writes.push(waiverNoteAudit(auditWrite,pickupKept,{actor:{id:actor.id,kind:actor.kind,role:actor.role},via:'bridge',jobId:id,requestId:input.requestId,now,note:'moved after approval; waiver kept',fromDate:current.date,toDate:changes.date||current.date,fromZip:serviceZip(current.address)||null,toZip:serviceZip(changes.address!==undefined?changes.address:current.address)||null}));
   if(store.crewNotificationsEnabled===true)writes.push(...await crewNotificationWrites({jobId:id,requestId:input.requestId,action:`schedule.${input.mode}`,actorId:actor.id,type:next.type,before:current,after:next,roster,now,baseRevision:current?.revision}));
   const tags=store.ghlTagOutbox===true?await scheduleTagWrites({jobId:id,before:current,after:{...current,...patch},action:`schedule.${input.mode}`,requestId:input.requestId,now,source:'bridge'}):null;
   if(tags){patch.ghlTagEntry=tags.pointer;writes.push(tags.write);}

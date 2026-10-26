@@ -620,7 +620,7 @@ async function pickupSendable(job, actor, env, pickup, now) {
   if (!pricing.nearbyTruck && !lines.some(line => line?.id === PICKUP_MINIMUM_LINE_ID) && estimateTotals(lines).totalCents < PICKUP_MINIMUM_CENTS) throw fail('pickup_minimum_resave', 'Pickups now have a $250 minimum. Open the quote in the builder and save it again before sending.', 409);
   if (!pricing.nearbyTruck) return null;
   // The owner's override saved for this very day (and reason) carries to anyone's send.
-  const owned = savedOwnerWaiver(job.quoteDraft?.minimumWaiver, { date: job.date || '', reason: pricing.nearbyTruck.reason });
+  const owned = savedOwnerWaiver(job.quoteDraft?.minimumWaiver, { date: job.date || '', reason: pricing.nearbyTruck.reason, address: job.address || '' });
   if (owned) return owned;
   const confirmed = await confirmNearbyTruck({ priced: { breakdown }, owner: isHubOwner(actor), jobId: job.id, date: job.date || '', address: job.address || '', nearbyJobs: date => pickup.nearby(env, date), prefix: 'quote_draft_' });
   return confirmed ? waiverRecord(confirmed, { reason: pricing.nearbyTruck.reason, by: actor.user, at: now }) : null;
