@@ -22,15 +22,15 @@ async function fixture(t){
  store.requests.length=0;return{store,env};
 }
 
-test('messages-only reads exactly the three message families and preserves current job and read-marker authorization',async t=>{
+test('messages-only reads exactly the four message families (direct messages included) and preserves current job and read-marker authorization',async t=>{
  const {store,env}=await fixture(t),cookie=await cookieFor(env,'Crew.Static');store.requests.length=0;
  const response=await get(env,cookie);assert.equal(response.status,200);const body=await response.json();
- assert.deepEqual(Object.keys(body.collections).sort(),['jobMessages','messageReads','teamMessages']);
+ assert.deepEqual(Object.keys(body.collections).sort(),['directMessages','jobMessages','messageReads','teamMessages']);
  assert.deepEqual(body.collections.teamMessages.map(row=>row.id),['team']);assert.deepEqual(body.collections.jobMessages.map(row=>row.id),['own-job']);assert.deepEqual(body.collections.messageReads.map(row=>row.id),['own-read']);
  assert.equal(body.accounts,undefined);assert.equal(body.payVisibility,undefined);
  const queries=store.requests.filter(request=>request.url.pathname.endsWith(':runQuery'));
  const families=queries.map(query=>query.body.structuredQuery.where?.compositeFilter?.filters.find(filter=>filter.fieldFilter?.field.fieldPath==='employeeHubType')?.fieldFilter.value.stringValue);
- assert.deepEqual(families.sort(),['jobMessages','messageReads','teamMessages']);assert.equal(store.writes().length,0);
+ assert.deepEqual(families.sort(),['directMessages','jobMessages','messageReads','teamMessages']);assert.equal(store.writes().length,0);
  // Losing the current assignment immediately removes the room on the next message poll.
  store.documents.get('jobs/assigned').fields=encodeFirestoreFields({type:'job',assignedCrew:['Other.Crew']});
  assert.deepEqual((await (await get(env,cookie)).json()).collections.jobMessages,[]);
@@ -40,7 +40,7 @@ test('the owner keeps the full-view message visibility without rereading payroll
  const {store,env}=await fixture(t),cookie=await cookieFor(env,'ZacB');store.requests.length=0;
  const response=await get(env,cookie),body=await response.json();assert.equal(response.status,200);
  assert.equal(body.collections.jobMessages.length,2);assert.equal(body.collections.messageReads.length,2);assert.equal(body.collections.profiles,undefined);
- assert.equal(store.requests.filter(request=>request.url.pathname.endsWith(':runQuery')).length,3);
+ assert.equal(store.requests.filter(request=>request.url.pathname.endsWith(':runQuery')).length,4,'one query per message family: team, job rooms, read markers, direct messages');
  assert.equal(store.writes().length,0);
 });
 
@@ -66,5 +66,5 @@ for(const mode of ['legacy','missing-index'])test(`message family reads share on
  const response=await get(env,cookie),body=await response.json();assert.equal(response.status,200);
  assert.deepEqual(body.collections.jobMessages.map(row=>row.id),['own-job']);assert.equal(body.collections.profiles,undefined);
  assert.equal(store.requests.filter(request=>request.url.pathname.endsWith(':runQuery')).length,1,'all families reuse the same fallback result');
- assert.equal(familyAttempts,mode==='missing-index'?3:0);
+ assert.equal(familyAttempts,mode==='missing-index'?4:0);
 });

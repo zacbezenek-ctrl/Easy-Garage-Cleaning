@@ -14,9 +14,9 @@ import { onRequestGet, onRequestPost } from '../functions/api/employee-hub.js';
 const NOW = '2026-09-22T18:00:00.000Z';
 const HISTORY = { timeEntries: 120, teamMessages: 150, jobMessages: 40, messageReads: 12, announcements: 6, profiles: 4 };
 const VAULT_DOCS = Object.values(HISTORY).reduce((sum, count) => sum + count, 0);
-// requests, incidents, equipment, training: never written here, so never marked; each costs its (empty) query, billed
-// as one read, on every poll.
-const EMPTY_FAMILIES = 4;
+// requests, incidents, equipment, training, directMessages: never written here, so never marked; each costs its (empty)
+// query, billed as one read, on every poll.
+const EMPTY_FAMILIES = 5;
 const ACCOUNTS = 1; // an office (manager) poll also lists employee accounts: none here, one billed read
 const get = (env, cookie, query = '') => onRequestGet({ env, request: new Request(`https://easygaragecleaning.com/api/employee-hub${query}`, { headers: { Cookie: cookie } }) });
 const post = (env, cookie, body) => onRequestPost({ env, request: jsonRequest('/api/employee-hub', body, cookie) });
@@ -84,8 +84,9 @@ test('a chat message re-reads only its family; the next poll shows it, to the of
   assert.deepEqual(office.queries.filter(query => query.where.compositeFilter).map(query => query.where.compositeFilter.filters[1].fieldFilter.value.stringValue).filter(name => HISTORY[name]), ['teamMessages']);
   const chat = await meter.measure(async () => answer(await get(env, crew, '?view=messages')));
   assert.ok(chat.result.collections.teamMessages.some(row => row.id === 'message-crew-new'));
-  // The crew poll still checks each job room's current assignment (5 jobs), but rereads no message history.
-  assert.equal(chat.reads, 1 + 5);
+  // The crew poll still checks each job room's current assignment (5 jobs), but rereads no message history; the
+  // never-written direct-message family costs its one empty query.
+  assert.equal(chat.reads, 1 + 5 + 1);
 });
 
 test('a clock-in marks timecards changed in its own commit, so the next poll shows the open shift', async t => {
