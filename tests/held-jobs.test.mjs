@@ -154,9 +154,9 @@ test('a signed draft price above the amount the owner approves stays held, and t
   const refusal = approvalRefusal(approval);
   assert.equal(refusal.message, 'The customer signed more than the approved price: rebuild the quote and have them sign again (Mattress).');
   assert.deepEqual(refusal.details.unapproved.map(row => [row.id, row.signedAbove]), [[mattress.id, true]]);
-  // The next open only counts (the version is done): it read no job, so it tells nothing apart; the job is still held.
+  // Counted again on the next open (the version is done): re-read, it still reads as signed above, so it is still told apart.
   const later = await (await post(handlers, { action: 'sweep' })).json();
-  assert.deepEqual([later.ran, later.held, later.signedAbove, later.stuck], [false, 1, 0, 0]);
+  assert.deepEqual([later.ran, later.held, later.signedAbove, later.stuck], [false, 1, 1, 0]);
   // Approved at $70 or more, it releases at the $70 signed.
   const button = await (await heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => heldStore(f), compositeState: async () => builderState({ [mattress.id]: 8000 }), now: () => new Date(LATER) }).post({ request: new Request('https://easygaragecleaning.com/api/held-jobs', { method: 'POST', headers: { Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'release' }) }), env: ON_ENV })).json();
   assert.deepEqual([button.released, f.job(job.id).total], [[job.id], 1070]);
@@ -178,6 +178,9 @@ test('a stuck job released by hand and held again is not labelled stuck', async 
   const released = await releaseHandoffPrices(f.store, owner, { action: 'prices.release', requestId: randomUUID(), jobId: job.id, expectedRevision: f.job(job.id).revision }, LATER, { env: ON_ENV, compositeState: async () => builderState() });
   assert.equal(released.released, true);
   f.rows.set(`jobs/${job.id}`, { ...held, revision: 'held-again' });
+  // Right after the re-hold a count-only open still shows the earlier label: it clears on the next run that reads the job.
+  const meanwhile = await (await post(handlers(before()), { action: 'sweep' })).json();
+  assert.deepEqual([meanwhile.ran, meanwhile.held, meanwhile.stuck], [false, 1, 1]);
   // The owner's button reads it (still waiting for the half load under this menu): its tries are forgotten.
   const button = await (await post(handlers(before()), { action: 'release' })).json();
   assert.deepEqual([button.released, button.held, button.stuck], [[], 1, 0]);
@@ -200,6 +203,38 @@ test('a job signed again after being signed above the approved price is not told
   f.rows.set(`jobs/${job.id}`, { ...job, revision: 're-signed', compositeQuote: { ...job.compositeQuote, breakdown: { ...job.compositeQuote.breakdown, lines: job.compositeQuote.breakdown.lines.map(line => line.id === mattress.id ? { ...line, unitCents: 6000 } : line) } } });
   const counted = await (await post(handlers, { action: 'sweep' })).json();
   assert.deepEqual([counted.ran, counted.held, counted.signedAbove], [false, 1, 0]);
+});
+
+// A count-only open re-reads the listed signed-above jobs within its budget; any it cannot re-read stay listed (the safe
+// side), and the open stays within the measured maximum of storage calls.
+test('a count-only open re-reads signed-above jobs within its budget and keeps the unread ones listed', async () => {
+  const f = fixture(), mattress = menuItem('Mattress');
+  const state = builderState(), priced = priceCompositeQuote(state, selection({ removal: [pick('Full truck load'), pick('Mattress')], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), { complete: true });
+  const quote = { composite_pricing: priced.compositePricing, line_items: signedLines(priced), catalog_version: priced.menuVersion, total: priced.totalCents / 100 };
+  const saved = await saveWalkthroughHandoff(f.store, owner, { actorId: owner.user, requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', plan: signedPlan(1, { quote, total: quote.total }) }, NOW, { env: ON_ENV, compositeState: async () => state });
+  const job = f.job(saved.job.id);
+  for (let i = 0; i < 4; i++) f.rows.set(`jobs/above-${i}`, { ...structuredClone(job), id: `above-${i}`, revision: `ab${i}` });
+  let calls = 0;
+  const count = fn => async (...args) => { calls++; return fn(...args); };
+  const base = heldStore(f), jobs = { ...base, heldJobIds: count(base.heldJobIds), read: count(base.read), commit: count(base.commit) };
+  const rows = catalogStore(), catalog = { ...rows, read: count(rows.read), commit: count(rows.commit) };
+  const lower = builderState({ [mattress.id]: 6000 });
+  // The owner's two pricing documents count as two storage calls, as readCompositeState makes them.
+  const handlers = budget => heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => jobs, compositeState: async () => { calls += 2; return lower; }, budget, now: () => new Date(LATER) });
+  const swept = await (await post(handlers(30), { action: 'sweep' })).json();
+  assert.deepEqual([swept.held, swept.signedAbove], [5, 5]);
+  // Two are signed again within the approved price (still held): with room to re-read all, they are dropped.
+  for (const id of ['above-0', 'above-1']) { const row = f.job(id); f.rows.set(`jobs/${id}`, { ...row, revision: `${id}-re`, compositeQuote: { ...row.compositeQuote, breakdown: { ...row.compositeQuote.breakdown, lines: row.compositeQuote.breakdown.lines.map(line => line.id === mattress.id ? { ...line, unitCents: 6000 } : line) } } }); }
+  calls = 0;
+  const all = await (await post(handlers(30), { action: 'sweep' })).json();
+  // The marker, one name query, the pricing and the five re-reads. At most 1 + 10 + 2 + 30 = 43 per count-only open,
+  // under the measured 44 of a release run.
+  assert.deepEqual([all.ran, all.held, all.signedAbove, calls], [false, 5, 3, 1 + 1 + 2 + 5]);
+  // With room for one re-read only, the four not re-read stay listed: at most one drops.
+  calls = 0;
+  const short = await (await post(handlers(1), { action: 'sweep' })).json();
+  assert.ok(short.signedAbove >= 4, `kept when not re-read: ${short.signedAbove}`);
+  assert.equal(calls, 1 + 1 + 2 + 1);
 });
 
 test('a release that fails every time gives up after three tries: the version is recorded and the job is listed as stuck', async () => {
