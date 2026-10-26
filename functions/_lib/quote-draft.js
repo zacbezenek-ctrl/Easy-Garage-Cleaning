@@ -422,7 +422,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
       if (saleResult) draft = { ...saleResult.draft, winterSale: saleResult.record };
       const plan = quotePatch(job, draft, actor, now, job.id);
       if (saleResult) plan.warnings.push(...saleResult.warnings);
-      const saved = record(job, plan, job.id), patch = { ...plan.patch, ...capturePatch(job, draft, actor, now), ...serviceTypeRevision(job, junkOnlyQuote), quoteDraft: saved.quoteDraft, ...refPatch(named, actor, draft.client.name), updatedAt: now };
+      const saved = record(job, plan, job.id), patch = { ...plan.patch, ...capturePatch(job, draft, actor, now), ...serviceTypeRevision(job, junkOnlyQuote), quoteDraft: saved.quoteDraft, ...refPatch(named, actor, draft.client), updatedAt: now };
       // FUN-03: a material revision ends the job's live sale (a portal approval of
       // an earlier revision), as the Hub estimate editor does: deal.approval_superseded
       // and the cleared funnelSale are in this revision's commit.
@@ -449,7 +449,7 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
       if (waiver) draft.minimumWaiver = waiver;
       const saleResult = sale ? await applyWinterSale(draft, sale, { actor, now, env, readers, sourceWalkthroughId: input.sourceWalkthroughId || '', junkOnly: junkOnlyQuote, requestId: input.requestId }) : null;
       if (saleResult) draft = { ...saleResult.draft, winterSale: saleResult.record };
-      await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote, sale: saleResult, ref: refPatch(named, actor, draft.client.name) });
+      await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId, newQuotePaymentPolicy, junkOnlyQuote, sale: saleResult, ref: refPatch(named, actor, draft.client) });
     }
   } catch (error) {
     if (FINAL.has(error.code)) throw error;
