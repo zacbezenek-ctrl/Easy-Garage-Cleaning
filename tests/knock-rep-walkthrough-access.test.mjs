@@ -42,10 +42,10 @@ function world({ walkthroughSelf = true, status = 'active', now = NOW, visit = {
   const reps = { 'rep.two': { repKey: 'rep.two', status, walkthroughSelf }, 'rep.three': { repKey: 'rep.three', status: 'active', walkthroughSelf: true } };
   const knock = () => ({ get: async (collection, id) => collection === 'knock_reps' ? reps[id] || null : null });
   const walkthroughs = () => ({ read: id => store.read('jobs', id), walkthroughsOn: async date => (await store.jobs()).filter(job => job.date === date) });
-  const visitStore = env => ({ ...store, env, assigned: (session, job) => createJobAssignmentAccess(env, session).assigned(job), activeShift: async () => null });
+  const visitStore = env => ({ ...store, env, assigned: (session, job, at) => createJobAssignmentAccess(env, session, at ? { now: () => new Date(at) } : {}).assigned(job), activeShift: async () => null });
   const deps = { session: async () => rep, knock, now: () => now };
   return {
-    f, store,
+    f, store, knock, visitStore,
     handoff: handoffHandlers({ ...deps, storage: () => store, walkthroughs, compositeState: async () => { throw new Error('a walkthrough-priced handoff reads no builder state'); } }),
     visit: walkthroughVisitHandlers({ ...deps, storage: visitStore }),
     quotes: quoteDraftHandlers({ ...deps, storage: () => store, compositeState: async () => builderState() }),
@@ -261,6 +261,12 @@ test('/api/field-jobs on an injected clock: the rep\'s self-run card shows insid
   assert.deepEqual(late.walkthroughs, [], 'past the cap: gone, though the day asked for is the visit\'s');
   assert.equal(JSON.stringify(late).includes('555-0199'), false);
   assert.equal(late.generatedAt, '2026-10-25T15:00:00.000Z', 'the answer is stamped with the injected clock');
+  // An estimator's own "do it now" visit stays on their day past the rep's window.
+  const roles = { ...env, EGC_STAFF_ROLE_PERMISSIONS: 'true', HUB_AUTH_USERS_JSON: JSON.stringify({ 'Sales.Person': { passwordHash: 'unused-synthetic', role: 'sales', displayName: 'Synthetic Estimator', staffRoles: ['sales'] } }) };
+  const estimatorCookie = (await createHubSessionCookie(roles, 'Sales.Person')).split(';')[0];
+  store.put('jobs/w8', { ...card, ...selfRun('sales.person') });
+  const theirs = await (await fieldJobsHandlers({ now: () => new Date('2026-10-25T15:00:00.000Z') }).get({ env: roles, request: new Request(`${ORIGIN}/api/field-jobs?date=2026-10-17&days=1&status=all`, { headers: { Cookie: estimatorCookie } }) })).json();
+  assert.deepEqual(theirs.walkthroughs.map(row => row.id), ['w8']);
 });
 
 test('/api/crew-jobs and the crew schedule drop the rep\'s own self-run visit once their right ends (injected clock)', async () => {
@@ -280,6 +286,12 @@ test('/api/crew-jobs and the crew schedule drop the rep\'s own self-run visit on
     assert.deepEqual(await read(finished, inside), [], 'finished: gone');
     assert.deepEqual(await read({ ...open, d2d: { ...open.d2d, selfRun: false } }, past), ['w9'], 'an ordinary walkthrough is untouched');
   }
+  // An estimator's own "do it now" visit (a quote author: EGC_STAFF_ROLE_PERMISSIONS, staff role sales) stays on their lists.
+  const own = { ...open, ...selfRun('sales.person') }, roles = { ...env, EGC_STAFF_ROLE_PERMISSIONS: 'true' };
+  const listAs = async (row, at) => (await (await crewJobsHandlers({ session: async () => estimator, storage: () => ({ jobRecords: async () => [row] }), now: () => at })
+    .get({ request: new Request(`${ORIGIN}/api/crew-jobs`), env: roles })).json()).jobs.map(job => job.id);
+  const scheduleAs = async (row, at) => (await crewSchedule({ session: estimator, env: roles, crews: [], jobs: [row], access: createJobAssignmentAccess(roles, estimator, { now: () => at }), from: '2026-10-17', to: '2026-10-17', scope: 'mine', now: at })).unassigned.map(row => row.id);
+  for (const read of [listAs, scheduleAs]) assert.deepEqual(await read({ ...own, convertedJobId: 'j9', walkthroughVisit: { startedBy: 'sales.person' }, walkthroughOutcome: { outcome: 'sold_on_site' } }, past), ['w9'], 'the estimator\'s own visit stays listed');
 });
 
 test('the winter sale costs a self-run quote at the rep\'s 25%, so its cap is never looser than at 13% + 7%', async () => {
@@ -374,6 +386,8 @@ test('every assignment gate shares the rule: assigned() stops counting the rep o
   // The endpoints that gate on assignment alone all go through it.
   for (const file of ['functions/api/quo-send.js', 'functions/api/drive-upload.js', 'functions/_lib/approved-send.js', 'functions/api/employee-hub.js', 'functions/api/crew-jobs.js'])
     assert.match(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), /createJobAssignmentAccess\(/, file);
+  // /api/messages injects its assignment check: it is handed the handler's clock too.
+  assert.match(readFileSync(new URL('../functions/api/messages.js', import.meta.url), 'utf8'), /assignment: person => access\(env, person, \{ now \}\)/);
 });
 
 // An estimator who also knocks (EGC_STAFF_ROLE_PERMISSIONS: a quote author whose customers are masked, #215) and does
@@ -410,4 +424,29 @@ test('an estimator\'s own "do it now" visit, signed and then revised later, keep
     method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'send_customer_message', jobId: 'w1', body: 'Following up on your quote', requestId: 'estimator-text-0001' }) }) });
   assert.equal(response.status, 200, await response.clone().text());
   assert.equal(texts, 1);
+});
+
+// A rep's open self-run visit whose right ended never shows its customer on their next walkthrough, and never blocks it.
+test('a rep\'s next self-run walkthrough neither shows nor waits on an earlier visit whose right ended', async () => {
+  const later = new Date('2026-10-21T16:00:00.000Z');
+  for (const [why, end, at] of [
+    ['office-cancelled', row => ({ ...row, status: 'cancelled', pipelineStatus: 'cancelled' }), NOW],
+    ['left unfinished past SELF_RUN_DAYS', row => row, later],
+    ['signed without its Finish, then the window passed', row => ({ ...row, convertedJobId: 'j1' }), later],
+    ['reassigned to an estimator', row => ({ ...row, assignedCrew: ['sales.person'] }), NOW],
+  ]) {
+    const w = world(), env = BRIDGE;
+    w.f.rows.set('jobs/w5', { ...w.f.rows.get('jobs/w2'), id: 'w5', revision: 'w5r', ...selfRun('rep.two'), date: at === NOW ? '2026-10-17' : '2026-10-21', time: '13:00', endTime: '14:00' });
+    const started = await visitAction(w, env, { action: 'start', visitId: 'w1', recordingStatus: 'declined' });
+    assert.equal(started.status, 200, why + JSON.stringify(started.body));
+    w.f.rows.set('jobs/w1', end(w.f.rows.get('jobs/w1')));
+    const next = walkthroughVisitHandlers({ session: async () => rep, knock: w.knock, storage: w.visitStore, now: () => at });
+    const state = await call(next.get, get('/api/walkthrough-visit?visitId=w5'), env);
+    assert.equal(state.status, 200, why + JSON.stringify(state.body));
+    assert.equal(state.body.openVisit, null, why);
+    for (const field of ['Synthetic Customer 1', 'c1', '100 Fixture Lane', '9705550101']) assert.ok(!JSON.stringify(state.body).includes(field), `${why}: ${field}`);
+    const start = await call(next.post, post('/api/walkthrough-visit', { requestId: randomUUID(), expectedRevision: 'w5r', skipTimecard: true, action: 'start', visitId: 'w5', recordingStatus: 'declined' }), env);
+    assert.equal(start.status, 200, why + JSON.stringify(start.body));
+    assert.ok(!JSON.stringify(start.body).includes('Synthetic Customer 1'), why);
+  }
 });

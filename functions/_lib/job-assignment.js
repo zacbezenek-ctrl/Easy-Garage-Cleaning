@@ -3,6 +3,10 @@ import { selfRunCardHidden, selfWalkthroughVisitId } from './knock-self-walkthro
 import { quoteAuthorAccess } from './quote-permissions.js';
 import { walkthroughPerformer } from './walkthrough-visit.js';
 
+// REP-WALKTHROUGH: runs walkthroughs in their own right (an estimator, a quote author), never through a Knock rep's
+// one-visit grant: their own "do it now" visits follow the ordinary rules, not the rep's cutoff.
+export const ownWalkthroughRight = (session, env = {}) => !selfWalkthroughVisitId(session) && (walkthroughPerformer(session, env) || quoteAuthorAccess(session, env).author);
+
 // A handler clock for createJobAssignmentAccess: a function, a Date or an ISO instant; none keeps the default.
 export const assignmentClock = at => at === undefined || at === null || at === '' ? {} : { now: typeof at === 'function' ? at : () => new Date(at) };
 import { employeeAccountsConfigured, listEmployeeApplications } from './employee-accounts.js';
@@ -51,7 +55,7 @@ export function createJobAssignmentAccess(env, session, { now = () => new Date()
 
   // Their own walkthrough right, never one a Knock rep's grant lends for a single visit.
   let own;
-  const ownRight = () => own ??= !selfWalkthroughVisitId(session) && (walkthroughPerformer(session, env) || quoteAuthorAccess(session, env).author);
+  const ownRight = () => own ??= ownWalkthroughRight(session, env);
 
   async function assigned(job) {
     if (!job) return false;

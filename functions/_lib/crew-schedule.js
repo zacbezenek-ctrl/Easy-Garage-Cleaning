@@ -4,7 +4,7 @@ import { addDays, denverToday, occupiedDays, validDate } from './dispatch-time.j
 import { jobSegments } from './dispatch-segments.js';
 import { crewJobProjection } from './crew-job-projection.js';
 import { fieldActivity, fieldCancelled, fieldId } from './field-execution.js';
-import { assignmentKey } from './job-assignment.js';
+import { assignmentKey, ownWalkthroughRight } from './job-assignment.js';
 import { SELF_RUN_CARD_FIELDS, selfRunCardHidden } from './knock-self-walkthrough.js';
 
 /** CREW-SCHEDULE (WP6, owner decision D6 2026-10-17): the crew app's schedule by crew, read only.
@@ -132,7 +132,7 @@ export async function crewSchedule({ session, env = {}, crews, jobs, access, nam
     const visit = job?.type === 'walkthrough';
     if (!job || !(CREW_WORK.has(job.type) || visit) || job.recordType || !fieldId(job.id) || fieldCancelled(job)) continue;
     // REP-WALKTHROUGH: a Knock rep's own self-run visit leaves their schedule once their right to it ends.
-    if (visit && !manager && selfRunCardHidden(job, session, now)) continue;
+    if (visit && !manager && !ownWalkthroughRight(session, env) && selfRunCardHidden(job, session, now)) continue;
     let open = null;
     for (const row of jobSegments(job)) {
       const days = windowDays(row, from, to);

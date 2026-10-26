@@ -4,7 +4,7 @@ import { validDate } from './dispatch-time.js';
 import { hasBusinessAccess } from './hub-session.js';
 import { can, capabilityMode, staffRoleAccessEnabled } from './staff-roles.js';
 import { WALKTHROUGH_DENIAL } from './quote-permissions.js';
-import { SELF_WALKTHROUGH_REPLAY, selfWalkthroughVisitId } from './knock-self-walkthrough.js';
+import { SELF_WALKTHROUGH_REPLAY, selfRunFinishable, selfRunOpen, selfRunVisit, selfWalkthroughVisitId } from './knock-self-walkthrough.js';
 import { assignmentClock, assignmentKey, createJobAssignmentAccess } from './job-assignment.js';
 import { employeeVaultReadOnly, employeeVaultSecret } from './employee-vault-key.js';
 import { commitVaultDocuments, readCollectionRecords, readOne, sealedFields } from './employee-vault.js';
@@ -70,6 +70,13 @@ export function walkthroughPerformer(session, env = {}) {
   if (capabilityMode(session, env) === 'staff_roles') return can(session, 'quotes.author', env);
   return hasBusinessAccess(session) && ['owner', 'manager'].includes(session.role) || session.role === 'sales';
 }
+
+// REP-WALKTHROUGH: for a Knock rep's one-visit grant, their open visit counts (shown to them, and holding their next
+// Start) only while it is still theirs to finish (knock-self-walkthrough.js). One whose right ended (cancelled, left past
+// the window, reassigned, signed and not finished in time) is the office's: the rep never sees its customer again, and
+// it never blocks their next walkthrough. Everyone else keeps the lock as before.
+const lockCounts = (session, open, now) => !selfWalkthroughVisitId(session) ||
+  selfRunVisit(open, session) && (selfRunOpen(open, new Date(now)) || selfRunFinishable(open, session, new Date(now)));
 
 const denied = env => fail('forbidden', staffRoleAccessEnabled(env) ? WALKTHROUGH_DENIAL : 'Only sales reps, managers and the owner can record walkthrough visits.', 403);
 
@@ -227,7 +234,7 @@ export async function recordWalkthroughVisit(store, session, input, now = new Da
     const lock = await store.read(WALKTHROUGH_VISIT_LOCKS, lockId(actor));
     if (lock?.openVisitId && lock.openVisitId !== visit.id) {
       const open = await store.read('jobs', lock.openVisitId);
-      if (open && open.type === 'walkthrough' && !open.recordType && started(open) && !outcomeOf(open)) throw fail('outcome_required', 'Record the outcome of your open walkthrough before starting another.', 409, { visitId: open.id, startedAt: open.walkthroughVisit.startedAt, customer: text(open.customer, 200) });
+      if (open && open.type === 'walkthrough' && !open.recordType && started(open) && !outcomeOf(open) && lockCounts(session, open, now)) throw fail('outcome_required', 'Record the outcome of your open walkthrough before starting another.', 409, { visitId: open.id, startedAt: open.walkthroughVisit.startedAt, customer: text(open.customer, 200) });
     }
     if (request.skipTimecard) repTime = { status: 'skipped', segmentId: null };
     else {
@@ -334,7 +341,7 @@ export async function walkthroughVisitState(store, session, query = {}, now = ne
     shift = { available: true, clockedIn: Boolean(active), onBreak: Boolean(view?.onBreak), needsReview: Boolean(view?.summary.needsReview), current: view?.current ? { kind: view.current.kind, jobId: view.current.jobId, startedAt: view.current.startedAt } : null };
   } catch (error) { shift = { available: false, code: /^walkthrough_visit_/.test(error?.code || '') ? error.code : 'walkthrough_visit_time_unavailable' }; }
   return { ok: true, authority: 'employee_hub', asOf: now, viewer: { id: actor, manager }, visit: walkthroughVisitProjection(visit),
-    openVisit: open && open.type === 'walkthrough' && !open.recordType && started(open) && !outcomeOf(open) ? walkthroughVisitProjection(open) : null, shift };
+    openVisit: open && open.type === 'walkthrough' && !open.recordType && started(open) && !outcomeOf(open) && lockCounts(session, open, now) ? walkthroughVisitProjection(open) : null, shift };
 }
 
 export function walkthroughVisitStorage(env, fetcher = firestoreFetch) {

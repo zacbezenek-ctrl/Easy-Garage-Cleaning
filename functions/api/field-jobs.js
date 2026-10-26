@@ -1,7 +1,7 @@
 import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/hub-session.js';
 import { employeeAccountsConfigured, listEmployeeApplications } from '../_lib/employee-accounts.js';
 import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-account.js';
-import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
+import { createJobAssignmentAccess, ownWalkthroughRight } from '../_lib/job-assignment.js';
 import { fieldCancelled, fieldCommand, fieldFailure, fieldFingerprint, fieldId, fieldJobProjection, fieldPhotos, fieldRequestId, fieldStage, fieldText } from '../_lib/field-execution.js';
 import { assignedDuring, assignedOn, fieldVisitCommand, fieldVisitProjection, fieldVisitsEnabled } from '../_lib/field-execution-visits.js';
 import { createFieldStore } from '../_lib/field-execution-store.js';
@@ -148,7 +148,7 @@ async function fieldJobsGet({ request, env }, now) {
       // WT-OUTCOME: the rep's own walkthroughs are read-only cards; the job actions below never take one.
       if (job.type === 'walkthrough') {
         // REP-WALKTHROUGH: a Knock rep's own self-run visit leaves their day once their right to it ends.
-        if (!ctx.manager && selfRunCardHidden(job, ctx.session, ctx.now())) continue;
+        if (!ctx.manager && !ownWalkthroughRight(ctx.session, env) && selfRunCardHidden(job, ctx.session, ctx.now())) continue;
         const card = walkthroughCard(job), cancelled = card.walkthroughState === 'cancelled';
         if (status === 'active' && (card.walkthroughClosed || cancelled) || status === 'completed' && !card.walkthroughClosed || status === 'cancelled' && !cancelled) continue;
         // A sold card links to its job only when this viewer can open that job (the authorizedJob rule); a rep who

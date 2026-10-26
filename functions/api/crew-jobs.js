@@ -2,7 +2,7 @@ import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { patchJob, readJob } from '../_lib/firestore-job.js';
 import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-account.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
-import { createJobAssignmentAccess, jobCrewNames as crewNames } from '../_lib/job-assignment.js';
+import { createJobAssignmentAccess, jobCrewNames as crewNames, ownWalkthroughRight } from '../_lib/job-assignment.js';
 import { crewJobProjection, CREW_PROJECTION_FIELDS } from '../_lib/crew-job-projection.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { mutateDispatchSelfAssignment } from '../_lib/dispatch-service.js';
@@ -100,10 +100,10 @@ export function crewJobsHandlers({ session = getHubSession, storage = dispatchSt
       catch (error) { return reply(503, { ok: false, code: error.code || 'schedule_storage_unavailable', error: error.code ? error.message : 'Schedule storage is unavailable' }); }
       const manager = hasBusinessAccess(actor);
       const access = createJobAssignmentAccess(env, actor, { now });
-      const jobs = [], at = now();
+      const jobs = [], at = now(), ownRight = ownWalkthroughRight(actor, env);
       for (const job of rows.filter(row => !privateRecord(row))) {
         // REP-WALKTHROUGH: a Knock rep's own self-run visit leaves their list once their right to it ends.
-        if (!manager && job.type === 'walkthrough' && selfRunCardHidden(job, actor, at)) continue;
+        if (!manager && job.type === 'walkthrough' && !ownRight && selfRunCardHidden(job, actor, at)) continue;
         // A manager's walkthrough row also says where it stands (WT-OUTCOME), as the crew projection does.
         if (manager || await access.assigned(job) || await availabilityOwner(job, access)) jobs.push(manager ? job.type === 'walkthrough' ? { ...job, ...walkthroughStatusFields(job) } : job : crewJobProjection(job, { viewer: actor.user }));
         else if (availableOpenShift(job)) jobs.push(publicOpenShift(job));
