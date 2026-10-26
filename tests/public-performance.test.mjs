@@ -15,7 +15,7 @@ import { sourceFiles } from './source-files.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const read = path => readFileSync(join(root, path), 'utf8').replace(/\r\n/g, '\n');
 // Mirrors PRIVATE_HTML / PRIVATE_DIRS in _generate_site.py (tests/nav-a11y.test.mjs uses the same split).
-const privateNames = new Set(['business-hub.html', 'client-login.html', 'copilot.html', 'customer-portal.html', 'dispatch.html', 'hub-login-setup.html', 'message-templates.html', 'quote.html', 'sop.html', 'tyler-contract.html']);
+const privateNames = new Set(['business-hub.html', 'client-login.html', 'my-visits.html', 'copilot.html', 'customer-portal.html', 'dispatch.html', 'hub-login-setup.html', 'message-templates.html', 'quote.html', 'sop.html', 'tyler-contract.html']);
 const privateDirs = new Set(['crew', 'contracts', 'docs', 'egc-platform', 'functions', 'tests', 'tools', 'scripts', 'auth-verifier', 'internal-gallery-assets', 'venv', 'field-qa', 'test-results', 'dist', 'node_modules']);
 const publicPages = [
   ...sourceFiles(root)

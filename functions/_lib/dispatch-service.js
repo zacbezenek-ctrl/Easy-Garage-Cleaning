@@ -303,7 +303,7 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
 }
 
 const SCHEDULE_KEYS = ['date','time','endDate','endTime','assignedCrew','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','title','address','serviceType','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','recurrence','reminderDays','notify','shiftPickupEnabled','notes','arrivalWindowStart','arrivalWindowEnd','assignmentSegments','estimatedDurationMin','requiredSkills'];
-function schedulePatch(changes, current, resources, roster, now, actor, segmentsOn = false) {
+function schedulePatch(changes, current, resources, roster, now, actor, segmentsOn = false, preserveSegmentNotes = false) {
   onlyKeys(changes, SCHEDULE_KEYS);
   const patch = {};
   let plan;
@@ -311,7 +311,13 @@ function schedulePatch(changes, current, resources, roster, now, actor, segments
     // Clearing a saved split stays possible with the flag off, so turning the
     // flag off never strands a segmented job.
     if (!segmentsOn && !(Array.isArray(changes.assignmentSegments) && !changes.assignmentSegments.length && segmented(current))) throw fail('dispatch_segments_disabled','Assignment segments are turned off for this Hub. Save one job-level time and crew instead.');
-    plan = validateSegments(changes.assignmentSegments,{roster,resources});
+    // Scoped job operations cannot read/edit raw segment notes. Preserve those
+    // notes by stable segment ID when replacing the permitted schedule fields.
+    const segments = preserveSegmentNotes && Array.isArray(changes.assignmentSegments) ? changes.assignmentSegments.map(segment => {
+      const old = Array.isArray(current?.assignmentSegments) ? current.assignmentSegments.find(row => row?.id === segment?.id) : null;
+      return old && typeof old.notes === 'string' ? { ...segment, notes: old.notes } : segment;
+    }) : changes.assignmentSegments;
+    plan = validateSegments(segments,{roster,resources});
     if (plan && SEGMENT_HULL_KEYS.some(key => key in changes)) throw fail('dispatch_segments_hull_derived','The job schedule and crew come from its segments. Send either segments or job-level times and crew, not both.');
   } else if (segmented(current) && SEGMENT_HULL_KEYS.some(key => key in changes)) throw fail('dispatch_segments_hull_derived','This job is split into assignment segments. Edit its segments, or clear them to set one job-level time and crew.');
   for (const key of ['date','time','endDate','endTime']) if (key in changes) patch[key] = text(changes[key], key, 10);
@@ -563,7 +569,7 @@ async function executeDispatch(store, session, input, now, options = {}, context
     }
     if (cancel && Object.keys(input.changes || {}).length) throw fail('dispatch_cancel_patch_invalid','Cancellation cannot also edit job details.');
     if ((current || patch).type === 'blocked') onlyKeys(input.changes || {},['date','time','endDate','endTime','title','opsNotes','notes']);
-    if (!cancel) Object.assign(patch,schedulePatch(input.changes || {},current || patch,resources,roster,now,session.user,store.segmentsEnabled === true));
+    if (!cancel) Object.assign(patch,schedulePatch(input.changes || {},current || patch,resources,roster,now,session.user,store.segmentsEnabled === true,options.preserveSegmentNotes === true));
     if (current && 'assignedCrew' in patch) {
       const retained=value=>patch.assignedCrew.includes(resolveMember(value?.employee || value,roster,true));
       if (Array.isArray(current.shiftClaims)) patch.shiftClaims=current.shiftClaims.filter(retained);

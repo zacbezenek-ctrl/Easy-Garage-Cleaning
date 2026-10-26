@@ -101,7 +101,7 @@ test('the board: open quotes oldest first, Denver ages, buckets with counts and 
   assert.deepEqual([row('q_cold').ageDays, row('q_cold').daysLeft, row('q_cold').expired], [21, 9, false]);
   assert.deepEqual([row('q_expired').bucket, row('q_expired').daysLeft], ['expired', null]);
   assert.equal(row('q_warm').draftPricesWaiting, true);
-  assert.equal(row('q_fresh').estimator, 'Est.One');
+  assert.equal(row('q_fresh').estimator, 'est.one');
   assert.deepEqual(report.buckets.map(bucket => [bucket.id, bucket.count, bucket.totalCents]),
     [['fresh', 1, 250000], ['warm', 2, 255000], ['cooling', 1, 120000], ['cold', 1, 410000], ['expired', 1, 90000]]);
   assert.deepEqual(report.totals, { count: 6, totalCents: 1125000, unpricedCount: 0 });
@@ -112,12 +112,12 @@ test('close rate per estimator: sent quotes plus same-day on-site signatures, ea
   const by = window => Object.fromEntries(report.closeRates[window].estimators.map(row => [row.estimator, row]));
   const ninety = by('last90');
   // Est.One: expired, cold, cooling, fresh, approved (4 days) and one on-site signature (0 days).
-  assert.deepEqual(pick(ninety['Est.One']), { sent: 6, closed: 2, closePercent: 33.3, signedOnSite: 1, open: 4, lost: 0, averageDaysToClose: 2, averageDaysToCloseSent: 4 });
+  assert.deepEqual(pick(ninety['est.one']), { sent: 6, closed: 2, closePercent: 33.3, signedOnSite: 1, open: 4, lost: 0, averageDaysToClose: 2, averageDaysToCloseSent: 4 });
   // Est.Two: warm, boundary, revised, cancelled (lost), sent then signed 7 days later, and one on-site signature.
-  assert.deepEqual(pick(ninety['Est.Two']), { sent: 6, closed: 2, closePercent: 33.3, signedOnSite: 1, open: 3, lost: 1, averageDaysToClose: 3.5, averageDaysToCloseSent: 7 });
+  assert.deepEqual(pick(ninety['est.two']), { sent: 6, closed: 2, closePercent: 33.3, signedOnSite: 1, open: 3, lost: 1, averageDaysToClose: 3.5, averageDaysToCloseSent: 7 });
   assert.deepEqual([report.closeRates.last90.total.sent, report.closeRates.last90.total.closed, report.closeRates.last90.total.closePercent], [12, 4, 33.3]);
   // The 30-day window starts Sep 22: Est.One's Sep 1 quote drops out.
-  assert.deepEqual([by('last30')['Est.One'].sent, by('last30')['Est.One'].closed, by('last30')['Est.One'].closePercent], [5, 2, 40]);
+  assert.deepEqual([by('last30')['est.one'].sent, by('last30')['est.one'].closed, by('last30')['est.one'].closePercent], [5, 2, 40]);
   assert.equal(report.closeRates.last90.estimators.some(row => row.estimator === 'zacb'), false, 'a price release is not a signature');
 });
 

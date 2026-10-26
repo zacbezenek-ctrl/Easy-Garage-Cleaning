@@ -19,9 +19,9 @@ function toast(message, bad = false) { $('notice').textContent = message; $('not
 function endpoint() { const p = new URLSearchParams(); if (staff) { p.set('staff','1'); if (account) p.set('account',account); if (!account && listCursor) p.set('cursor',listCursor); } return '/api/business-hub' + (p.size ? '?' + p : ''); }
 async function api(payload) {
  const r = await fetch(endpoint(), { method: payload ? 'POST' : 'GET', credentials:'same-origin', cache:'no-store', headers: payload ? {'Content-Type':'application/json','X-EGC-Business':'1'} : {}, ...(payload ? {body:JSON.stringify(payload)} : {}) });
- const body = await r.json().catch(() => ({error:'The service returned an unreadable response. Please retry.'})); if (!r.ok) throw Object.assign(new Error(body.error || 'Request failed.'), {status:r.status}); return body;
+ const body = await r.json().catch(() => ({error:'The service returned an unreadable response. Please retry.'})); if (!r.ok) { if(r.status===401||r.status===403)resetExtensions(); throw Object.assign(new Error(body.error || 'Request failed.'), {status:r.status}); } if(payload?.action==='logout')resetExtensions(); return body;
 }
-function setAccount(value) { account = value; const p = new URLSearchParams(); if (staff) p.set('staff','1'); if (account) p.set('account',account); history.replaceState(null,'',location.pathname + (p.size ? '?' + p : '')); }
+function setAccount(value) { if(account!==value)resetExtensions(); account = value; const p = new URLSearchParams(); if (staff) p.set('staff','1'); if (account) p.set('account',account); history.replaceState(null,'',location.pathname + (p.size ? '?' + p : '')); }
 const attrs = extra => Object.entries(extra).map(([k,v]) => ` ${k}="${esc(v)}"`).join('');
 const CONTACT = {autocomplete:'off',placeholder:'Name and mobile number'}, REFERENCE = {autocomplete:'off',autocapitalize:'characters',spellcheck:'false'}, OTHER_EMAIL = {inputmode:'email',autocomplete:'off',autocapitalize:'none',spellcheck:'false'}, PERSON = {autocomplete:'off',autocapitalize:'words'};
 function field(label,name,type='text',value='',required=false,max=180,extra={}) { return `<label>${esc(label)}<input name="${esc(name)}" type="${type}" value="${esc(value)}" maxlength="${max}" ${required?'required':''}${attrs(extra)}></label>`; }
@@ -31,7 +31,8 @@ function propName(value) { return data.properties.find(p=>p.id===value)?.name ||
 const pill = value => `<span class="pill">${esc(pretty(value))}</span>`;
 const empty = text => `<p class="empty">${esc(text)}</p>`;
 // Extension modules (business-hub-*.js) add tabs, request buttons, member columns, after-render hooks and form payload hooks here; use data-ext-* attributes for their own buttons.
-const ext = {tabs:[], requests:[], members:[], rendered:[], submits:new Map()}, BUILT_IN_TABS = ['overview','properties','requests','projects','billing','team','messages'];
+const ext = {tabs:[], requests:[], members:[], rendered:[], resets:[], submits:new Map()}, BUILT_IN_TABS = ['overview','properties','requests','projects','billing','team','messages'];
+function resetExtensions(){for(const fn of ext.resets){try{fn();}catch{}}}
 const extension = fn => { try { return String(fn() ?? ''); } catch { return ''; } };
 // Invitation results: 'Emailed to' when EGC's email was accepted, otherwise the private link as the manual fallback.
 const NOTES = {uncertain:'Email delivery could not be confirmed, so it may still arrive. Do not send another; if it does not arrive, share this same link privately. It expires after 48 hours.',failed:'The email was rejected, so it was not sent.',suppressed:'This contact has turned off email, so nothing was sent.',needs_contact:'The email contact could not be verified, so nothing was sent.',contact_mismatch:'The email contact could not be verified, so nothing was sent.',not_configured:'Invitation email is not set up yet, so nothing was sent.',unavailable:'The email service was unavailable, so nothing was sent.',dry_run:'Messaging is in test mode, so no email was sent.',not_sent:'The email was not sent.',messaging_template_not_approved:'The owner has not approved the invitation wording, so nothing was sent.',messaging_disabled:'Messaging is turned off, so nothing was sent.',template_missing_invite_link:'The approved invitation wording has no link, so nothing was sent.',email_delivery_off:'Invitation email is turned off.'};
@@ -183,9 +184,10 @@ function registerRequestActions(fn){if(typeof fn!=='function')throw new Error('R
 function registerMemberColumns(fn,label='',visible){if(typeof fn!=='function'||(visible!=null&&typeof visible!=='function'))throw new Error('Member columns need a function.');ext.members.push({cell:fn,label:String(label),visible});if(data)render();}
 // fn(content,data,tab) runs after every workspace render; submit hooks fn(form,payload,data) may amend a built-in form's payload or throw to stop it.
 function registerRenderHook(fn){if(typeof fn!=='function')throw new Error('Render hooks need a function.');ext.rendered.push(fn);if(data)render();}
+function registerSessionResetHook(fn){if(typeof fn!=='function')throw new Error('Session reset hooks need a function.');ext.resets.push(fn);}
 function registerSubmitHook(kind,fn){if(typeof kind!=='string'||!/^[a-z]{1,20}$/.test(kind)||typeof fn!=='function')throw new Error('Submit hooks need a form kind and a function.');ext.submits.set(kind,[...(ext.submits.get(kind)||[]),fn]);}
 function exportUrl(kind){const p=new URLSearchParams(endpoint().split('?')[1]||'');p.delete('cursor');p.set('export',kind);return '/api/business-hub?'+p;}
-window.EGCBusinessHub=Object.freeze({api,esc,field,area,propSelect,propName,pill,empty,toast,money,stamp,newId:id,exportUrl,reload:()=>load(),data:()=>data,registerTab,registerRequestActions,registerMemberColumns,registerRenderHook,registerSubmitHook,showInvite:invite});
+window.EGCBusinessHub=Object.freeze({api,esc,field,area,propSelect,propName,pill,empty,toast,money,stamp,newId:id,exportUrl,reload:()=>load(),data:()=>data,registerTab,registerRequestActions,registerMemberColumns,registerRenderHook,registerSessionResetHook,registerSubmitHook,showInvite:invite});
 if(staff){$('staff-login').hidden=false;$('invite-form').hidden=true;$('gate-title').textContent='EGC account management';$('gate-copy').textContent='Use your existing EGC staff sign-in. Business managers manage all accounts; sales staff see the accounts they onboard.';$('gate-kicker').textContent='STAFF ACCESS';$('staff-entry').href='/business-hub';$('staff-entry').textContent='Back to business client sign-in';}
 const fragment=new URLSearchParams(location.hash.slice(1)),invitation=fragment.get('invite');
 if(location.hash)history.replaceState(null,'',location.pathname+location.search);

@@ -149,7 +149,7 @@ test('two processes allocating at once never claim the same port, and their clai
  // Each child prints its ports and keeps its claim until the parent, having seen both, sends a line on stdin: the two
  // claims always overlap in time, however slowly a loaded machine starts the second process.
  const child=name=>{
-  const code=`import {claimPorts,freePorts} from ${JSON.stringify(SCRIPT)};let first=true;
+  const code=`import {claimPorts,freePorts} from ${JSON.stringify(new URL('../scripts/emulator-exec.mjs',import.meta.url).href)};let first=true;
 const pick=async count=>{if(first){first=false;return ${JSON.stringify(same)};}return freePorts(count);};
 const claim=await claimPorts(4,{id:${JSON.stringify(name)},pickPorts:pick,claimsDir:${JSON.stringify(claims)}});
 console.log(JSON.stringify(claim.ports));process.stdin.once('data',()=>{claim.release();process.exit(0);});`;

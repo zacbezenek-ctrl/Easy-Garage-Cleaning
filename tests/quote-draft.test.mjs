@@ -1407,3 +1407,51 @@ test('a quote draft saved with no terms before 2026-10-14 is sent on SENT_25_75;
   assert.deepEqual([withheld.withheld, withheld.termsVersion], [true, SENT_25_75.version]);
   assert.equal(withheld.terms, 'This flat-rate estimate covers the scope shown. 25% deposit due when you approve your estimate; 75% remainder due on the job day. The amounts are shown when your estimate is sent to you, and nothing is due before then. Any material scope change requires your approval before additional work or charges.');
 });
+
+test('assigned office drafts prepare and save repeatedly with or without source in the URL', async () => {
+  for (const linked of [false, true]) for (const explicit of [false, true]) {
+    if (!linked && explicit) continue;
+    const f = fixture();
+    const created = await save(f, f.input(linked ? {} : { sourceWalkthroughId: '', sourceRevision: '' }));
+    const job = f.job(created.job.id);
+    job.assignedCrew = [sales.user];
+    const before = { date: job.date, assignedCrew: [...job.assignedCrew] };
+    for (let count = 0; count < 2; count++) {
+      const query = { jobId: job.id, ...(explicit ? { sourceWalkthroughId: 'w1' } : {}) };
+      const prepared = await prepareHandoff(f.store, sales, query, { env: ROLES });
+      assert.equal(prepared.sourceWalkthroughId, linked ? 'w1' : '');
+      assert.equal(prepared.customerId, 'c1');
+      assert.deepEqual(prepared.roster, []);
+      const result = await save(f, { requestId: randomUUID(), jobId: job.id, expectedRevision: prepared.expectedRevision,
+        customerId: prepared.customerId, sourceWalkthroughId: prepared.sourceWalkthroughId, sourceRevision: prepared.sourceRevision,
+        draft: draft(d => { d.scope = `Revised scope ${count}`; }) }, sales, ROLES);
+      assert.equal(result.job.id, job.id);
+    }
+    assert.equal(f.rows.get(`jobs/${job.id}`).date, before.date);
+    assert.deepEqual(f.rows.get(`jobs/${job.id}`).assignedCrew, before.assignedCrew);
+    assert.equal(f.delivered.length, 0);
+    assert.equal([...f.rows.values()].filter(row => row.type === 'job').length, 1);
+  }
+});
+
+test('handoff lookup recovers an own walkthrough but refuses unrelated office drafts and mismatched sources', async () => {
+  const f = fixture();
+  const created = await save(f, f.input());
+  f.job('w1').assignedCrew = [sales.user];
+  const prepared = await prepareHandoff(f.store, sales, { jobId: created.job.id }, { env: ROLES });
+  assert.equal(prepared.sourceWalkthroughId, 'w1');
+  assert.equal(prepared.sourceRevision, 'w1r');
+  await assert.rejects(prepareHandoff(f.store, sales, { jobId: created.job.id, sourceWalkthroughId: 'w2' }, { env: ROLES }), e => e.code === 'handoff_job_mismatch');
+  f.job('w1').assignedCrew = [];
+  f.rows.get('customers/c1').createdBy = sales.user;
+  await assert.rejects(prepareHandoff(f.store, sales, { jobId: created.job.id }, { env: ROLES }), e => e.code === 'handoff_job_forbidden');
+});
+
+test('missing saved walkthrough never falls back to a fresh quote', async () => {
+  const f = fixture(), created = await save(f, f.input());
+  f.job(created.job.id).assignedCrew = [sales.user];
+  f.rows.delete('jobs/w1');
+  const before = f.calls.length;
+  await assert.rejects(prepareHandoff(f.store, sales, { jobId: created.job.id }, { env: ROLES }), e => e.code === 'handoff_source_missing');
+  assert.equal(f.calls.length, before);
+});

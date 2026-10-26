@@ -433,7 +433,7 @@ function loadQuoteAssets(){
   if(!quoteAssetsPromise)quoteAssetsPromise=(async()=>{
     await quoteAsset('link',`/employee-catalog-quote.css?v=${QUOTE_ASSET_VERSION}`);
     await quoteAsset('link',`/crew/quote-draft.css?v=${QUOTE_ASSET_VERSION}`);
-    await quoteAsset('script',`/crew/quote-draft.js?v=${QUOTE_ASSET_VERSION}`);
+    await quoteAsset('script',`/crew/quote-draft.js?v=20261026pickup2`);
     await quoteAsset('script',`/employee-catalog-quote.js?v=${QUOTE_ASSET_VERSION}`);
     if(typeof window.EGCCatalogQuote?.open!=='function')throw new Error('catalog_quote_asset_unavailable');
   })().catch(error=>{quoteAssetsPromise=null;throw error;});
