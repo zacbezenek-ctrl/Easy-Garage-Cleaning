@@ -55,7 +55,7 @@ export async function onRequestPost({ request, env }) {
     }
     profile = await authenticateHubCredential(env, username, body.password);
   } catch (error) {
-    const known = /^EMPLOYEE_ACCOUNT|^HUB_AUTH_CONFIGURATION$|^HUB_AUTH_LIMIT_UNAVAILABLE$/.test(error?.code || '');
+    const known = /^EMPLOYEE_ACCOUNT|^HUB_AUTH_CONFIGURATION$|^HUB_AUTH_LIMIT_UNAVAILABLE$|^HUB_AUTH_PASSWORD_RESET_REQUIRED$/.test(error?.code || '');
     return reply(known ? (error.status || 503) : 502, {
       ok: false,
       code: known ? error.code : 'HUB_AUTH_UNAVAILABLE',

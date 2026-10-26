@@ -103,3 +103,24 @@ test('S-02: customer phone, email, address and initials are escaped in every leg
   const source = readFileSync(new URL('../employee.html', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /\[c\.phone,c\.email(?:,c\.address)?\]\.filter\(Boolean\)\.join/, 'no contact list joins unescaped values');
 });
+
+// C-01: the legacy single-SHA-256 credential format (hashes in it are in the public history) never signs anyone in.
+test('C-01: a configured account stored in the legacy hash format is refused with the right password and the wrong one alike', async () => {
+  const { createHash } = await import('node:crypto');
+  const { authenticateHubCredential, hashHubCredential: currentHash } = await import('../functions/_lib/hub-session.js');
+  const legacy = createHash('sha256').update('ZacB:synthetic legacy password:egc-salt-2026').digest('hex');
+  const legacyEnv = { HUB_SESSION_SECRET: 'synthetic-session-secret-for-legacy-hash-tests', HUB_AUTH_USERS_JSON: JSON.stringify({ ZacB: { passwordHash: legacy, role: 'owner' } }) };
+  for (const password of ['synthetic legacy password', 'a wrong guess']) {
+    await assert.rejects(authenticateHubCredential(legacyEnv, 'ZacB', password), { code: 'HUB_AUTH_PASSWORD_RESET_REQUIRED', status: 403 });
+  }
+  const response = await hubAuthPost({ env: legacyEnv, request: new Request(`${origin}/api/hub-auth`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'ZacB', password: 'synthetic legacy password' }) }) });
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).code, 'HUB_AUTH_PASSWORD_RESET_REQUIRED');
+  assert.equal(response.headers.get('Set-Cookie'), null, 'no session is issued');
+  // The current salted format still signs in, and the helper only ever produces it.
+  const current = await currentHash('ZacB', 'synthetic current password');
+  assert.match(current, /^pbkdf2-sha256\$100000\$[A-Za-z0-9_-]+\$[A-Za-z0-9_-]+$/);
+  const currentEnv = { ...legacyEnv, HUB_AUTH_USERS_JSON: JSON.stringify({ ZacB: { passwordHash: current, role: 'owner' } }) };
+  assert.equal((await authenticateHubCredential(currentEnv, 'ZacB', 'synthetic current password')).user, 'ZacB');
+  assert.equal(await authenticateHubCredential(currentEnv, 'ZacB', 'a wrong guess'), null);
+});

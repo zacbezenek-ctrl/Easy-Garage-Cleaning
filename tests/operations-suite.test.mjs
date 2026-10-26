@@ -13,7 +13,7 @@ const TEST_HUB_USERS={
   TylerG:{passwordHash:'test-tyler',displayName:'Tyler',role:'crew_lead',payType:'hourly',hourlyRate:23},
   AlexK:{passwordHash:'test-alex',displayName:'Alex',role:'manager',payType:'salary',hourlyRate:0},
   FrankJara:{passwordHash:'test-frank',displayName:'Frank',role:'crew',payType:'hourly',hourlyRate:20},
-  Crewtest:{passwordHash:'30fdb1804bc03b28227af1a07007b30bcb6c5207b12db6d5469fce9b9b465d4d',displayName:'Crew Test',role:'crew',payType:'hourly',hourlyRate:20},
+  Crewtest:{passwordHash:await hashHubCredential('Crewtest','synthetic crew password'),displayName:'Crew Test',role:'crew',payType:'hourly',hourlyRate:20},
 };
 const TEST_HUB_ENV={HUB_SESSION_SECRET:'test-hub-session',HUB_AUTH_USERS_JSON:JSON.stringify(TEST_HUB_USERS),HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_JOB_CALENDAR_ID:'customer-jobs',HIGHLEVEL_WALKTHROUGH_CALENDAR_ID:'customer-walkthroughs'};
 const TEST_HUB_COOKIE=(await createHubSessionCookie(TEST_HUB_ENV,'ZacB')).split(';')[0];
@@ -56,7 +56,7 @@ test('Hub authentication issues, validates, expires, and clears an HttpOnly sess
   assert.equal(tampered.status,401);
   const logout=await auth.onRequestDelete({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'DELETE',headers:{Origin:'https://easygaragecleaning.com'}})});
   assert.match(logout.headers.get('set-cookie'),/Max-Age=0/);
-  const crewLogin=await auth.onRequestPost({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({username:'Crewtest',password:'Password123'})}),env:{...TEST_HUB_ENV,HUB_SESSION_SECRET:'session-test-secret'}});
+  const crewLogin=await auth.onRequestPost({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({username:'Crewtest',password:'synthetic crew password'})}),env:{...TEST_HUB_ENV,HUB_SESSION_SECRET:'session-test-secret'}});
   assert.equal(crewLogin.status,200);
   const oldCrewLogin=await auth.onRequestPost({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({username:'CrewTest',password:'retired-legacy-password'})}),env:{...TEST_HUB_ENV,HUB_SESSION_SECRET:'session-test-secret'}});
   assert.equal(oldCrewLogin.status,401);

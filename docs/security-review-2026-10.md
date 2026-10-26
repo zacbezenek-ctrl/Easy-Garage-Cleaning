@@ -8,7 +8,7 @@ Each finding below was reproduced by a script run against the real modules, with
 
 | ID | Severity | One line | Status |
 |---|---|---|---|
-| C-01 | **Critical** | Password hashes for six staff sign-ins (the owner's included) sat in the public repo's history in a format that can be cracked fast; change those passwords now. | **Owner action now** |
+| C-01 | **Critical** | Password hashes for six staff sign-ins (the owner's included) sat in the public repo's history in a format that can be cracked fast; change those passwords now. | **Partly fixed in code:** legacy-format hashes never sign in; new passwords still needed (see C-01) |
 | H-01 | High | Four Zapier "catch hook" addresses are in the public history; if any of those Zaps is still on, anyone can fire it (review-request texts, Meta conversions, crew/Jobber jobs). | **Owner action now** |
 | S-01 | High | Anyone could guess staff passwords, including the owner's, with no limit on attempts. | Fixed |
 | S-02 | High | A customer address, phone or email containing code ran that code in the owner's Hub, which could take over the owner session. | Fixed |
@@ -79,7 +79,15 @@ Consider moving that phone number into an environment variable. Railway health a
 4. Make sure `HUB_AUTH_USERS_JSON` in Cloudflare holds no 64-hex legacy hash.
 5. Rotate `HUB_SESSION_SECRET` after the password change, so every session is signed out.
 
-**Follow-up code change, after step 4 is done:** make `verifyPasswordHash` refuse 64-hex legacy hashes. This review did not make that change. `hub-session.js` is being changed on another branch, and refusing legacy hashes before the configuration is converted would lock staff out. Either way, the real fix is the new passwords.
+**Worse for two accounts:** the plaintext passwords for **CrewTest** and **FrankJara** are in the public history, in test files, so no cracking is needed. The current test file no longer carries the CrewTest one. Treat both as known to anyone:
+- delete CrewTest;
+- give FrankJara a new password. If FrankJara is now an employee account, use a manager's reset link.
+
+**Code change (done):** `verifyPasswordHash` refuses any configured account whose stored hash is in the legacy 64-hex format, whatever password is typed. The answer is `403 HUB_AUTH_PASSWORD_RESET_REQUIRED`, and no session is issued. So a hash left in that format is useless to someone who cracked it. What code cannot do:
+- Detect an account that was moved to the PBKDF2 format but kept the *same* password. Steps 1–2 above still matter for that case.
+- Set a new password for a configured account. Its hash lives in the Cloudflare secret `HUB_AUTH_USERS_JSON`, so someone has to generate a new value on `/hub-login-setup` and paste it in.
+- Employee accounts are unaffected: they have always used salted PBKDF2. If one of them reused a leaked password, a manager's sign-in reset link (`EGC_STAFF_PASSWORD_RESET`) forces a new one.
+- `HUB_SESSION_SECRET` does **not** need rotating for this. Sessions end on a password change (the credential version), and rotating the secret would also re-key portal links, the vault fallback and the bridge keys.
 
 ### H-01: Zapier catch-hook addresses in the public history (Owner action now)
 
