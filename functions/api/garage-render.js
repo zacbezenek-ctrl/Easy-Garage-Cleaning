@@ -1,4 +1,7 @@
 import { getHubSession } from '../_lib/hub-session.js';
+import { dispatchStorage } from '../_lib/dispatch-storage.js';
+import { assignmentKey } from '../_lib/job-assignment.js';
+import { consumeRollingLimit } from '../_lib/rate-limit.js';
 
 /**
  * EGC "Generate the After" — Cloudflare Pages Function
@@ -21,7 +24,15 @@ import { getHubSession } from '../_lib/hub-session.js';
  * several seconds per image, more when a sketch reference is attached). Keep it a deliberate
  * tap, not automatic. The UI labels the result "AI preview — actual results vary"
  * so it never becomes an implied guarantee against the locked-rate brand.
+ *
+ * Spend cap: each Hub account gets RENDER_LIMIT.limit renders in any 24 hours
+ * (a rolling count in rate_limits), so a stuck retry loop or a misused sign-in
+ * stops here instead of on the OpenAI bill. Every request that reaches OpenAI
+ * counts, even one OpenAI rejects; a malformed request does not. If the count
+ * cannot be read or saved, nothing is sent to OpenAI (503).
  */
+
+export const RENDER_LIMIT = Object.freeze({ bucket: 'garage_render', limit: 20, windowMs: 86400000 });
 
 const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const MAX_BODY = 12 * 1024 * 1024; // 12 MB — a downscaled garage photo is well under this
@@ -101,67 +112,85 @@ export async function onRequestGet() {
   return new Response('Method Not Allowed', { status: 405, headers: { Allow: 'POST, OPTIONS' } });
 }
 
-export async function onRequestPost({ request, env }) {
-  const json = (status, body) => new Response(JSON.stringify(body), {
-    status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
+export function garageRenderHandlers({ session = getHubSession, storage = env => dispatchStorage(env), openai = (...args) => fetch(...args), now = () => new Date() } = {}) {
+  async function post({ request, env }) {
+    const json = (status, body) => new Response(JSON.stringify(body), {
+      status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
 
-  if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
-  if (!await getHubSession(request, env)) return json(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
-  const apiKey = envVar(env, 'openaiapi');
-  if (!apiKey) return json(500, { ok: false, error: 'Image generation not configured (openaiapi missing)' });
+    if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
+    const hub = await session(request, env);
+    if (!hub) return json(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
+    const apiKey = envVar(env, 'openaiapi');
+    if (!apiKey) return json(500, { ok: false, error: 'Image generation not configured (openaiapi missing)' });
 
-  const raw = await request.text();
-  if (raw.length > MAX_BODY) return json(413, { ok: false, error: 'Image too large — retake at a smaller size' });
+    const raw = await request.text();
+    if (raw.length > MAX_BODY) return json(413, { ok: false, error: 'Image too large — retake at a smaller size' });
 
-  let body;
-  try { body = JSON.parse(raw); } catch { return json(400, { ok: false, error: 'Invalid JSON' }); }
+    let body;
+    try { body = JSON.parse(raw); } catch { return json(400, { ok: false, error: 'Invalid JSON' }); }
 
-  const pic = dataUrlToBytes(body.image);
-  if (!pic) return json(400, { ok: false, error: 'No before photo supplied' });
-  const sketch = body.sketch ? dataUrlToBytes(body.sketch) : null;
+    const pic = dataUrlToBytes(body.image);
+    if (!pic) return json(400, { ok: false, error: 'No before photo supplied' });
+    const sketch = body.sketch ? dataUrlToBytes(body.sketch) : null;
 
-  let prompt = body.hint ? `${PROMPT} ${String(body.hint).slice(0, 800)}` : PROMPT;
-  if (sketch) prompt += SKETCH_NOTE;
-  prompt += CONSTRAINTS;   // guardrails last, per image-prompting best practice
+    let prompt = body.hint ? `${PROMPT} ${String(body.hint).slice(0, 800)}` : PROMPT;
+    if (sketch) prompt += SKETCH_NOTE;
+    prompt += CONSTRAINTS;   // guardrails last, per image-prompting best practice
 
-  const form = new FormData();
-  form.append('model', 'gpt-image-2');    // OpenAI's newest image model (Apr 2026): it reasons
-                                          // about image STRUCTURE before rendering, so the zone
-                                          // layout from the sketch lands far more reliably.
-  form.append('prompt', prompt);
-  form.append('size', '1536x1024');       // 1024x1024 | 1024x1536 | 1536x1024
-  form.append('quality', 'high');         // low | medium | high
-  // No input_fidelity: gpt-image-2 ALWAYS processes reference images at high fidelity (the
-  // param is non-configurable on this model), so the garage's real window/walls/proportions
-  // are preserved automatically — and passing the old param would risk a 400.
-  form.append('n', '1');
-  const ext = pic.mime === 'image/jpeg' ? 'jpg' : 'png';
-  if (sketch) {
-    // Two references under image[] (OpenAI takes up to 16, in order):
-    //   [0] the real garage — walls/window/door/proportions
-    //   [1] the top-down floor plan — zone POSITIONS to reproduce
-    const sext = sketch.mime === 'image/jpeg' ? 'jpg' : 'png';
-    form.append('image[]', new Blob([pic.bytes], { type: pic.mime }), `before.${ext}`);
-    form.append('image[]', new Blob([sketch.bytes], { type: sketch.mime }), `layout.${sext}`);
-  } else {
-    form.append('image', new Blob([pic.bytes], { type: pic.mime }), `before.${ext}`);
-  }
-
-  try {
-    const r = await fetch('https://api.openai.com/v1/images/edits', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: form,
-    });
-    if (!r.ok) {
-      const detail = (await r.text().catch(() => '')).slice(0, 300);
-      return json(502, { ok: false, error: 'Image service error', status: r.status, detail });
+    const form = new FormData();
+    form.append('model', 'gpt-image-2');    // OpenAI's newest image model (Apr 2026): it reasons
+                                            // about image STRUCTURE before rendering, so the zone
+                                            // layout from the sketch lands far more reliably.
+    form.append('prompt', prompt);
+    form.append('size', '1536x1024');       // 1024x1024 | 1024x1536 | 1536x1024
+    form.append('quality', 'high');         // low | medium | high
+    // No input_fidelity: gpt-image-2 ALWAYS processes reference images at high fidelity (the
+    // param is non-configurable on this model), so the garage's real window/walls/proportions
+    // are preserved automatically — and passing the old param would risk a 400.
+    form.append('n', '1');
+    const ext = pic.mime === 'image/jpeg' ? 'jpg' : 'png';
+    if (sketch) {
+      // Two references under image[] (OpenAI takes up to 16, in order):
+      //   [0] the real garage — walls/window/door/proportions
+      //   [1] the top-down floor plan — zone POSITIONS to reproduce
+      const sext = sketch.mime === 'image/jpeg' ? 'jpg' : 'png';
+      form.append('image[]', new Blob([pic.bytes], { type: pic.mime }), `before.${ext}`);
+      form.append('image[]', new Blob([sketch.bytes], { type: sketch.mime }), `layout.${sext}`);
+    } else {
+      form.append('image', new Blob([pic.bytes], { type: pic.mime }), `before.${ext}`);
     }
-    const data = await r.json();
-    const b64 = data && data.data && data.data[0] && data.data[0].b64_json;
-    if (!b64) return json(502, { ok: false, error: 'No image returned' });
-    return json(200, { ok: true, image: 'data:image/png;base64,' + b64 });
-  } catch (e) {
-    return json(502, { ok: false, error: 'Image service unreachable' });
+
+    // Counted last, once the request is one OpenAI would be sent; fails closed.
+    let limit;
+    try {
+      limit = await consumeRollingLimit(storage(env), env, { ...RENDER_LIMIT, key: `staff:${assignmentKey(hub.user)}` }, now().toISOString());
+    } catch {
+      return json(503, { ok: false, code: 'RENDER_LIMIT_UNAVAILABLE', error: 'AI preview is unavailable right now. Try again in a minute.' });
+    }
+    if (!limit.allowed) {
+      return json(429, { ok: false, code: 'RENDER_LIMIT', error: `You have used your ${RENDER_LIMIT.limit} AI previews for the last 24 hours.`, resetAt: limit.resetAt });
+    }
+
+    try {
+      const r = await openai('https://api.openai.com/v1/images/edits', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: form,
+      });
+      if (!r.ok) {
+        const detail = (await r.text().catch(() => '')).slice(0, 300);
+        return json(502, { ok: false, error: 'Image service error', status: r.status, detail });
+      }
+      const data = await r.json();
+      const b64 = data && data.data && data.data[0] && data.data[0].b64_json;
+      if (!b64) return json(502, { ok: false, error: 'No image returned' });
+      return json(200, { ok: true, image: 'data:image/png;base64,' + b64 });
+    } catch (e) {
+      return json(502, { ok: false, error: 'Image service unreachable' });
+    }
   }
+  return { post };
 }
+
+const handlers = garageRenderHandlers();
+export const onRequestPost = handlers.post;
