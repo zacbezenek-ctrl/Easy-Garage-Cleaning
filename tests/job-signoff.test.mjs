@@ -237,3 +237,18 @@ test('a manager off the crew who ended a day of a multi-day job cannot sign it o
   const response = await handlers.post({ request: new Request('https://easygaragecleaning.com/api/job-signoff', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://easygaragecleaning.com' }, body: JSON.stringify({ action: 'sign_off', jobId: 'md', requestId: id(81), expected: 'none' }) }) });
   assert.deepEqual([response.status, (await response.json()).code], [403, 'job_signoff_self']);
 });
+
+// Supervision is not field work: a manager whose only entries in a job's audit log are office actions (a note, resolving an
+// issue, setting up the checklist, sharing photos with the customer, purchase marks, completion sync, the signed
+// walkthrough's reference photos) still signs it off, through the real handler.
+test('a manager who only supervised a job (notes, issues, checklist setup, photo sharing, purchases, sync) can sign it off', async () => {
+  const office = ['note', 'resolve_issue', 'configure_checklist', 'photo_visibility', 'purchase_state', 'completion_sync'].map((action, index) => ({ id: id(60 + index), action, actorId: MANAGER.user, actorName: MANAGER.displayName, createdAt: NOW, state: 'applied', visibility: 'management' }));
+  office.push({ id: id(70), action: 'photo', category: 'walkthrough', actorId: MANAGER.user, createdAt: NOW, state: 'applied', visibility: 'crew' });
+  assert.equal(workedByEvents(office, as(MANAGER)), false);
+  const fs = firestoreRest(Object.fromEntries([['jobs/sup', job('sup')], ...office.map(event => [`jobs/sup/fieldEvents/${event.id}`, event])]));
+  const handlers = jobSignoffHandlers({ session: async () => MANAGER, dispatch: env => ({ ...dispatchStorage(env, fs.fetcher), roster: async () => ROSTER }), now: () => new Date(NOW) });
+  const response = await handlers.post({ request: new Request('https://easygaragecleaning.com/api/job-signoff', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://easygaragecleaning.com' }, body: JSON.stringify({ action: 'sign_off', jobId: 'sup', requestId: id(71), expected: 'none' }) }) });
+  const body = await response.json();
+  assert.deepEqual([response.status, body.signoff?.status, body.signoff?.by], [200, 'signed', MANAGER.user], JSON.stringify(body));
+  assert.ok(fs.calls.some(call => call.path === 'jobs/sup:runQuery'), 'the audit log was read');
+});

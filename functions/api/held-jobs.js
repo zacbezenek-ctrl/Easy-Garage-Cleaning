@@ -12,9 +12,13 @@
  * A held job this run read as cancelled or finished leaves this answer's count (a later open counts it again: a job
  * restored in Dispatch is held again, and counting one too many is safe), and one held because the
  * customer signed more than the owner approved is listed apart (signedAboveIds: the owner has the quote rebuilt and
- * signed again; no approval releases it). A release that fails to commit is tried again on the next open, up to
- * HELD_RETRY_LIMIT times in a row for that job (failures); after that it no longer holds the version back and is listed
- * as couldn't release automatically (stuck) until the owner's button or a later pass releases it. A pass from the
+ * signed again; no approval releases it). A later open that only counts re-reads the listed jobs still held, within the
+ * subrequest budget, and drops any that no longer read as signed above (signed again since); one it has no budget left
+ * to re-read stays listed (the safe side: it is still held). A release that fails to commit
+ * is tried again on the next open, up to HELD_RETRY_LIMIT times in a row for that job (failures); after that it no
+ * longer holds the version back and is listed as couldn't release automatically (stuck) until the owner's button or a
+ * later pass releases it. Any run that reads the job and does not fail to release it forgets its tries (released by hand
+ * and held again, it starts over, from the next run: a count-only open still shows the earlier label); a pass from the
  * start forgets the tries of jobs it no longer finds held, and at most HELD_FAILURES_KEPT jobs' tries are kept.
  * Session cookie: owner and managers sweep; only the owner releases on demand.
  * POST {action:'sweep'}   => {ok, enabled, ran, menuVersion, released:[jobId], held, more, signedAbove, stuck}
@@ -25,13 +29,15 @@
  *   of them are held for those two reasons; more: there are more held jobs than were counted or checked. enabled:false
  *   with the builder off (nothing else). Customers and HighLevel get nothing new here: a released job asks for its
  *   portal invitation exactly as an approval save does (releasePatch).
- * READ-BUDGET: a sweep with nothing to do reads the marker and the held job names (one query per 100, at most 10); a
+ * READ-BUDGET: a sweep with nothing to do reads the marker and the held job names (one query per 100, at most 10) and,
+ *   for the listed signed-above jobs still held, the owner's two pricing documents and those jobs (at most `budget`, 30:
+ *   43 calls in all); a
  *   run reads the owner's two pricing documents and each held job once, at most 30 storage calls for the run and 44 in
  *   all per open (the measured worst case, tests/held-jobs.test.mjs), under Cloudflare's 50 subrequests.
  * Errors: {ok:false, code, error}; 400, 401, 403, 415, 503 retry. */
 import { getHubSession } from '../_lib/hub-session.js';
 import { MENU_APPROVALS, catalogStorage, quoteBuilderEnabled, readCompositeState, requireCatalogOwner, requireCatalogViewer } from '../_lib/catalog-store.js';
-import { bundledPricingMenu } from '../_lib/composite-quote.js';
+import { bundledPricingMenu, compositeApproval } from '../_lib/composite-quote.js';
 import { HELD_SUBREQUEST_BUDGET, releaseAllHeldHandoffs } from '../_lib/walkthrough-handoff.js';
 import { countHeldJobs, heldReleaseStorage } from '../_lib/handoff-price-holds.js';
 
@@ -44,6 +50,23 @@ function sameOrigin(request) {
   const source = request.headers.get('Origin') || request.headers.get('Referer');
   if (!source) return true;
   try { return new URL(source).origin === new URL(request.url).origin; } catch { return false; }
+}
+
+// The listed signed-above jobs that still read as signed above: each one still held is re-read (one storage call each,
+// at most `budget`, after the owner's two pricing documents) and dropped once signed again within the approved price or
+// no longer held for a builder price; any left unread for want of budget stay listed.
+async function stillAbove(jobs, heldIds, listed, pricing, budget) {
+  const held = new Set(heldIds), candidates = ids([...new Set(listed)]).filter(id => held.has(id));
+  if (!candidates.length) return [];
+  const state = await pricing(), kept = [];
+  for (const [index, id] of candidates.entries()) {
+    if (index >= budget) { kept.push(...candidates.slice(index)); break; }
+    let job;
+    try { job = await jobs.read('jobs', id); } catch { kept.push(id); continue; }
+    const breakdown = job?.pricesPendingApproval?.status === 'pending' ? job.compositeQuote?.breakdown : null;
+    if (breakdown && compositeApproval(breakdown, state, { signed: true }).blocked.some(row => row.signedAbove === true)) kept.push(id);
+  }
+  return kept;
 }
 
 // storage: the catalog documents (the marker and the owner's pricing); held: the jobs (handoff-price-holds.js).
@@ -64,18 +87,24 @@ export function heldJobsHandlers({ session = getHubSession, storage = catalogSto
         const resume = marker?.sweepVersion === version ? marker : null, after = resume && typeof resume.sweepAfter === 'string' ? resume.sweepAfter : '';
         const failures = marker?.failures && typeof marker.failures === 'object' && !Array.isArray(marker.failures) ? { ...marker.failures } : {};
         const stuckOf = () => Object.keys(failures).filter(id => Number(failures[id]) >= HELD_RETRY_LIMIT);
-        // The answer's counts against the held jobs listed now: the ones this run read as closed leave the count (only
-        // those: a closed job may be restored since), the others are told apart.
-        const answer = (counted, extra, closedNow = []) => {
-          const now = new Set(counted.ids), known = list => ids(list).filter(id => now.has(id)).length;
-          return { ok: true, enabled: true, menuVersion: version, held: counted.count - known([...new Set(closedNow)]), more: counted.more, signedAbove: known(lists.signedAboveIds), stuck: known(stuckOf()), ...extra };
+        // The answer's counts against the held jobs listed now: the ones this pass read as closed leave the count and the
+        // ones it read as signed above the approved price are told apart (only those: either may have changed since).
+        const answer = (counted, extra, closedNow = [], aboveNow = []) => {
+          const now = new Set(counted.ids), known = list => ids([...new Set(list)]).filter(id => now.has(id)).length;
+          return { ok: true, enabled: true, menuVersion: version, held: counted.count - known(closedNow), more: counted.more, signedAbove: known(aboveNow), stuck: known(stuckOf()), ...extra };
         };
         let lists = { signedAboveIds: ids(marker?.signedAboveIds) };
-        if (input.action === 'sweep' && marker?.menuVersion === version && !resume) return reply(200, answer(await countHeldJobs(jobs), { ran: false, released: [] }));
+        const pricing = () => (compositeState || (() => readCompositeState(catalog)))(env);
+        if (input.action === 'sweep' && marker?.menuVersion === version && !resume) {
+          const counted = await countHeldJobs(jobs);
+          return reply(200, answer(counted, { ran: false, released: [] }, [], await stillAbove(jobs, counted.ids, lists.signedAboveIds, pricing, budget)));
+        }
         const at = now().toISOString();
         const run = await releaseAllHeldHandoffs(jobs, actor, at, { env, after, budget, source: input.action === 'sweep' ? 'menu.version' : 'held.release', compositeState: compositeState || (() => readCompositeState(catalog)) });
         for (const id of run.released) delete failures[id];
         for (const id of run.failed) failures[id] = (Number(failures[id]) || 0) + 1;
+        // Read now and not failing to release: its earlier tries no longer count (released by hand and held again).
+        for (const id of run.seen) if (!run.failed.includes(id)) delete failures[id];
         // A complete pass from the start read every held job: tries of jobs no longer held are forgotten, so one held again
         // later starts over. At most HELD_FAILURES_KEPT are kept (the latest).
         if (run.complete && !after) { const held = new Set(run.seen); for (const id of Object.keys(failures)) if (!held.has(id)) delete failures[id]; }
@@ -93,7 +122,7 @@ export function heldJobsHandlers({ session = getHubSession, storage = catalogSto
         try { await catalog.commit([{ collection: MENU_APPROVALS, id: HELD_RELEASE_MARKER, revision: marker?.revision || null, patch }]); }
         catch (error) { if (error?.code !== 'catalog_revision_conflict') throw error; }
         // A pass that began mid-way counts the jobs before it too; a stopped run says there are more.
-        if (run.complete && after) return reply(200, answer(await countHeldJobs(jobs), { ran: true, released: run.released }, run.closed));
+        if (run.complete && after) return reply(200, answer(await countHeldJobs(jobs), { ran: true, released: run.released }, run.closed, lists.signedAboveIds));
         const stuck = stuckOf();
         return reply(200, { ok: true, enabled: true, ran: true, menuVersion: version, released: run.released, held: run.waiting, more: !run.complete,
           signedAbove: run.signedAbove.length, stuck: run.failed.filter(id => stuck.includes(id)).length });
