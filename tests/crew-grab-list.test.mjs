@@ -84,10 +84,10 @@ test('a grab tick saves the Loaded material state through the existing material 
 });
 
 test('the job page, its styles and the crew shell cache move to the grab list build together', () => {
-  assert.match(html, /\/crew\/job\.js\?v=20261022offlinetap/);
+  assert.match(html, /\/crew\/job\.js\?v=20261022weaktap/);
   assert.match(html, /\/crew\/job\.css\?v=20261017buylinks/);
-  assert.match(worker, /const VERSION = '20261023jobops';/);
-  assert.match(worker, /'\/crew\/job\.js\?v=20261022offlinetap'/);
+  assert.match(worker, /const VERSION = '20261026weaktap';/);
+  assert.match(worker, /'\/crew\/job\.js\?v=20261022weaktap'/);
   assert.match(worker, /'\/crew\/job\.css\?v=20261017buylinks'/);
   assert.match(readFileSync(new URL('../crew/job.css', import.meta.url), 'utf8'), /#materials-card \.buying\{/);
   assert.match(readFileSync(new URL('../crew/job.css', import.meta.url), 'utf8'), /#materials-card \.shop\{/);
