@@ -344,7 +344,10 @@ and every sync answer and record is as before. Code: `functions/_lib/knock-bridg
   "do it now" or for an estimator. The setter record carries `selfRun` and the rep's staff key, and no estimator: when
   the rep signs the handoff the job pays the rep's direct-sale 25% alone (`repRanWalkthrough`), never 13% + 7%; if
   anyone else signs it (an estimator took it over), it is an ordinary door walkthrough: 13% to the rep and 7% to the
-  signer. Admin > Money shows it as "walkthrough the rep ran (25%)" (CSV
+  signer. The rep is the one the bridge marked on the visit (`d2d.selfRunKey`), and only while it is still assigned to
+  them alone: a visit the office gave an estimator records an ordinary 13% + 7% walkthrough, also after a lost answer.
+  Who signed is the first signed handoff (`acceptance.firstRecordedBy`, kept through revisions someone else signs), so
+  a manager re-signing a revision never takes the rep's 25%. Admin > Money shows it as "walkthrough the rep ran (25%)" (CSV
   `door_walkthrough_commission_included`).
 * The walkthrough is on the estimator's own day (crew home's walkthrough cards,
   `/api/field-jobs`), on their crew schedule page (`/crew/schedule`: a walkthrough shows only to the person it is

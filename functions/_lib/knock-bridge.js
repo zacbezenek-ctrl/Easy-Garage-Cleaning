@@ -565,7 +565,9 @@ function bookedWalkthrough(job, roster, customerId, requested) {
   const person = estimatorKey ? roster.find(row => row.id === estimatorKey) : null;
   // REP-WALKTHROUGH: a visit saved as the rep's own (d2d.selfRun, assigned to them) stays that whoever reads it back:
   // an office Book in Hub after a lost answer keeps its 25% record (recordD2dSetter), never the setter's review.
-  const selfRun = job.d2d?.selfRun === true && Boolean(estimatorKey) && job.date ? { selfRun: true } : {};
+  // Only while the visit is still assigned to that rep alone (d2d.selfRunKey): one the office gave an estimator is theirs.
+  const runKey = typeof job.d2d?.selfRunKey === 'string' ? job.d2d.selfRunKey : '';
+  const selfRun = job.d2d?.selfRun === true && runKey && job.date && Array.isArray(job.assignedCrew) && job.assignedCrew.length === 1 && job.assignedCrew[0] === runKey ? { selfRun: true, selfRunKey: runKey } : {};
   const out = { status: job.date ? 'booked' : 'requested', jobId: job.id, revision: job.revision || '', customerId: customerId || job.customerId || '', date: job.date || '', time: job.time || '',
     endTime: job.endTime || '', estimator: person ? firstName(person.name) : '', estimatorKey, requested, code: '', error: '', ...selfRun };
   return { ...out, message: walkthroughMessage(out) };
@@ -592,7 +594,7 @@ export const EXISTING_CUSTOMER = 'existing_customer';
 // The visit is the rep's own when it is booked to their staff key (also after a lost answer, found by its receipt).
 function selfOutcome(booked, selfKey) {
   if (!selfKey || booked?.estimatorKey !== selfKey || booked.status !== 'booked') return booked;
-  const out = { ...booked, selfRun: true };
+  const out = { ...booked, selfRun: true, selfRunKey: selfKey };
   return { ...out, message: walkthroughMessage(out) };
 }
 
@@ -602,7 +604,7 @@ async function bookSelfRun(save, common, roster, customerId, record, selfKey, to
   const end = Math.min(minutesOf(requested.time) + WALKTHROUGH_MINUTES, 23 * 60 + 59);
   try {
     const result = await save({ ...common, jobInstructions: [`Walkthrough done at the door by the Knock rep (${record.repKey}).`, record.note ? `Rep note: ${record.note}` : ''].filter(Boolean).join('\n'),
-      date: today, time: requested.time, endTime: hhmm(end), assignedCrew: [selfKey] }, { selfRun: true });
+      date: today, time: requested.time, endTime: hhmm(end), assignedCrew: [selfKey] }, { selfRun: true, selfRunKey: selfKey });
     return selfOutcome(bookedWalkthrough(result.job, roster, customerId, requested), selfKey);
   } catch (error) {
     if (TRANSIENT.has(error?.code)) throw error;
@@ -675,7 +677,8 @@ export async function recordD2dSetter(kstore, record, booking, nowIso) {
   // REP-WALKTHROUGH: the rep was booked to run it themselves (bookSelfRun): their door-sale 25%, never 13% + 7%, once
   // the handoff shows they signed it (knock-setters.js repRanWalkthrough). No estimator is recorded: the rep is never
   // their own estimator, and one who takes it over and signs it is the estimator by that signature (13% + 7%).
-  const self = booking.selfRun === true && booking.estimatorKey ? { selfRun: true, repStaffKey: booking.estimatorKey } : {};
+  // The rep is the one the bridge marked on the visit (selfRunKey), and only while it is still theirs (estimatorKey).
+  const self = booking.selfRun === true && booking.selfRunKey && booking.estimatorKey === booking.selfRunKey ? { selfRun: true, repStaffKey: booking.selfRunKey } : {};
   const estimatorKey = self.selfRun ? '' : booking.estimatorKey || '';
   const payload = { walkthroughId: booking.jobId, setterKey: record.repKey, serviceClassification: 'unverified', classificationReference: '',
     estimatorKey, estimatorReference: estimatorKey ? `knock-walkthrough:${record.id}` : '' };

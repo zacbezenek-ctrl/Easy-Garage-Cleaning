@@ -30,7 +30,7 @@ import { WINTER_SALE_SETTINGS_ACTION, mutateWinterSaleSettings, readWinterSaleSe
 
 const LIMIT = 8000;
 const ID = /^[A-Za-z0-9_-]{1,180}$/;
-export const JOB_ACTUALS_FIELDS = Object.freeze([...new Set([...MONEY_JOB_FIELDS, ...hubEligibilityFields(), 'sourceWalkthroughId', 'acceptance.recordedBy', 'jobInstructions.laborManHours',
+export const JOB_ACTUALS_FIELDS = Object.freeze([...new Set([...MONEY_JOB_FIELDS, ...hubEligibilityFields(), 'sourceWalkthroughId', 'acceptance.recordedBy', 'acceptance.firstRecordedBy', 'jobInstructions.laborManHours',
   'compositeQuote.breakdown.labor.manHours', 'compositeQuote.breakdown.lines', 'quoteDraft.breakdown.source', 'quoteDraft.breakdown.labor.manHours', 'quoteDraft.breakdown.lines', 'fieldExecution.completion.crewOnSite', 'fieldExecution.completion.truckLoads', ...ESTIMATOR_FIELDS])]);
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 function sameOrigin(request) {

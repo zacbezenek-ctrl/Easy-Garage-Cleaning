@@ -347,12 +347,19 @@ function appliedCents(previous) {
   const applied = customerMoneyTotals(previous).appliedCents, deposit = Number(previous.deposit?.paidAmount);
   return Number.isSafeInteger(applied) ? applied : Number.isFinite(deposit) && deposit > 0 ? Math.round(deposit * 100) : 0;
 }
+const firstSigner = (previous, actor) => {
+  const first = previous?.acceptance?.firstRecordedBy || previous?.acceptance?.recordedBy || actor.user;
+  return first !== actor.user ? { firstRecordedBy: first } : {};
+};
 function financePatch(plan, previous, jobId, actor, now, builder = null) {
   const terms = signedPaymentTerms(plan, appliedCents(previous));
   const total = plan.quote.total, amount = terms.depositRequiredCents === undefined ? plan.quote.deposit : terms.depositRequiredCents / 100, prior = plain(previous?.deposit) ? previous.deposit : {};
   const paid = typeof prior.paidAmount === 'number' && Number.isFinite(prior.paidAmount) ? Math.max(0, prior.paidAmount) : 0;
   const patch = { total, priceQuoted: total, quoteStatus: 'approved', termsVersion: plan.terms_version,
-    acceptance: { acceptedAt: plan.acceptance.accepted_at, acceptedBy: plan.acceptance.accepted_by, method: 'in_person_signature', termsVersion: plan.terms_version, signatureCaptured: true, signatureData: plan.signature, recordedBy: actor.user, recordedAt: now },
+    acceptance: { acceptedAt: plan.acceptance.accepted_at, acceptedBy: plan.acceptance.accepted_by, method: 'in_person_signature', termsVersion: plan.terms_version, signatureCaptured: true, signatureData: plan.signature, recordedBy: actor.user, recordedAt: now,
+      // REP-WALKTHROUGH: who signed the first handoff stays through a revision someone else signs (knock-setters.js
+      // repRanWalkthrough reads it, else recordedBy); a first signing, or a revision by the same signer, adds nothing.
+      ...firstSigner(previous, actor) },
     customerApproval: { status: 'approved', approvedAt: plan.acceptance.accepted_at, approvedBy: plan.acceptance.accepted_by, amount: total, source: 'in_person_signature' },
     estimate: { number: previous?.estimate?.number || `EST-${jobId.slice(-6).toUpperCase()}`, revision: Number.isInteger(previous?.estimate?.revision) ? previous.estimate.revision + 1 : 1, status: 'accepted', amount: total, depositRequired: amount, acceptedAt: plan.acceptance.accepted_at, acceptedBy: plan.acceptance.accepted_by, acceptanceMethod: 'in_person_signature', termsVersion: plan.terms_version, createdAt: previous?.estimate?.createdAt || now, source: 'walkthrough',
       // A builder quote's scope is its priced lines (compositeScope, as a sent builder quote's): the homeowner never

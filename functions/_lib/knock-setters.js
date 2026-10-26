@@ -13,7 +13,7 @@ const ID = /^[A-Za-z0-9_-]{1,120}$/, STAFF_KEY = /^[a-z0-9._-]{1,64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const SETTER_JOB_FIELDS = Object.freeze(['type', 'status', 'pipelineStatus', 'convertedJobId', 'sourceWalkthroughId', 'walkthroughOutcome',
   'walkthroughCompletedAt', 'scheduleOccurrence', 'date', 'time', 'estimate', 'customerApproval',
-  'acceptance.recordedBy', 'acceptance.acceptedAt', 'total', 'priceQuoted', 'lockedTotal', 'rate',
+  'acceptance.recordedBy', 'acceptance.firstRecordedBy', 'acceptance.acceptedAt', 'total', 'priceQuoted', 'lockedTotal', 'rate',
   'payment', 'deposit', 'invoice', 'refunds', 'changeOrders', 'giftWallet',
   // The approved setter terms read the signed handoff's evidence (signedGarageHandoff: its lines, else its finish scope)
   // and when a cancelled job was cancelled (adjustmentHold).
@@ -115,7 +115,14 @@ export const handoffSigner = job => {
    anyone else signed it (an estimator took it over) it is an ordinary door-set walkthrough: 13% to the rep and 7% to
    the signer, the estimator by that signature (the bridge records no estimator on a self-run walkthrough, and the rep
    is never read as their own estimator). */
-export const repRanWalkthrough = (record, job) => record?.selfRun === true && STAFF_KEY.test(String(record.repStaffKey || '')) && handoffSigner(job) === record.repStaffKey;
+// Who signed the job's first handoff: a manager's later signed revision never takes the rep's walkthrough from them.
+export const firstHandoffSigner = job => {
+  const key = String(job?.acceptance?.firstRecordedBy || job?.acceptance?.recordedBy || '').trim().toLowerCase();
+  return STAFF_KEY.test(key) ? key : '';
+};
+// The staff key must be the setter's own (repKeyFor), so a visit an estimator was given can never pay the rep 25%.
+export const repRanWalkthrough = (record, job) => record?.selfRun === true && STAFF_KEY.test(String(record.repStaffKey || '')) && repKeyFor(record.repStaffKey) === record.setterKey &&
+  firstHandoffSigner(job) === record.repStaffKey;
 
 /* Closed (an accepted estimate and its time) and how it was collected (the unified totals and payment ledger): the
    evidence both walkthrough channels earn on, the setter's and the estimator's. null while not closed. */

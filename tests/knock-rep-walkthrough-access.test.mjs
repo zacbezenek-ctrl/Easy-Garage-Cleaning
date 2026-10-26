@@ -6,7 +6,9 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import vm from './helpers/vm-realm.mjs';
-import { ON_ENV, builderState, fixture, signedPlan } from './helpers/estimator-fixture.mjs';
+import { ON_ENV, builderState, fixture, owner, signedPlan } from './helpers/estimator-fixture.mjs';
+import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
+import { firstHandoffSigner, projectSetterAttribution, repRanWalkthrough } from '../functions/_lib/knock-setters.js';
 import { handoffHandlers } from '../functions/api/walkthrough-handoff.js';
 import { walkthroughVisitHandlers } from '../functions/api/walkthrough-visit.js';
 import { quoteDraftHandlers } from '../functions/api/quote-draft.js';
@@ -291,4 +293,27 @@ test('the winter sale costs a self-run quote at the rep\'s 25%, so its cap is ne
   const capOf = channel => winterSaleCap({ lineItems: lines, manHours: 10, costs, channel, settings });
   const door = capOf('door_sale'), setter = capOf('appointment_setter');
   assert.ok(door.known && setter.known && door.capCents < setter.capCents, JSON.stringify([door, setter]));
+});
+
+test('a manager re-signing a revision of the rep\'s own walkthrough leaves it the rep\'s: still 25%, no 7% share', async () => {
+  const w = world();
+  const signed = await sign(w, BRIDGE, 1);
+  assert.equal(signed.status, 200, JSON.stringify(signed.body));
+  const first = w.f.rows.get(`jobs/${signed.body.job.id}`);
+  assert.equal(firstHandoffSigner(first), 'rep.two');
+  // The office changes the price and the customer signs again, recorded by the owner.
+  const revised = await saveWalkthroughHandoff(w.store, owner, { requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: w.f.rows.get('jobs/w1').revision,
+    jobId: first.id, expectedRevision: first.revision, plan: signedPlan(1, { total: 1500 }) }, '2026-10-17T16:00:00.000Z', { env: BRIDGE });
+  assert.equal(revised.ok, true);
+  const job = w.f.rows.get(`jobs/${first.id}`);
+  assert.deepEqual([job.acceptance.recordedBy, job.acceptance.firstRecordedBy, firstHandoffSigner(job)], ['zacb', 'Rep.Two', 'rep.two']);
+  const record = { id: 'w1', walkthroughId: 'w1', setterKey: 'rep.two', serviceClassification: 'unverified', estimatorKey: '', channel: 'appointment_setter', recordedBy: 'knock-bridge',
+    recordedAt: '2026-10-16T18:00:00Z', source: 'knock_walkthrough', selfRun: true, repStaffKey: 'rep.two' };
+  assert.equal(repRanWalkthrough(record, job), true);
+  const visit = { ...w.f.rows.get('jobs/w1'), revision: 'r', status: 'completed' };
+  const paid = { ...job, revision: 'r', type: 'job', date: '2026-10-19', estimate: { ...job.estimate, status: 'accepted', amount: 1500, acceptedAt: '2026-10-17T15:00:00Z' },
+    payment: { amount: 1500, verified: true, stripeSessions: [{ sessionId: 'cs_test_r', paymentIntentId: 'pi_r', amount: 1500, purpose: 'balance', verifiedAt: '2026-10-19T20:00:00Z' }] } };
+  const row = projectSetterAttribution(record, visit, paid, [], Date.parse('2026-10-21T18:00:00Z'), { verified: true, approvedAt: '2026-10-16T16:00:00.000Z', reference: 'synthetic' });
+  assert.equal(row.channel, 'direct_sale');
+  assert.deepEqual(row.allocations.map(share => share.role), ['direct_rep'], 'one 25% share to the rep, no 7% row for the re-signer');
 });

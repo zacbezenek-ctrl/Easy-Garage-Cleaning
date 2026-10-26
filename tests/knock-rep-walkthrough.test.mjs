@@ -313,3 +313,37 @@ test('an office Book in Hub after a lost answer keeps the rep\'s own walkthrough
   assert.deepEqual([setter?.selfRun, setter?.repStaffKey, setter?.estimatorKey], [true, 'rep.two', ''], JSON.stringify(setter));
   assert.equal(visits(w).length, 1, 'no second visit');
 });
+
+test('a lost answer, then the office gives the visit to an estimator: the rep\'s retry and Book in Hub record an ordinary 13% + 7% walkthrough', async () => {
+  const w = await bridgeWorld({ seed: { 'knock_reps/rep.two': { repKey: 'rep.two', username: 'Rep.Two', displayName: 'Rep Two', role: 'knocker', status: 'active', permitListed: true, premiumCleared: false, leadKey: '', walkthroughSelf: true } } });
+  const own = selfRunBatch({ n: 2906 });
+  own.events.forEach(event => { if (event.houseId) event.houseId = 'h-2906-blue-leaf-dr'; });
+  assert.deepEqual((await w.send(own.events, w.cookies.two)).body.results.map(row => row.status), ['applied', 'applied', 'applied']);
+  assert.equal((await w.book('walkthrough', own.walkId, w.cookies.two)).body.booking.selfRun, true);
+  const [visit] = visits(w);
+  assert.deepEqual([visit.d2d.selfRun, visit.d2d.selfRunKey], [true, 'rep.two']);
+  // The answer was lost: Knock has no booking and no setter record. Then Dispatch gives the visit to an estimator.
+  w.fake.documents.delete(`knock_setters/${visit.id}`);
+  w.fake.documents.delete(`knock_receipts/setter_${own.walkId}`);
+  const { revision, ...lost } = w.fake.get(`knock_walkthroughs/${own.walkId}`);
+  const pending = { status: 'pending', jobId: '', date: '', time: '', endTime: '', estimator: '', at: null, by: '' };
+  w.fake.put(`knock_walkthroughs/${own.walkId}`, { ...lost, status: 'set', booking: pending });
+  const { revision: visitRevision, path: visitPath, ...hub } = visits(w)[0];
+  w.fake.put(`jobs/${visit.id}`, { ...hub, assignedCrew: ['est.alex'], assignedTo: 'est.alex' });
+  // The rep's phone asks again: the saved visit is found by its receipt, and it is no longer the rep's.
+  const retry = await w.book('walkthrough', own.walkId, w.cookies.two);
+  assert.equal(retry.status, 200, JSON.stringify(retry.body));
+  assert.deepEqual([retry.body.booking.selfRun, retry.body.booking.walkthroughId], [undefined, undefined]);
+  // And the office's Book in Hub answers the same booking.
+  const office = await w.book('walkthrough', own.walkId, w.cookies.zac);
+  assert.equal(office.status, 200, JSON.stringify(office.body));
+  const setter = w.fake.get(`knock_setters/${visit.id}`);
+  assert.deepEqual([setter.setterKey, setter.estimatorKey, Object.hasOwn(setter, 'selfRun'), Object.hasOwn(setter, 'repStaffKey')], ['rep.two', 'est.alex', false, false], JSON.stringify(setter));
+  // The estimator signs it: 13% to the rep and 7% to the estimator, never 25% to the rep.
+  const row = projectSetterAttribution({ ...setter, id: visit.id, walkthroughId: 'walk-9' }, { id: 'walk-9', revision: 'r', type: 'walkthrough', status: 'completed', convertedJobId: 'job-9', walkthroughOutcome: { outcome: 'sold_on_site' } },
+    job('Est.Alex'), [], Date.parse('2026-10-21T18:00:00Z'), TERMS);
+  assert.equal(row.channel, 'appointment_setter');
+  assert.deepEqual(row.allocations.map(share => [share.role, share.repKey]), [['setter', 'rep.two'], ['estimator', 'est.alex']]);
+  // A record carrying an estimator's key as the rep's never pays 25% (repKeyFor(repStaffKey) must be the setter).
+  assert.equal(repRanWalkthrough({ selfRun: true, repStaffKey: 'est.alex', setterKey: 'rep.two' }, job('Est.Alex')), false);
+});
