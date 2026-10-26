@@ -31,11 +31,11 @@ SERVICES = [
         "items_ph": "Describe junk to remove — e.g. old couch, boxes, broken grill",
         "related": [("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/furniture-removal-fort-collins-co.html", "Furniture Removal"), ("/couch-removal-fort-collins-co.html", "Couch Removal"), ("/appliance-removal-fort-collins-co.html", "Appliance Removal"), ("/blog/junk-removal-vs-dumpster-rental-fort-collins.html", "vs Dumpster Rental"), ("/junk-removal-loveland-co.html", "Loveland Junk Removal"), ("/projects/windsor-garage-junk-removal.html", "Windsor Project"), ("/", "Home")],
         "faqs": [
-            ("How much does junk removal cost in Fort Collins?", "Curbside pickup is $139 flat for up to 4 cubic yards set at the curb — no walkthrough needed. When our crew carries items out of the garage or house, jobs start from $675, with one exact flat rate set at a free on-site walkthrough and approved before work begins."),
+            ("How much does junk removal cost in Fort Collins?", "Curbside pickup is $139 flat for up to 4 cubic yards when our truck is already in your area ($250 minimum pickup otherwise) set at the curb — no walkthrough needed. When our crew carries items out of the garage or house, jobs start from $675, with one exact flat rate set at a free on-site walkthrough and approved before work begins."),
             ("Do you offer next-day junk removal in Fort Collins?", "Yes — when our schedule allows. Contact our local team for availability."),
             ("What items can you not haul?", "We cannot take liquid paint, gasoline, asbestos, medical waste, or live ammunition. See our blog guide for Fort Collins disposal options."),
             ("Do you haul from inside the garage?", "Yes. We carry items from garage, basement, or anywhere on the ground floor. Point us to what's going."),
-            ("Is there a minimum load size?", "Curbside pickup is a flat $139 for up to 4 cubic yards. Jobs where our crew carries items out start from $675, priced at a free on-site walkthrough."),
+            ("Is there a minimum load size?", "Curbside pickup is a flat $139 for up to 4 cubic yards when our truck is already in your area ($250 minimum pickup otherwise). Jobs where our crew carries items out start from $675, priced at a free on-site walkthrough."),
             ("Do you donate usable junk?", "Yes — furniture and household goods in good shape go to Habitat ReStore, ARC, and Goodwill. You get the tax receipt."),
             ("How do I get a quote with photos?", "Text photos to (970) 999-1818 or use the form on this page. Wide shots of the full pile work best."),
             ("Are you insured in Fort Collins?", "Yes. Easy Garage Cleaning LLC is a Colorado-registered LLC with general liability and commercial auto insurance."),
@@ -118,7 +118,7 @@ SERVICES = [
     {
         "slug": "furniture-removal-fort-collins-co.html",
         "title": "Furniture Removal Fort Collins CO | Fast Next-Day Pickup",
-        "desc": "Stuck couch in the garage? Fort Collins furniture removal: $139 flat at the curb, or from $675 when we carry it out. Free walkthrough, all lifting done.",
+        "desc": "Stuck couch in the garage? Fort Collins furniture removal: $139 at the curb when our truck is nearby ($250 minimum otherwise), or from $675 when we carry it out. Free walkthrough, all lifting done.",
         "body_copy": """<p>Garage furniture removal is one of our most common calls — especially <a href="/couch-removal-fort-collins-co.html" class="content-link">couch removal in Fort Collins</a> and sectionals blocking the bay. Part of a bigger project? See <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">garage cleanouts in Fort Collins</a> or <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal in Fort Collins</a>.</p>
 <p>Usable pieces go to <a href="/blog/habitat-for-humanity-restore-fort-collins.html" class="content-link">Habitat ReStore Fort Collins</a> — tax receipt included.</p>""",
         "h1": "Furniture Removal Fort Collins CO",
@@ -126,7 +126,7 @@ SERVICES = [
         "hero_sub": "That couch stuck in the garage? The dresser nobody wants? We carry it out, donate what's usable, and dispose of the rest — no per-item franchise surcharges.",
         "sms": "Hi! I need furniture removal in Fort Collins.",
         "stype": "Furniture Removal",
-        "quick_answer": "Furniture Removal in Fort Collins: set pieces at the curb for $139 flat (up to 4 cubic yards), or let our crew carry them out from $675 — one exact flat rate set at a free on-site walkthrough. Text (970) 999-1818 or book at easygaragecleaning.com/book.html.",
+        "quick_answer": "Furniture Removal in Fort Collins: set pieces at the curb for $139 flat (up to 4 cubic yards) when our truck is already in your area ($250 minimum pickup otherwise), or let our crew carry them out from $675 — one exact flat rate set at a free on-site walkthrough. Text (970) 999-1818 or book at easygaragecleaning.com/book.html.",
         "problem_title": "Bulky furniture <em>won't move itself</em>",
         "problem_sub": "Fort Collins garages and basements become furniture graveyards — too heavy to move alone, too big for regular trash pickup.",
         "problems": [("🛋️", "Stuck in the garage", "Couches and sectionals block the bay."), ("🚪", "Won't fit in your car", "Can't haul a dresser in a Subaru."), ("♻️", "Donation drop-off hassle", "Goodwill won't pick up your broken recliner."), ("💪", "Injury risk", "Heavy lifts without help or equipment.")],
@@ -138,7 +138,7 @@ SERVICES = [
         "items_ph": "List furniture items — e.g. sectional sofa, queen bed frame, dining table",
         "related": [("/couch-removal-fort-collins-co.html", "Couch Removal"), ("/mattress-removal-fort-collins-co.html", "Mattress Removal"), ("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/blog/habitat-for-humanity-restore-fort-collins.html", "ReStore Donations"), ("/", "Home")],
         "faqs": [
-            ("How much does furniture removal cost in Fort Collins?", "Set it at the curb and it's $139 flat (up to 4 cubic yards, no walkthrough needed). Need us to carry it out? Furniture removal starts from $675, with one exact flat rate set at a free on-site walkthrough."),
+            ("How much does furniture removal cost in Fort Collins?", "Set it at the curb and it's $139 flat (up to 4 cubic yards, no walkthrough needed) when our truck is already in your area; otherwise the minimum pickup is $250. Need us to carry it out? Furniture removal starts from $675, with one exact flat rate set at a free on-site walkthrough."),
             ("Do you remove furniture from upstairs?", "Ground floor and garage yes. Second-floor removals depend on access — send photos and we'll quote accurately."),
             ("Will you donate my old furniture?", "If it's in usable condition, yes — Habitat ReStore, ARC, or Goodwill. You get the donation receipt."),
             ("Do you disassemble furniture?", "Basic disassembly (bed frames, tables) when needed for safe removal. Complex built-ins may require a carpenter."),
@@ -161,7 +161,7 @@ SERVICES = [
         "hero_sub": "That dead fridge in the garage? The washer you replaced three years ago? We haul appliances in Fort Collins — working units to ReStore, the rest recycled properly.",
         "sms": "Hi! I need appliance removal in Fort Collins.",
         "stype": "Appliance Removal",
-        "quick_answer": "Appliance Removal in Fort Collins: set appliances at the curb for $139 flat (up to 4 cubic yards), or let our crew carry them out from $675 — one exact flat rate set at a free on-site walkthrough. Text (970) 999-1818 or book at easygaragecleaning.com/book.html.",
+        "quick_answer": "Appliance Removal in Fort Collins: set appliances at the curb for $139 flat (up to 4 cubic yards) when our truck is already in your area ($250 minimum pickup otherwise), or let our crew carry them out from $675 — one exact flat rate set at a free on-site walkthrough. Text (970) 999-1818 or book at easygaragecleaning.com/book.html.",
         "problem_title": "Old appliances <em>collect dust</em> forever",
         "problem_sub": "Fort Collins garages hide retired fridges, washers, and water heaters — too heavy to move, too awkward for curbside pickup.",
         "problems": [("🔌", "Dead fridge in the garage", "Taking up a full parking spot."), ("💧", "Water heater upgrade leftover", "Still sitting on a pallet in the corner."), ("♻️", "Recycling confusion", "Larimer County rules vary by appliance type."), ("💪", "200+ pounds alone", "You need equipment and a second set of hands.")],
@@ -173,7 +173,7 @@ SERVICES = [
         "items_ph": "List appliances — e.g. side-by-side fridge, electric dryer",
         "related": [("/refrigerator-removal-fort-collins-co.html", "Refrigerator Removal"), ("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/blog/what-to-do-with-old-appliances-fort-collins.html", "Appliance Disposal Guide"), ("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/projects/windsor-garage-junk-removal.html", "Windsor Project"), ("/", "Home")],
         "faqs": [
-            ("How much does appliance removal cost in Fort Collins?", "Set it at the curb and it's $139 flat (up to 4 cubic yards, no walkthrough needed). Need us to carry it out? Appliance removal starts from $675, priced at a free on-site walkthrough."),
+            ("How much does appliance removal cost in Fort Collins?", "Set it at the curb and it's $139 flat (up to 4 cubic yards, no walkthrough needed) when our truck is already in your area; otherwise the minimum pickup is $250. Need us to carry it out? Appliance removal starts from $675, priced at a free on-site walkthrough."),
             ("Do you remove refrigerators with freon?", "Yes — we haul fridges and freezers and ensure proper recycling per Colorado regulations."),
             ("Will you donate working appliances?", "Working fridges, washers, and dryers often go to Habitat ReStore — you get the tax receipt."),
             ("Do I need to unplug appliances before you arrive?", "Yes — please unplug and disconnect water lines if possible. We can handle basic disconnection in most cases."),
@@ -188,13 +188,13 @@ SERVICES = [
     {
         "slug": "mattress-removal-fort-collins-co.html",
         "title": "Mattress Removal Fort Collins CO | Fast Flat-Rate Pickup",
-        "desc": "Mattress stuck in the garage? Fort Collins haul-away: $139 flat at the curb, or from $675 when we carry it out. Free walkthrough, no per-item fees.",
+        "desc": "Mattress stuck in the garage? Fort Collins haul-away: $139 at the curb when our truck is nearby ($250 minimum otherwise), or from $675 when we carry it out. Free walkthrough, no per-item fees.",
         "h1": "Mattress Removal Fort Collins CO",
         "hero_em": "No mattress left behind",
         "hero_sub": "Old mattresses stuffed in the garage or leaning against the wall? We haul mattresses and box springs in Fort Collins — flat-rate, no franchise per-item fees.",
         "sms": "Hi! I need mattress removal in Fort Collins.",
         "stype": "Mattress Removal",
-        "quick_answer": "Mattress Removal in Fort Collins: set mattresses and box springs at the curb for $139 flat (up to 4 cubic yards), or let our crew carry them out from $675 — one exact flat rate set at a free on-site walkthrough. Text (970) 999-1818 or book at easygaragecleaning.com/book.html.",
+        "quick_answer": "Mattress Removal in Fort Collins: set mattresses and box springs at the curb for $139 flat (up to 4 cubic yards) when our truck is already in your area ($250 minimum pickup otherwise), or let our crew carry them out from $675 — one exact flat rate set at a free on-site walkthrough. Text (970) 999-1818 or book at easygaragecleaning.com/book.html.",
         "problem_title": "Mattresses are <em>awkward to dispose of</em>",
         "problem_sub": "They won't fit in your car, curbside won't take them, and they take up precious garage space.",
         "problems": [("🛏️", "Garage space hog", "Mattress leaning against the wall for months."), ("🚗", "Won't fit in your vehicle", "Even folded, a king won't fit in a sedan."), ("💸", "Franchise surcharges", "National haulers charge extra per mattress."), ("♻️", "Landfill fees", "Larimer County charges extra — we handle it.")],
@@ -206,7 +206,7 @@ SERVICES = [
         "items_ph": "Mattress size and quantity — e.g. queen mattress + box spring in garage",
         "related": [("/furniture-removal-fort-collins-co.html", "Furniture Removal"), ("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/", "Home")],
         "faqs": [
-            ("How much does mattress removal cost in Fort Collins?", "Set it at the curb and it's $139 flat (up to 4 cubic yards, no walkthrough needed). Need us to carry mattresses out? From $675, priced at a free on-site walkthrough."),
+            ("How much does mattress removal cost in Fort Collins?", "Set it at the curb and it's $139 flat (up to 4 cubic yards, no walkthrough needed) when our truck is already in your area; otherwise the minimum pickup is $250. Need us to carry mattresses out? From $675, priced at a free on-site walkthrough."),
             ("Do you charge extra per mattress?", "No per-item surcharges. Multiple mattresses are quoted as one flat load price."),
             ("Can you remove a mattress from my garage?", "Yes — garage mattress removal is one of our most common single-item pickups."),
             ("Do you recycle mattresses?", "Yes — mattresses go to recycling facilities that comply with Colorado disposal rules."),
@@ -261,7 +261,7 @@ SERVICES = [
         "hero_sub": "Branches from last year's storm, old patio furniture in the garage, a broken mower you'll never fix — we haul yard debris across Fort Collins in one trip.",
         "sms": "Hi! I need yard debris removal in Fort Collins.",
         "stype": "Yard Debris Removal",
-        "quick_answer": "Yard Debris Removal in Fort Collins: set debris at the curb for $139 flat (up to 4 cubic yards), or let our crew load it from your yard from $675 — one exact flat rate set at a free on-site walkthrough. Text (970) 999-1818 or book at easygaragecleaning.com/book.html.",
+        "quick_answer": "Yard Debris Removal in Fort Collins: set debris at the curb for $139 flat (up to 4 cubic yards) when our truck is already in your area ($250 minimum pickup otherwise), or let our crew load it from your yard from $675 — one exact flat rate set at a free on-site walkthrough. Text (970) 999-1818 or book at easygaragecleaning.com/book.html.",
         "problem_title": "Yard debris <em>piles up</em> fast",
         "problem_sub": "Fort Collins windstorms drop branches. Garage corners collect rusted lawn gear. Green waste bins aren't enough.",
         "problems": [("🌿", "Storm branch piles", "Too much for weekly yard waste pickup."), ("🚜", "Dead lawn equipment", "Broken mower taking garage space."), ("🪑", "Old patio furniture", "Cracked chairs nobody sits in."), ("🏠", "Garage overflow", "Yard stuff migrated indoors for winter.")],
@@ -273,7 +273,7 @@ SERVICES = [
         "items_ph": "Describe yard debris — e.g. branch pile, old mower, patio set in garage",
         "related": [("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/appliance-removal-fort-collins-co.html", "Appliance Removal"), ("/", "Home")],
         "faqs": [
-            ("How much does yard debris removal cost in Fort Collins?", "Curbside debris is $139 flat for up to 4 cubic yards. When our crew loads from the yard or garage, jobs start from $675 with one exact flat rate set at a free on-site walkthrough."),
+            ("How much does yard debris removal cost in Fort Collins?", "Curbside debris is $139 flat for up to 4 cubic yards when our truck is already in your area ($250 minimum pickup otherwise). When our crew loads from the yard or garage, jobs start from $675 with one exact flat rate set at a free on-site walkthrough."),
             ("Do you take tree branches?", "Yes — branches, brush, and storm debris. Very large logs may need a custom quote."),
             ("Can you remove yard debris from my garage?", "Yes — lawn equipment and outdoor furniture stored in garages is extremely common."),
             ("Do you take gas-powered lawn equipment?", "Yes — mowers, trimmers, blowers. Please drain fuel if possible; we can't haul full gas cans."),
@@ -334,7 +334,7 @@ CITIES = [
         "intro": "Loveland sits 20 minutes south of our Fort Collins home base — close enough for next-day service, local enough that you're not calling a Denver franchise. From Centerra townhomes to Mariana Butte ranch homes, we haul junk with flat-rate pricing and donation receipts.",
         "neighborhoods": "Centerra, Downtown Loveland, Mariana Butte, Boyd Lake, Namaqua, Wilson Ave corridor, and east-side neighborhoods off Boise Avenue.",
         "faqs": [
-            ("How much does junk removal cost in Loveland?", "Same pricing as Fort Collins: $139 flat for curbside pickup (up to 4 cubic yards), or from $675 when our crew carries items out, with one exact flat rate set at a free on-site walkthrough. No Loveland travel surcharge."),
+            ("How much does junk removal cost in Loveland?", "Same pricing as Fort Collins: $139 flat for curbside pickup (up to 4 cubic yards) when our truck is already in your area ($250 minimum pickup otherwise), or from $675 when our crew carries items out, with one exact flat rate set at a free on-site walkthrough. No Loveland travel surcharge."),
             ("Do you serve Centerra and Mariana Butte?", "Yes — all Loveland neighborhoods including Centerra, Mariana Butte, Boyd Lake, and Downtown."),
             ("How fast can you come to Loveland?", "Next-day often available. Loveland is a quick drive down US-287 from Fort Collins."),
             ("Are you insured in Loveland?", "Yes — fully insured for all Larimer County jobs."),
@@ -380,7 +380,7 @@ CITIES = [
         "intro": "Windsor is one of our busiest routes — 15 minutes east of Fort Collins with growing neighborhoods and garages full of move-in leftovers. We haul junk across Windsor with the same flat-rate, photo-quote process as Fort Collins.",
         "neighborhoods": "Raindance, Pelican Lakes, Boardwalk Park, downtown Windsor, Water Valley, and east Windsor new construction areas.",
         "faqs": [
-            ("How much does junk removal cost in Windsor?", "$139 flat for curbside pickup (up to 4 cubic yards), or from $675 when our crew carries items out — one exact flat rate set at a free on-site walkthrough. No Windsor travel fee."),
+            ("How much does junk removal cost in Windsor?", "$139 flat for curbside pickup (up to 4 cubic yards) when our truck is already in your area ($250 minimum pickup otherwise), or from $675 when our crew carries items out — one exact flat rate set at a free on-site walkthrough. No Windsor travel fee."),
             ("Do you serve Raindance and Pelican Lakes?", "Yes — all Windsor neighborhoods including master-planned communities."),
             ("How fast can you get to Windsor?", "Next-day frequently available — Windsor is 15 minutes from our base."),
             ("Are you insured in Windsor?", "Yes — fully insured throughout Larimer and Weld County border areas."),
@@ -426,7 +426,7 @@ CITIES = [
         "intro": "Wellington properties are bigger — acreage, barns, outbuildings, and garages that accumulate years of ranch gear. We're 15 minutes north of Fort Collins and haul junk across Wellington with flat-rate pricing sized to the job, not the hour.",
         "neighborhoods": "Downtown Wellington, Crystal Lakes, Wellington Heights, acreage properties along CR 7, and north Larimer County rural addresses.",
         "faqs": [
-            ("How much does junk removal cost in Wellington?", "Curbside pickup is $139 flat (up to 4 cubic yards). Jobs our crew carries out start from $675, including acreage and large property hauls, with one exact flat rate set at a free on-site walkthrough."),
+            ("How much does junk removal cost in Wellington?", "Curbside pickup is $139 flat (up to 4 cubic yards) when our truck is already in your area ($250 minimum pickup otherwise). Jobs our crew carries out start from $675, including acreage and large property hauls, with one exact flat rate set at a free on-site walkthrough."),
             ("Do you serve rural Wellington addresses?", "Yes — including acreage, barns, and outbuildings. Send photos of access paths."),
             ("Is there a travel fee for Wellington?", "No — Wellington is in our core Northern Colorado service area."),
             ("Can you haul ranch equipment and barn junk?", "Yes — old fencing, farm equipment, and barn clutter are common Wellington jobs."),
@@ -472,7 +472,7 @@ CITIES = [
         "intro": "Timnath Ranch, Wildwing, and east Larimer County homes fill garages fast with move-in boxes and seasonal gear. We're 10 minutes from Fort Collins with same flat-rate photo quotes — no franchise call center, background-checked crew.",
         "neighborhoods": "Timnath Ranch, Wildwing, Harmony Club, east Timnath growth corridor, and Larimer County addresses south of Fort Collins.",
         "faqs": [
-            ("How much does junk removal cost in Timnath?", "Same pricing as Fort Collins: $139 flat for curbside pickup (up to 4 cubic yards), or from $675 when our crew carries items out, with one exact flat rate set at a free on-site walkthrough. No Timnath travel surcharge."),
+            ("How much does junk removal cost in Timnath?", "Same pricing as Fort Collins: $139 flat for curbside pickup (up to 4 cubic yards) when our truck is already in your area ($250 minimum pickup otherwise), or from $675 when our crew carries items out, with one exact flat rate set at a free on-site walkthrough. No Timnath travel surcharge."),
             ("Do you serve Timnath Ranch and Wildwing?", "Yes — daily routes through Timnath from our Fort Collins base."),
             ("Next-day junk removal in Timnath?", "Often available — text photos for today's schedule."),
             ("Garage cleanouts in Timnath?", "Yes — full haul-out, donations, and sweep. See Fort Collins garage cleanout pricing."),
@@ -497,7 +497,7 @@ CITIES = [
         "faqs": [
             ("Do you serve Old Town Fort Collins?", "Yes — daily routes through Old Town, Midtown, and all Fort Collins neighborhoods."),
             ("Can you access narrow Old Town alleys?", "Yes — note alley or gate access when you text photos so we bring the right truck."),
-            ("How much does junk removal cost in Old Town?", "$139 flat for curbside pickup (up to 4 cubic yards), or from $675 when our crew carries items out. One exact flat rate is set at a free on-site walkthrough and locked before work."),
+            ("How much does junk removal cost in Old Town?", "$139 flat for curbside pickup (up to 4 cubic yards) when our truck is already in your area ($250 minimum pickup otherwise), or from $675 when our crew carries items out. One exact flat rate is set at a free on-site walkthrough and locked before work."),
             ("Detached garage cleanouts in Old Town?", "Common job type — we empty, donate, and sweep so you can park again."),
             ("Next-day service in Old Town?", "Often available — text photos for fastest scheduling."),
             ("Estate or multi-room cleanouts?", "Yes — full-property hauls start from $675, with one exact flat rate set at a free on-site walkthrough."),
@@ -568,7 +568,7 @@ ITEM_PAGES = [
     {
         "slug": "couch-removal-fort-collins-co.html",
         "title": "Couch Removal Fort Collins CO | Fast Next-Day Pickup",
-        "desc": "Sectional stuck in the garage? Fort Collins couch removal: $139 flat at the curb, or from $675 when we carry it out. Free walkthrough, all lifting done.",
+        "desc": "Sectional stuck in the garage? Fort Collins couch removal: $139 at the curb when our truck is nearby ($250 minimum otherwise), or from $675 when we carry it out. Free walkthrough, all lifting done.",
         "h1": "Couch Removal Fort Collins CO",
         "hero_sub": "That sectional blocking your garage bay? We haul couches and sectionals in Fort Collins — flat-rate, no franchise per-item fees. Text photos for a quote in 5 minutes.",
         "sms": "Hi! I need couch removal in Fort Collins.",
@@ -580,7 +580,7 @@ ITEM_PAGES = [
         "body_copy": """<p>Couches are the #1 single item we haul from Fort Collins garages. Part of a bigger cleanout? See <a href="/furniture-removal-fort-collins-co.html" class="content-link">furniture removal in Fort Collins</a> or full <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">garage cleanouts</a>.</p>""",
         "related": [("/furniture-removal-fort-collins-co.html", "Furniture Removal"), ("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/mattress-removal-fort-collins-co.html", "Mattress Removal"), ("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/blog/habitat-for-humanity-restore-fort-collins.html", "ReStore Donations"), ("/", "Home")],
         "faqs": [
-            ("How much does couch removal cost in Fort Collins?", "Set it at the curb and it's $139 flat (up to 4 cubic yards, no walkthrough needed). Need us to carry it out? Couch removal starts from $675, priced at a free on-site walkthrough."),
+            ("How much does couch removal cost in Fort Collins?", "Set it at the curb and it's $139 flat (up to 4 cubic yards, no walkthrough needed) when our truck is already in your area; otherwise the minimum pickup is $250. Need us to carry it out? Couch removal starts from $675, priced at a free on-site walkthrough."),
             ("Do you remove sectionals from garages?", "Yes — garage couch removal is extremely common in Fort Collins."),
             ("Will you donate a usable couch?", "If condition is good, yes — Habitat ReStore or ARC with tax receipt."),
             ("Do I need to wrap the couch?", "No prep needed. We protect floors and walls during carry-out."),
@@ -615,7 +615,7 @@ ITEM_PAGES = [
     {
         "slug": "treadmill-removal-fort-collins-co.html",
         "title": "Treadmill Removal Fort Collins CO | Fast Next-Day Haul",
-        "desc": "Unused treadmill in the garage? Fort Collins pickup: $139 flat at the curb, or from $675 when we carry it out. Free walkthrough, all lifting done.",
+        "desc": "Unused treadmill in the garage? Fort Collins pickup: $139 at the curb when our truck is nearby ($250 minimum otherwise), or from $675 when we carry it out. Free walkthrough, all lifting done.",
         "h1": "Treadmill Removal Fort Collins CO",
         "hero_sub": "That treadmill became a coat rack? We haul treadmills, ellipticals, and home gym equipment from Fort Collins garages — flat-rate, fully insured.",
         "sms": "Hi! I need treadmill removal in Fort Collins.",
@@ -627,7 +627,7 @@ ITEM_PAGES = [
         "body_copy": """<p>Exercise equipment is a garage space killer. Clearing the whole space? See <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">garage cleanouts in Fort Collins</a> or <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal in Fort Collins</a>.</p>""",
         "related": [("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/furniture-removal-fort-collins-co.html", "Furniture Removal"), ("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/blog/garage-organizing-ideas-two-car-garage.html", "Organizing Ideas"), ("/", "Home")],
         "faqs": [
-            ("How much does treadmill removal cost?", "Set it at the curb and it's $139 flat (up to 4 cubic yards, no walkthrough needed). Need us to carry it out? Treadmill removal starts from $675, priced at a free on-site walkthrough."),
+            ("How much does treadmill removal cost?", "Set it at the curb and it's $139 flat (up to 4 cubic yards, no walkthrough needed) when our truck is already in your area; otherwise the minimum pickup is $250. Need us to carry it out? Treadmill removal starts from $675, priced at a free on-site walkthrough."),
             ("Do you disassemble treadmills?", "Basic disassembly when needed for safe removal through doors."),
             ("Will you haul from a second floor?", "Ground floor and garage yes. Upstairs depends on access — send photos."),
             ("Can you donate working equipment?", "Usable equipment sometimes goes to local charities — ask when quoting."),
@@ -638,7 +638,7 @@ ITEM_PAGES = [
     {
         "slug": "refrigerator-removal-fort-collins-co.html",
         "title": "Refrigerator Removal Fort Collins CO | Fast Next-Day Haul",
-        "desc": "Dead fridge in the garage? Fort Collins refrigerator removal: $139 flat at the curb, or from $675 when we carry it out. Freon handled properly.",
+        "desc": "Dead fridge in the garage? Fort Collins refrigerator removal: $139 at the curb when our truck is nearby ($250 minimum otherwise), or from $675 when we carry it out. Freon handled properly.",
         "h1": "Refrigerator Removal Fort Collins CO",
         "hero_sub": "That old fridge is stealing a parking spot. We haul refrigerators and freezers in Fort Collins — working units to ReStore, the rest recycled per Colorado rules.",
         "sms": "Hi! I need refrigerator removal in Fort Collins.",
@@ -650,7 +650,7 @@ ITEM_PAGES = [
         "body_copy": """<p>Garage fridges are our most common appliance pickup. See all <a href="/appliance-removal-fort-collins-co.html" class="content-link">appliance removal in Fort Collins</a> or read <a href="/blog/what-to-do-with-old-appliances-fort-collins.html" class="content-link">what to do with old appliances</a>.</p>""",
         "related": [("/appliance-removal-fort-collins-co.html", "Appliance Removal"), ("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/projects/windsor-garage-junk-removal.html", "Windsor Project"), ("/blog/what-to-do-with-old-appliances-fort-collins.html", "Disposal Guide"), ("/", "Home")],
         "faqs": [
-            ("How much does refrigerator removal cost?", "Set it at the curb and it's $139 flat (up to 4 cubic yards, no walkthrough needed). Need us to carry it out? Refrigerator removal starts from $675, priced at a free on-site walkthrough. Freon units are handled properly either way."),
+            ("How much does refrigerator removal cost?", "Set it at the curb and it's $139 flat (up to 4 cubic yards, no walkthrough needed) when our truck is already in your area; otherwise the minimum pickup is $250. Need us to carry it out? Refrigerator removal starts from $675, priced at a free on-site walkthrough. Freon units are handled properly either way."),
             ("Do you remove fridges with freon?", "Yes — proper recycling per Colorado regulations."),
             ("Should I unplug before pickup?", "Yes — please unplug and empty the unit before we arrive."),
             ("Will you donate a working fridge?", "Working units often go to Habitat ReStore — tax receipt included."),
@@ -704,7 +704,7 @@ COMPARISON_PAGES = [
 <p>A 10-yard dumpster in Northern Colorado often advertises at <strong>$300–450 for the base rental</strong> — but that rarely tells the whole story. Homeowners in Fort Collins, Loveland, and Windsor routinely pay more once you add delivery fees, weight overage, extension days, prohibited-item surcharges, and a full weekend of loading.</p>
 <p>When you add labor, dump runs for items the dumpster company won't take, and donation trips, many Fort Collins homeowners find the <em>all-in cost</em> is closer to full-service <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal</a> than the sticker price suggests — and full service comes without the back strain.</p>
 <h2 id="junk-removal-pricing">How junk removal pricing works here</h2>
-<p>Easy Garage Cleaning keeps it simple: <strong>$139 flat for curbside pickup</strong> (up to 4 cubic yards set at the curb), or <strong>from $675</strong> when our crew carries everything out — one exact flat rate set at a free on-site walkthrough. Includes labor, hauling, dump fees, and donations — see our <a href="/pricing.html" class="content-link">pricing guide</a>.</p>
+<p>Easy Garage Cleaning keeps it simple: <strong>$139 flat for curbside pickup</strong> (up to 4 cubic yards set at the curb, when our truck is already in your area; $250 minimum pickup otherwise), or <strong>from $675</strong> when our crew carries everything out — one exact flat rate set at a free on-site walkthrough. Includes labor, hauling, dump fees, and donations — see our <a href="/pricing.html" class="content-link">pricing guide</a>.</p>
 <h2 id="garage-cleanout">Garage cleanouts: why removal beats a bin</h2>
 <p>Garage clutter mixes heavy furniture, donation-worthy items, and awkward shapes. A dumpster forces you to sort, carry, and guess yardage while a bin sits in your driveway. Our <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">Fort Collins garage cleanouts</a> sort on site, route usable items toward donation, and sweep the work area. See <a href="/projects/" class="content-link">customer-approved project stories</a>.</p>
 <h2 id="driveway-damage">Driveway and HOA considerations</h2>
