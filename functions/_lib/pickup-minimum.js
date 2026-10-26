@@ -75,8 +75,10 @@ export function liveWaiver(job) {
 const acceptedStatus = value => ['accepted', 'approved'].includes(String(value || '').toLowerCase());
 /** A job the customer approved (portal or Hub Record approval) or signed in person: it keeps the terms it was signed on. */
 export const approvedJob = job => acceptedStatus(job?.estimate?.status) || acceptedStatus(job?.customerApproval?.status) || job?.estimate?.acceptanceMethod === 'in_person_signature';
-/** The owner's saved override, carried to a send or signature only for its own day and its own reason. */
-export const savedOwnerWaiver = (saved, { date, reason }) => plain(saved) && saved.ownerOverride === true && saved.pending !== true && Boolean(date) && saved.date === date && saved.reason === reason ? saved : null;
+/** The owner's saved override, carried to a send or signature only for its own day, its own reason and its own service ZIP
+ * code (a record from before the ZIP code was kept matches any). */
+export const savedOwnerWaiver = (saved, { date, reason, address = '' }) => plain(saved) && saved.ownerOverride === true && saved.pending !== true && Boolean(date) && saved.date === date && saved.reason === reason
+  && (!saved.zip || saved.zip === serviceZip(address)) ? saved : null;
 /**
  * Why a job's truck-nearby price no longer holds, or null: the job moved to another day than the one its waiver was
  * confirmed for and no other job is booked on the new day in its ZIP code (sameDayJobs: the jobs dated the new day;
@@ -106,9 +108,9 @@ export function pickupWaiverMove(job, sameDayJobs) {
   return found ? { ...waiver, date, zip, nearbyJobId: found.id } : null;
 }
 /** The audit of a waiver that moved with its job: kept (an approved or signed job) or confirmed again for the new day. */
-export const waiverNoteAudit = (auditWrite, waiver, { actor, via = 'hub', jobId, requestId, now, note, fromDate, toDate, previous = waiver }) => auditWrite({ actor, via, action: 'quote.minimum_pickup.waiver_moved',
-  entity: { collection: 'jobs', id: jobId }, before: { date: fromDate, nearbyJobId: previous?.nearbyJobId ?? null, zip: previous?.zip ?? null },
-  after: { date: toDate, nearbyJobId: waiver.nearbyJobId ?? null, zip: waiver.zip ?? null, ownerOverride: waiver.ownerOverride === true }, requestId, reason: note, now });
+export const waiverNoteAudit = (auditWrite, waiver, { actor, via = 'hub', jobId, requestId, now, note, fromDate, toDate, fromZip, toZip, previous = waiver }) => auditWrite({ actor, via, action: 'quote.minimum_pickup.waiver_moved',
+  entity: { collection: 'jobs', id: jobId }, before: { date: fromDate, nearbyJobId: previous?.nearbyJobId ?? null, zip: fromZip ?? previous?.zip ?? null },
+  after: { date: toDate, nearbyJobId: waiver.nearbyJobId ?? null, zip: toZip ?? waiver.zip ?? null, ownerOverride: waiver.ownerOverride === true }, requestId, reason: note, now });
 
 /**
  * Confirms a quote's waiver. priced: the builder pricing (breakdown.pickup); date/address: the job's booked day and
