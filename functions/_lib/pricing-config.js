@@ -67,7 +67,7 @@ const B2B_RATE_CARD = {
     { value: '15%', title: 'Coordinated properties', detail: 'Three or more properties approved together and serviced within 30 days.' },
   ],
   terms: [
-    'Discounts do not stack. The full-service reset base has a $675 minimum after discounts; standalone services have a $99 minimum. Products, specialty handling, access charges and the fixed $139 curbside offer are excluded. Your accepted quote controls.',
+    'Discounts do not stack. The full-service reset base has a $675 minimum after discounts; standalone services have a $99 minimum. Products, specialty handling, access charges and the fixed $139 curbside offer (when our truck is already in the area that day; otherwise the minimum pickup is $250) are excluded. Your accepted quote controls.',
     'Full-service projects: your quote states the deposit and when each payment is due. A walkthrough quote takes a 25% deposit when it is signed or approved and the remaining 75% on the job day. Credit terms require a written agreement.',
   ],
 };

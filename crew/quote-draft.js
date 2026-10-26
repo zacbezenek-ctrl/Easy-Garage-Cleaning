@@ -202,6 +202,7 @@
         if (products.get(entry?.id) === step && clampQty(entry.quantity, 999) && !out[step].some(row => row.id === entry.id)) out[step].push({ id: entry.id, quantity: clampQty(entry.quantity, 999) });
       }
       if (validManHours(value.labor?.manHours, menu)) out.labor = { manHours: value.labor.manHours, adjusted: value.labor.adjusted === true };
+      if (typeof value.nearbyTruck?.reason === 'string' && value.nearbyTruck.reason.trim()) out.nearbyTruck = { reason: value.nearbyTruck.reason.trim().slice(0, 300) };
     }
     return out;
   }
@@ -243,6 +244,7 @@
     for (const entry of rows(pricing?.removal)) sel.removal[entry.id] = entry.quantity;
     for (const step of ['shelving', 'storage']) sel[step] = rows(pricing?.[step]).map(entry => ({ id: entry.id, quantity: entry.quantity }));
     if (validManHours(pricing?.labor?.manHours) && !staleLabor(menu, breakdown)) sel.labor = { manHours: pricing.labor.manHours, adjusted: pricing.labor.adjusted === true };
+    if (typeof pricing?.nearbyTruck?.reason === 'string') sel.nearbyTruck = { reason: pricing.nearbyTruck.reason };
     return sel;
   }
   // The selection the server prices: the finished steps (a prefix of removal, shelving, storage) and their items. The
@@ -252,7 +254,7 @@
   // from the selection itself. Every step names the walkthrough's garage size when it is known (garageOf).
   function builderDescriptor(menu, sel, through, fullness = null, garageSize = null) {
     const steps = BUILDER_STEPS.slice(0, Math.max(1, BUILDER_STEPS.indexOf(through) + 1));
-    return { menuVersion: menu.menuVersion, settingsVersion: menu.settingsVersion, steps, ...(GARAGE_SIZES.includes(garageSize) ? { garageSize } : {}),
+    return { menuVersion: menu.menuVersion, settingsVersion: menu.settingsVersion, steps, ...(GARAGE_SIZES.includes(garageSize) ? { garageSize } : {}), ...(sel.nearbyTruck?.reason ? { nearbyTruck: { reason: sel.nearbyTruck.reason } } : {}),
       removal: (menu.services || []).filter(item => sel.removal[item.id] > 0).map(item => ({ id: item.id, quantity: sel.removal[item.id] })),
       shelving: steps.includes('shelving') ? sel.shelving.map(({ id, quantity }) => ({ id, quantity })) : [],
       storage: steps.includes('storage') ? sel.storage.map(({ id, quantity }) => ({ id, quantity })) : [],
@@ -705,6 +707,23 @@
       S.sel.labor = { manHours, adjusted: manHours !== null }; S.laborEdit = null; S.priced = null; S.error = ''; keep();
       advance('storage');
     }
+    // Minimum pickup (the server's, pickup-minimum.js): a pickup below $250 gets the "Minimum pickup" line. "Truck already
+    // nearby" waives it with a reason; the server confirms it against another job booked the same day in the same ZIP
+    // code (or the owner's override) when the job is booked, sent or signed.
+    function pickupSection(priced) {
+      const pickup = priced.pickup;
+      if (!pickup?.haulingOnly || !(pickup.minimumCents > 0 || pickup.waivedCents > 0)) return null;
+      if (typeof S.waiverDraft !== 'string') S.waiverDraft = S.sel.nearbyTruck?.reason || '';
+      const waived = Boolean(S.sel.nearbyTruck), reprice = () => { S.priced = null; S.error = ''; keep(); advance('storage'); };
+      const apply = () => { const reason = S.waiverDraft.trim(); if (reason.length < 3) { S.error = 'Give the reason the truck is already nearby (3 to 300 characters).'; render(); return; } S.sel.nearbyTruck = { reason: reason.slice(0, 300) }; reprice(); };
+      const remove = () => { delete S.sel.nearbyTruck; reprice(); };
+      return h('section', { class: 'qb-section qb-pickup', 'data-pickup': waived ? 'waived' : 'minimum' },
+        h('h3', {}, waived ? 'Minimum pickup · waived (truck already nearby)' : `Minimum pickup · ${money(pickup.minimumCents)}`),
+        h('p', { class: 'qb-help' }, waived ? 'Priced at what the lines add up to. Saving a booked job, sending and signing check that another job is booked the same day in this job\u2019s ZIP code.' : 'Pickups have a $250 minimum. If a truck is already in the area that day, waive it with a reason.'),
+        h('label', { class: 'qd-label', for: 'qd-nearby' }, 'Truck already nearby: why (a nearby job number or area, never a customer\u2019s name or phone)'),
+        h('input', { id: 'qd-nearby', class: 'qd-input', type: 'text', maxLength: 300, value: S.waiverDraft, disabled: S.busy, oninput: event => { S.waiverDraft = event.target.value; } }),
+        h('div', { class: 'qb-labor-actions' }, h('button', { type: 'button', class: 'qd-secondary', disabled: S.busy, onclick: waived ? remove : apply }, waived ? 'Remove the waiver' : 'Waive the minimum')));
+    }
     function quoteStep() {
       const priced = S.priced;
       if (!priced) return [h('p', { class: 'qb-help' }, S.busy ? 'Pricing the quote on the server…' : 'Price the quote on the server to review it.')];
@@ -716,6 +735,7 @@
           ? h('ul', { class: 'qd-lines' }, lines.filter(line => line.section === entry.id).map(line => h('li', { class: 'qd-line' }, h('span', {}, line.name, line.qty !== 1 ? ` × ${line.qty}${line.unit === 'pack' ? ' packs' : ''}` : '', ' ', chip(line)), h('b', {}, money(line.totalCents)))))
           : h('p', { class: 'qb-help' }, 'Nothing in this step.'))),
         laborSection(priced),
+        pickupSection(priced),
         h('p', { class: 'qd-total' }, 'Quote total ', h('b', {}, money(priced.totalCents))),
         saleChoice(priced),
         // D-JUNK: a junk-only quote on a walkthrough that records garage work is saved but never sent (the server refuses it).

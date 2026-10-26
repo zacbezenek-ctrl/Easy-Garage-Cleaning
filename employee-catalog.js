@@ -8,7 +8,7 @@
 (function(){
 'use strict';
 // Drafts live under the Hub's draft prefix, which the always-loaded screen registry clears on sign-out.
-const API='/api/catalog',SCREEN='catalog',DRAFT_KEY='egc.hub.draft.v1.catalog.',TZ='America/Denver',PAGE=40,MAX_ITEM_CENTS=10000000,QUOTE_ASSET_VERSION='20261021sale4';
+const API='/api/catalog',SCREEN='catalog',DRAFT_KEY='egc.hub.draft.v1.catalog.',TZ='America/Denver',PAGE=40,MAX_ITEM_CENTS=10000000,QUOTE_ASSET_VERSION='20261022pickup1';
 const PRODUCT_CATEGORIES=['bikes','cabinets-workbenches','floors-lighting-extras','lawn-garden','overhead','shelving','small-items','sports-outdoor','wall-systems'];
 const TIERS=['good','better','best'],VERIFIED_EVIDENCE=['product_page','search_snippet'];
 const AVAILABILITY={active:'Active',referral_only:'Referral only',hidden:'Hidden'};
@@ -433,7 +433,7 @@ function loadQuoteAssets(){
   if(!quoteAssetsPromise)quoteAssetsPromise=(async()=>{
     await quoteAsset('link',`/employee-catalog-quote.css?v=${QUOTE_ASSET_VERSION}`);
     await quoteAsset('link',`/crew/quote-draft.css?v=${QUOTE_ASSET_VERSION}`);
-    await quoteAsset('script',`/crew/quote-draft.js?v=20261023draft1`);
+    await quoteAsset('script',`/crew/quote-draft.js?v=20261026pickup2`);
     await quoteAsset('script',`/employee-catalog-quote.js?v=${QUOTE_ASSET_VERSION}`);
     if(typeof window.EGCCatalogQuote?.open!=='function')throw new Error('catalog_quote_asset_unavailable');
   })().catch(error=>{quoteAssetsPromise=null;throw error;});

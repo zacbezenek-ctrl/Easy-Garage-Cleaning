@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { approvalRefusal, compositeApproval, priceCompositeQuote } from '../functions/_lib/composite-quote.js';
-import { HELD_SUBREQUEST_BUDGET, releaseAllHeldHandoffs, saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
+import { HELD_SUBREQUEST_BUDGET, releaseAllHeldHandoffs, releaseHandoffPrices, saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
 import { readCompositeState } from '../functions/_lib/catalog-store.js';
 import { HELD_QUERY_MAX, countHeldJobs, heldJobIds, heldJobsQuery } from '../functions/_lib/handoff-price-holds.js';
 import { HELD_FAILURES_KEPT, HELD_RELEASE_MARKER, HELD_RETRY_LIMIT, heldJobsHandlers } from '../functions/api/held-jobs.js';
@@ -154,7 +154,7 @@ test('a signed draft price above the amount the owner approves stays held, and t
   const refusal = approvalRefusal(approval);
   assert.equal(refusal.message, 'The customer signed more than the approved price: rebuild the quote and have them sign again (Mattress).');
   assert.deepEqual(refusal.details.unapproved.map(row => [row.id, row.signedAbove]), [[mattress.id, true]]);
-  // Counted again on the next open (the version is done): still told apart.
+  // Counted again on the next open (the version is done): re-read, it still reads as signed above, so it is still told apart.
   const later = await (await post(handlers, { action: 'sweep' })).json();
   assert.deepEqual([later.ran, later.held, later.signedAbove, later.stuck], [false, 1, 1, 0]);
   // Approved at $70 or more, it releases at the $70 signed.
@@ -164,6 +164,79 @@ test('a signed draft price above the amount the owner approves stays held, and t
 
 // A release that fails every time stops holding the menu version back after HELD_RETRY_LIMIT tries in a row: the version
 // is recorded, and the job stays listed as couldn't release automatically until the owner's button releases it.
+// A stuck job released by hand and then held again starts over: the next run that reads it without failing to release
+// it forgets its tries, so later counts never label it stuck.
+test('a stuck job released by hand and held again is not labelled stuck', async () => {
+  const f = fixture(), job = await signHalfLoad(f), held = structuredClone(f.job(job.id));
+  let fail = true;
+  const base = heldStore(f), store = { ...base, commit: async writes => { if (fail && writes.some(write => write.id === job.id)) throw new Error('unavailable'); return base.commit(writes); } };
+  const catalog = catalogStore(), handlers = state => heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => store, compositeState: async () => state, now: () => new Date(LATER) });
+  for (let i = 0; i < 3; i++) await post(handlers(builderState()), { action: 'sweep' });
+  assert.equal((await (await post(handlers(builderState()), { action: 'sweep' })).json()).stuck, 1);
+  // Released by hand from the job, then held again (signed again, waiting for a price).
+  fail = false;
+  const released = await releaseHandoffPrices(f.store, owner, { action: 'prices.release', requestId: randomUUID(), jobId: job.id, expectedRevision: f.job(job.id).revision }, LATER, { env: ON_ENV, compositeState: async () => builderState() });
+  assert.equal(released.released, true);
+  f.rows.set(`jobs/${job.id}`, { ...held, revision: 'held-again' });
+  // Right after the re-hold a count-only open still shows the earlier label: it clears on the next run that reads the job.
+  const meanwhile = await (await post(handlers(before()), { action: 'sweep' })).json();
+  assert.deepEqual([meanwhile.ran, meanwhile.held, meanwhile.stuck], [false, 1, 1]);
+  // The owner's button reads it (still waiting for the half load under this menu): its tries are forgotten.
+  const button = await (await post(handlers(before()), { action: 'release' })).json();
+  assert.deepEqual([button.released, button.held, button.stuck], [[], 1, 0]);
+  const counted = await (await post(handlers(before()), { action: 'sweep' })).json();
+  assert.deepEqual([counted.ran, counted.held, counted.stuck], [false, 1, 0]);
+});
+
+// A job signed above the approved price is told apart only on the answers of the pass that read it: signed again since
+// (now within the approved price but still held), a later count never asks for another signature.
+test('a job signed again after being signed above the approved price is not told apart on later counts', async () => {
+  const f = fixture(), mattress = menuItem('Mattress');
+  const state = builderState(), priced = priceCompositeQuote(state, selection({ removal: [pick('Full truck load'), pick('Mattress')], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), { complete: true });
+  const quote = { composite_pricing: priced.compositePricing, line_items: signedLines(priced), catalog_version: priced.menuVersion, total: priced.totalCents / 100 };
+  const saved = await saveWalkthroughHandoff(f.store, owner, { actorId: owner.user, requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', plan: signedPlan(1, { quote, total: quote.total }) }, NOW, { env: ON_ENV, compositeState: async () => state });
+  const catalog = catalogStore(), handlers = heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => heldStore(f), compositeState: async () => builderState({ [mattress.id]: 6000 }), now: () => new Date(LATER) });
+  const swept = await (await post(handlers, { action: 'sweep' })).json();
+  assert.deepEqual([swept.held, swept.signedAbove], [1, 1], 'the pass that read it tells it apart');
+  // Signed again at $60 (the owner's price), still held for another reason: the next count does not ask to re-sign it.
+  const job = f.job(saved.job.id);
+  f.rows.set(`jobs/${job.id}`, { ...job, revision: 're-signed', compositeQuote: { ...job.compositeQuote, breakdown: { ...job.compositeQuote.breakdown, lines: job.compositeQuote.breakdown.lines.map(line => line.id === mattress.id ? { ...line, unitCents: 6000 } : line) } } });
+  const counted = await (await post(handlers, { action: 'sweep' })).json();
+  assert.deepEqual([counted.ran, counted.held, counted.signedAbove], [false, 1, 0]);
+});
+
+// A count-only open re-reads the listed signed-above jobs within its budget; any it cannot re-read stay listed (the safe
+// side), and the open stays within the measured maximum of storage calls.
+test('a count-only open re-reads signed-above jobs within its budget and keeps the unread ones listed', async () => {
+  const f = fixture(), mattress = menuItem('Mattress');
+  const state = builderState(), priced = priceCompositeQuote(state, selection({ removal: [pick('Full truck load'), pick('Mattress')], shelving: [], storage: [], labor: { manHours: null, fullness: 'medium' } }), { complete: true });
+  const quote = { composite_pricing: priced.compositePricing, line_items: signedLines(priced), catalog_version: priced.menuVersion, total: priced.totalCents / 100 };
+  const saved = await saveWalkthroughHandoff(f.store, owner, { actorId: owner.user, requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', plan: signedPlan(1, { quote, total: quote.total }) }, NOW, { env: ON_ENV, compositeState: async () => state });
+  const job = f.job(saved.job.id);
+  for (let i = 0; i < 4; i++) f.rows.set(`jobs/above-${i}`, { ...structuredClone(job), id: `above-${i}`, revision: `ab${i}` });
+  let calls = 0;
+  const count = fn => async (...args) => { calls++; return fn(...args); };
+  const base = heldStore(f), jobs = { ...base, heldJobIds: count(base.heldJobIds), read: count(base.read), commit: count(base.commit) };
+  const rows = catalogStore(), catalog = { ...rows, read: count(rows.read), commit: count(rows.commit) };
+  const lower = builderState({ [mattress.id]: 6000 });
+  // The owner's two pricing documents count as two storage calls, as readCompositeState makes them.
+  const handlers = budget => heldJobsHandlers({ session: async () => owner, storage: () => catalog, held: () => jobs, compositeState: async () => { calls += 2; return lower; }, budget, now: () => new Date(LATER) });
+  const swept = await (await post(handlers(30), { action: 'sweep' })).json();
+  assert.deepEqual([swept.held, swept.signedAbove], [5, 5]);
+  // Two are signed again within the approved price (still held): with room to re-read all, they are dropped.
+  for (const id of ['above-0', 'above-1']) { const row = f.job(id); f.rows.set(`jobs/${id}`, { ...row, revision: `${id}-re`, compositeQuote: { ...row.compositeQuote, breakdown: { ...row.compositeQuote.breakdown, lines: row.compositeQuote.breakdown.lines.map(line => line.id === mattress.id ? { ...line, unitCents: 6000 } : line) } } }); }
+  calls = 0;
+  const all = await (await post(handlers(30), { action: 'sweep' })).json();
+  // The marker, one name query, the pricing and the five re-reads. At most 1 + 10 + 2 + 30 = 43 per count-only open,
+  // under the measured 44 of a release run.
+  assert.deepEqual([all.ran, all.held, all.signedAbove, calls], [false, 5, 3, 1 + 1 + 2 + 5]);
+  // With room for one re-read only, the four not re-read stay listed: at most one drops.
+  calls = 0;
+  const short = await (await post(handlers(1), { action: 'sweep' })).json();
+  assert.ok(short.signedAbove >= 4, `kept when not re-read: ${short.signedAbove}`);
+  assert.equal(calls, 1 + 1 + 2 + 1);
+});
+
 test('a release that fails every time gives up after three tries: the version is recorded and the job is listed as stuck', async () => {
   const f = fixture(), job = await signHalfLoad(f), version = builderState().menu.menuVersion;
   let fail = true;
