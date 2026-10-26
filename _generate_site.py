@@ -80,7 +80,7 @@ TODAY = site_build_date()
 # Authenticated staff, crew, customer and business surfaces. The generator never
 # rewrites them, lists them in llms.txt, or adds marketing analytics to them.
 PRIVATE_HTML = frozenset({
-    "business-hub.html", "client-login.html", "copilot.html", "customer-portal.html", "dispatch.html",
+    "business-hub.html", "client-login.html", "my-visits.html", "copilot.html", "customer-portal.html", "dispatch.html",
     "employee.html", "employee-signup.html", "hub-login-setup.html", "message-templates.html", "quote.html", "sop.html",
     "staff-login.html", "tyler-contract.html",
 })

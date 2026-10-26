@@ -170,7 +170,7 @@ test('the page is a gated staff page that loads its own versioned script and the
   for (const path of ['/crew/schedule', '/crew/schedule.html', '/crew/schedule.js']) assert.equal(staffGatedPath(path), true, path);
   assert.match(html, /<meta name="robots" content="noindex,nofollow">/);
   assert.match(html, /<link rel="stylesheet" href="\/crew\/crew-brand\.css\?v=[^"]+">/);
-  assert.match(html, /<script src="\/crew\/hub-auth\.js\?v=[^"]+" defer><\/script>\n<script src="\/crew\/schedule\.js\?v=20261022livestatus" defer><\/script>/);
+  assert.match(html, /<script src="\/crew\/hub-auth\.js\?v=[^"]+" defer><\/script>\n<script src="\/crew\/schedule\.js\?v=20261023jobops" defer><\/script>/);
   assert.match(html, /<main id="schedule-main">/);
   assert.match(html, /\.job-row\{[^}]*min-height:64px/);
   assert.match(html, /:is\(\.seg,\.chips\) button:focus-visible/);

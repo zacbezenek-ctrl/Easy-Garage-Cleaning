@@ -52,6 +52,13 @@ export function divRoundHalfUp(numerator, denominator) {
   if (twice % den !== 0n && twice < 0n) q -= 1n; // BigInt division truncates toward zero; floor it.
   return Number(q);
 }
+
+/** n / d with its size rounded half up and the sign kept (half away from zero), for integers n and d > 0: a signed
+ * figure shown next to its size (-10.1% beside a 10.1% miss) never differs from it in the last digit. */
+export function divRoundSigned(numerator, denominator) {
+  const n = big(numerator), size = divRoundHalfUp(n < 0n ? -n : n, denominator);
+  return n < 0n ? -size : size;
+}
 /** Hours (a number) as integer milli-hours, half up. */
 export const milliHours = hours => typeof hours === 'number' && Number.isFinite(hours) && hours >= 0 ? divRoundHalfUp(Math.round(hours * 1e6), 1000) : null;
 /** cents × basis points, half up. */
@@ -189,8 +196,9 @@ export function jobActualsRow(job, { labor = null, settings: raw = {}, channel =
     revenueCents, billed: { manHours: hours(billed.milli), source: billed.source },
     actual: actual ? { manHours: hours(actual.milli), paidManHours: hours(actual.paidMilli), source: actual.source } : { manHours: null, paidManHours: null, source: 'not_recorded' },
     crewLead: lead ? { people: lead.people, hours: lead.hours, manHours: hours(lead.milli) } : null,
-    varianceManHours: actual && billed.milli !== null ? hours(actual.milli - billed.milli) : null,
-    variancePercent: actual && billed.milli ? divRoundHalfUp(big(actual.milli - billed.milli) * 1000n, billed.milli) / 10 : null,
+    // Travel-only timecards leave no hours on site: there is nothing to compare.
+    varianceManHours: actual && actual.milli > 0 && billed.milli !== null ? hours(actual.milli - billed.milli) : null,
+    variancePercent: actual && actual.milli > 0 && billed.milli ? divRoundSigned(big(actual.milli - billed.milli) * 1000n, billed.milli) / 10 : null,
     truckLoads: loads, goodsRetailCents: goodsRetail, goodsCostCents, laborCents, dumpCents, truckCents,
     commission, directCostCents, grossMarginCents, grossMarginPercent: known && revenueCents > 0 ? divRoundHalfUp(big(grossMarginCents) * 1000n, revenueCents) / 10 : null,
     contributionCents: known ? grossMarginCents - commission.totalCents : null,
@@ -207,7 +215,7 @@ export function summarizeJobActuals(rows) {
   return {
     jobs: rows.length, revenueCents: sum(withRevenue, row => row.revenueCents), jobsWithActualHours: rows.filter(row => row.actual.source !== 'not_recorded').length,
     comparedJobs: compared.length, billedManHours: billedMilli / 1000, actualManHours: actualMilli / 1000, varianceManHours: (actualMilli - billedMilli) / 1000,
-    variancePercent: billedMilli ? divRoundHalfUp(big(actualMilli - billedMilli) * 1000n, billedMilli) / 10 : null,
+    variancePercent: billedMilli ? divRoundSigned(big(actualMilli - billedMilli) * 1000n, billedMilli) / 10 : null,
     truckLoads: sum(rows, row => row.truckLoads.count), goodsRetailCents: sum(rows.filter(row => row.goodsRetailCents !== null), row => row.goodsRetailCents),
     commissionCents: sum(rows, row => row.commission.totalCents), marginCommissionCents: sum(margined, row => row.commission.totalCents),
     marginJobs: margined.length, marginRevenueCents: marginRevenue, laborCents: sum(margined, row => row.laborCents), directCostCents: sum(margined, row => row.directCostCents),

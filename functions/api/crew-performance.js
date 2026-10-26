@@ -5,6 +5,7 @@
  *   sources:{timecards:'ok'|'unavailable'}, laborCoverage, asOf}.
  * Errors: {ok:false, code, error}; 400, 401, 403, 503 retry. */
 import { getHubSession } from '../_lib/hub-session.js';
+import { defaultStaffRoles, sanitizeStaffRoles } from '../_lib/staff-roles.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { denverWorkDate, overtimePolicy } from '../_lib/timesheet-week.js';
 import { addDays } from '../_lib/dispatch-time.js';
@@ -19,7 +20,7 @@ export const CREW_PERFORMANCE_FIELDS = Object.freeze([...new Set([...JOB_ACTUALS
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 function errorResponse(error) {
   const code = /^job_actuals_(sign_in_required|forbidden)$/.test(error?.code || '') ? error.code.replace(/^job_actuals_/, 'crew_performance_') : null;
-  if (code) return reply(error.status, { ok: false, code, error: code.endsWith('sign_in_required') ? 'Sign in to review crew performance.' : 'Only business accounts can review crew performance.' });
+  if (code) return reply(error.status, { ok: false, code, error: code.endsWith('sign_in_required') ? 'Sign in to review crew performance.' : 'Only office staff and Team Leads can review crew performance.' });
   return reply(503, { ok: false, code: 'crew_performance_unavailable', error: 'Crew performance could not be loaded. Retry in a moment.' });
 }
 
@@ -27,7 +28,11 @@ export function crewPerformanceHandlers({ session = getHubSession, dispatch = di
   return {
     async get({ request, env }) {
       try {
-        const actor = await session(request, env).catch(() => null); requireJobActualsViewer(actor);
+        const actor = await session(request, env).catch(() => null);
+        // Issue #259 authorizes this hours/counts read only. Never grant
+        // businessAccess or reuse this exception for job actuals or money.
+        const teamLead = actor?.user && (sanitizeStaffRoles(actor.staffRoles, actor) || defaultStaffRoles(actor)).includes('team_lead');
+        if (!teamLead) requireJobActualsViewer(actor);
         if ([...new URL(request.url).searchParams.keys()].length) return reply(400, { ok: false, code: 'crew_performance_request_invalid', error: 'Crew performance takes no query options.' });
         const at = now(), asOf = at.toISOString(), window = jobActualsWindow(denverWorkDate(asOf)), store = dispatch(env);
         const [jobs, roster] = await Promise.all([store.datedJobs(window.start, addDays(window.end, -1), [...CREW_PERFORMANCE_FIELDS]), store.roster()]);

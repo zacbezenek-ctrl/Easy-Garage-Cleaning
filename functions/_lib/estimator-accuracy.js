@@ -5,15 +5,10 @@
  * man-hours on site (job actuals' best signal: timecards, else the crew lead's people × hours at Complete). The error is
  * (actual − estimated) / estimated: positive means the job took longer than estimated (under-estimated).
  *
- * The estimator is whoever priced the job, from what the job record itself says (never a guess):
- *   1. 'walkthrough_signer': the employee who recorded the customer's signature on the walkthrough
- *      (acceptance.recordedBy with method 'in_person_signature', walkthrough-handoff.js). They built that quote on site.
- *   2. 'quote_sender': the employee who sent the priced quote (quoteDraft.sentBy, quote-draft.js) when it was not signed
- *      on a walkthrough.
- *   Neither: the job is listed but not scored ('no_estimator').
- * A door-to-door setter's walkthrough has its estimator on the setter record (knock_setters estimatorKey, the key its 7%
- * commission is paid to): that key is used, and when the job's own record names someone else the job is listed as an
- * 'estimator_conflict' and not scored.
+ * The estimator is whoever priced the job (estimator-attribution.js estimatorOf, the same attribution Open quotes uses):
+ * the walkthrough signer, else the setter record's estimator, else the quote's builder, else its sender. None: the job is
+ * listed but not scored ('no_estimator'). A setter record whose Knock-booked estimator differs from the signer, before
+ * the office settles it, is listed as an 'estimator_conflict' naming the other person, and not scored.
  * A job is scored only when both hours are firm. Excluded, with the reason shown: junk-only (sold by the truck, no labor
  * estimate), no Labor line (a legacy quote), actual hours not recorded, timecards incomplete or unreadable (the actual
  * may be short), or no estimator on record.
@@ -21,29 +16,15 @@
  * Per estimator, over the last 30 and 90 days: jobs scored, average absolute error (lower is more accurate), bias (the
  * average signed error: + under-estimates, − over-estimates) and the share of jobs within ±10% and ±20%. Ranking needs
  * ESTIMATOR_MIN_JOBS scored jobs, so one lucky job never wins; the most accurate ranked estimator of the last 30 days is
- * the callout. Percents are tenths, rounded half up in integers (milli-hours), like the rest of job actuals. */
-import { divRoundHalfUp, milliHours } from './job-actuals.js';
+ * the callout. Percents are tenths, in integers (milli-hours), like the rest of job actuals: a miss rounds half up on its
+ * size and a signed figure takes the sign of the same rounded size (divRoundSigned), so -10.0% never sits by a 10.1% miss. */
+import { divRoundSigned, milliHours } from './job-actuals.js';
+import { ESTIMATOR_FIELDS, estimatorOf } from './estimator-attribution.js';
+
+export { ESTIMATOR_FIELDS, estimatorOf };
 
 export const ESTIMATOR_MIN_JOBS = 3;
 export const ACCURACY_BANDS = Object.freeze([10, 20]);
-export const ESTIMATOR_FIELDS = Object.freeze(['acceptance.recordedBy', 'acceptance.method', 'quoteDraft.sentBy']);
-// The staff key the commission ledger uses for the same signer (knock-setters.js handoffSigner).
-const STAFF_KEY = /^[a-z0-9._-]{1,64}$/;
-const key = value => {
-  const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  return STAFF_KEY.test(text) ? text : '';
-};
-
-/** {key, evidence} for the employee who priced the job, or null. setter: the job's knock_setters record, if any. */
-export function estimatorOf(job, setter = null) {
-  const signer = job?.acceptance?.method === 'in_person_signature' ? key(job.acceptance.recordedBy) : '';
-  const own = signer ? { key: signer, evidence: 'walkthrough_signer' } : key(job?.quoteDraft?.sentBy) ? { key: key(job.quoteDraft.sentBy), evidence: 'quote_sender' } : null;
-  const recorded = key(setter?.estimatorKey);
-  if (!recorded) return own;
-  if (own && own.key !== recorded) return { key: recorded, evidence: 'setter_record', conflict: own.key };
-  return { key: recorded, evidence: 'setter_record' };
-}
-
 const EXCLUDING_REASONS = ['timecards_incomplete', 'timecards_unavailable'];
 /** Why a job actuals row is not scored, or '' when it is. */
 export function exclusionOf(row, estimator) {
@@ -57,9 +38,10 @@ export function exclusionOf(row, estimator) {
   return estimator ? '' : 'no_estimator';
 }
 
-/** The error in tenths of a percent, (actual − estimated) / estimated, half up; null without both. */
+/** The error in tenths of a percent, (actual − estimated) / estimated, its size rounded half up and the sign kept; null
+ * without both. */
 export function errorTenths(estimatedMilli, actualMilli) {
-  return Number.isSafeInteger(estimatedMilli) && estimatedMilli > 0 && Number.isSafeInteger(actualMilli) ? divRoundHalfUp((actualMilli - estimatedMilli) * 1000, estimatedMilli) : null;
+  return Number.isSafeInteger(estimatedMilli) && estimatedMilli > 0 && Number.isSafeInteger(actualMilli) ? divRoundSigned((actualMilli - estimatedMilli) * 1000, estimatedMilli) : null;
 }
 
 /** One job: estimated vs actual man-hours with its estimator and, when not scored, why. */
@@ -67,20 +49,20 @@ export function accuracyRow(row, job, setter = null) {
   const estimator = estimatorOf(job, setter), excluded = exclusionOf(row, estimator);
   const estimatedMilli = row.billed.manHours === null ? null : milliHours(row.billed.manHours);
   const actualMilli = row.actual.manHours === null ? null : milliHours(row.actual.manHours);
-  const tenths = estimatedMilli !== null && actualMilli !== null ? errorTenths(estimatedMilli, actualMilli) : null;
-  // The miss is rounded on its own size, not taken from the rounded signed error (half up would favor under-estimates).
-  const absTenths = tenths === null ? null : errorTenths(estimatedMilli, estimatedMilli + Math.abs(actualMilli - estimatedMilli));
+  // A job left out for its hours (junk only, no Labor line, travel only or no actual) has no difference to show.
+  const compared = !['junk_only', 'no_labor_estimate', 'actual_not_recorded'].includes(excluded) && estimatedMilli !== null && actualMilli !== null;
+  const tenths = compared ? errorTenths(estimatedMilli, actualMilli) : null, absTenths = tenths === null ? null : Math.abs(tenths);
   return {
     jobId: row.jobId, date: row.date, customer: row.customer, serviceType: row.serviceType,
-    estimator: estimator?.key || null, estimatorEvidence: estimator?.evidence || null,
+    estimator: estimator?.key || null, estimatorEvidence: estimator?.evidence || null, ...(estimator?.conflict ? { estimatorConflict: estimator.conflict } : {}),
     estimatedManHours: row.billed.manHours, actualManHours: row.actual.manHours, actualSource: row.actual.source,
-    differenceManHours: estimatedMilli !== null && actualMilli !== null ? (actualMilli - estimatedMilli) / 1000 : null,
+    differenceManHours: compared ? (actualMilli - estimatedMilli) / 1000 : null,
     differencePercent: tenths === null ? null : tenths / 10, absoluteErrorPercent: absTenths === null ? null : absTenths / 10, scored: !excluded, excluded: excluded || null,
   };
 }
 
-const average = (values) => values.length ? divRoundHalfUp(values.reduce((sum, value) => sum + value, 0), values.length) / 10 : null;
-const share = (count, total) => total ? divRoundHalfUp(count * 1000, total) / 10 : null;
+const average = (values) => values.length ? divRoundSigned(values.reduce((sum, value) => sum + value, 0), values.length) / 10 : null;
+const share = (count, total) => total ? divRoundSigned(count * 1000, total) / 10 : null;
 
 /** The scorecard of scored rows: one entry per estimator, ranked ones first (lowest average error, then most jobs). */
 export function estimatorScorecard(rows, { minJobs = ESTIMATOR_MIN_JOBS } = {}) {

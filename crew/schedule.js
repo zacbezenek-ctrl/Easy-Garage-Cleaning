@@ -152,6 +152,7 @@
   function render() {
     if (!main) return;
     const data = S.data, { from, to } = data || shownDates(), nodes = [];
+    if (window.EGCHubAuth?.profile?.()?.capabilities?.includes('jobs.operate')) nodes.push(h('a', { class: 'btn primary', href: '/crew/job-operations' }, 'Manage jobs across crews'));
     nodes.push(h('div', { class: 'eyebrow' }, 'Crew schedule'), h('h1', {}, data?.scope === 'all' ? 'Every crew' : 'My crew’s schedule'),
       h('p', { class: 'sub' }, from === to ? dayLabel(from) : `${dayLabel(from, { weekday: 'short', month: 'short', day: 'numeric' })} – ${dayLabel(to, { weekday: 'short', month: 'short', day: 'numeric' })}`, ' · Mountain Time'));
     if (S.signedOut) {
