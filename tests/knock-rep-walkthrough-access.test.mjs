@@ -18,6 +18,7 @@ import { customerResolveHandler } from '../functions/api/customer-resolve.js';
 import { createJobAssignmentAccess } from '../functions/_lib/job-assignment.js';
 import { fieldJobsHandlers } from '../functions/api/field-jobs.js';
 import { crewJobsHandlers } from '../functions/api/crew-jobs.js';
+import { encodeFirestoreFields, decodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 import { crewSchedule } from '../functions/_lib/crew-schedule.js';
 import { saleChannel, winterSaleCap, estimatedSaleMargin } from '../functions/_lib/winter-sale.js';
 import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
@@ -270,7 +271,7 @@ test('/api/crew-jobs and the crew schedule drop the rep\'s own self-run visit on
   const toFinish = { ...finished, walkthroughOutcome: undefined };
   const list = async (row, at) => (await (await crewJobsHandlers({ session: async () => actor, storage: () => ({ jobRecords: async () => [row] }), now: () => at })
     .get({ request: new Request(`${ORIGIN}/api/crew-jobs`), env })).json()).jobs.map(job => job.id);
-  const schedule = async (row, at) => (await crewSchedule({ session: actor, env, crews: [], jobs: [row], access: createJobAssignmentAccess(env, actor), from: '2026-10-17', to: '2026-10-17', scope: 'mine', now: at })).unassigned.map(row => row.id);
+  const schedule = async (row, at) => (await crewSchedule({ session: actor, env, crews: [], jobs: [row], access: createJobAssignmentAccess(env, actor, { now: () => at }), from: '2026-10-17', to: '2026-10-17', scope: 'mine', now: at })).unassigned.map(row => row.id);
   const inside = new Date('2026-10-19T15:00:00Z'), past = new Date('2026-10-21T15:00:00Z');
   for (const read of [list, schedule]) {
     assert.deepEqual(await read(open, inside), ['w9'], 'inside SELF_RUN_DAYS: listed');
@@ -316,4 +317,61 @@ test('a manager re-signing a revision of the rep\'s own walkthrough leaves it th
   const row = projectSetterAttribution(record, visit, paid, [], Date.parse('2026-10-21T18:00:00Z'), { verified: true, approvedAt: '2026-10-16T16:00:00.000Z', reference: 'synthetic' });
   assert.equal(row.channel, 'direct_sale');
   assert.deepEqual(row.allocations.map(share => share.role), ['direct_rep'], 'one 25% share to the rep, no 7% row for the re-signer');
+});
+
+// Assignment gates: a rep stays on the crew of their own self-run visit after their right ends, and every gate that
+// checks assignment (here the customer text from /api/crew-jobs) refuses them then, also on a replayed request.
+test('after the rep\'s right ends, texting the customer is refused with no customer details and no text, also on a replay', async t => {
+  const env = { FIREBASE_API_KEY: 'firebase-test-self-run', HIGHLEVEL_API_KEY: 'ghl-test-synthetic', HIGHLEVEL_LOCATION_ID: 'location-synthetic' };
+  const actor = { user: 'Rep.Two', displayName: 'Rep Two', role: 'crew', businessAccess: false };
+  const sent = { id: 'crew-sent-request-0001', requestId: 'sent-request-0001', direction: 'to_customer', authorRole: 'crew', authorName: 'Rep Two', body: 'On my way', createdAt: '2026-10-17T16:00:00Z', delivery: { channel: 'sms', status: 'sent' } };
+  const base = { type: 'walkthrough', status: 'scheduled', pipelineStatus: 'scheduled', customer: 'Synthetic Door Customer', phone: '(970) 555-0199', address: '9 Synthetic Way, Fort Collins, CO',
+    date: '2026-10-17', endDate: '2026-10-17', time: '11:00', endTime: '12:00', highlevelContactId: 'contact-synthetic', customerConversation: [sent], ...selfRun('rep.two') };
+  const finished = { ...base, convertedJobId: 'j9', walkthroughVisit: { startedBy: 'rep.two', startedAt: '2026-10-17T17:00:00Z' }, walkthroughOutcome: { outcome: 'sold_on_site' } };
+  let stored = base, texts = 0, writes = 0;
+  t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
+    const url = String(input), method = options.method || 'GET';
+    if (url.includes('oauth2.googleapis.com')) return Response.json({ access_token: 'synthetic-token' });
+    if (url.includes('/documents:runQuery')) return Response.json([{ readTime: '2026-10-17T00:00:00Z' }]);
+    if (url.includes('services.leadconnectorhq.com/contacts/')) return Response.json({ contact: { id: 'contact-synthetic', locationId: 'location-synthetic', phone: '+19705550199' } });
+    if (url.includes('services.leadconnectorhq.com')) { texts++; return Response.json({ messageId: 'msg-synthetic', conversationId: 'conv-synthetic' }); }
+    if (method === 'PATCH') { writes++; stored = { ...stored, ...decodeFirestoreFields(JSON.parse(options.body).fields) }; }
+    return new Response(JSON.stringify({ name: 'projects/egcw-1ec83/databases/(default)/documents/jobs/w9', updateTime: `2026-10-17T18:00:0${writes}.000000Z`, fields: encodeFirestoreFields(stored) }), { status: 200 });
+  });
+  const text = (at, requestId) => crewJobsHandlers({ session: async () => actor, now: () => at }).post({ env, request: new Request(`${ORIGIN}/api/crew-jobs`, {
+    method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'send_customer_message', jobId: 'w9', body: 'Running a few minutes late', requestId }) }) })
+    .then(async response => ({ status: response.status, body: await response.text() }));
+  // Inside the window the rep may still text (and a replay answers the saved message): the gate is the window, not the role.
+  const open = await text(new Date('2026-10-17T18:00:00Z'), 'sent-request-0001');
+  assert.equal(open.status, 200, open.body);
+  for (const [why, row, at] of [
+    ['finished, the next day', finished, new Date('2026-10-18T16:00:00Z')],
+    ['past SELF_RUN_DAYS', base, new Date('2026-10-21T16:00:00Z')],
+    ['office-cancelled', { ...base, status: 'cancelled', pipelineStatus: 'cancelled' }, new Date('2026-10-17T18:00:00Z')],
+  ]) {
+    stored = row;
+    const before = [texts, writes];
+    for (const requestId of ['new-request-0002', 'sent-request-0001']) {
+      const answer = await text(at, requestId);
+      assert.equal(answer.status, 403, `${why} (${requestId}): ${answer.body}`);
+      for (const field of ['Synthetic Door Customer', '555-0199', 'Synthetic Way', 'On my way']) assert.ok(!answer.body.includes(field), `${why}: ${field}`);
+    }
+    assert.deepEqual([texts, writes], before, `${why}: no text and no write`);
+  }
+});
+
+test('every assignment gate shares the rule: assigned() stops counting the rep once their right ends, never a manager', async () => {
+  const env = {}, rep = { user: 'Rep.Two', displayName: 'Rep Two', role: 'crew', businessAccess: false };
+  const visit = { id: 'w9', type: 'walkthrough', status: 'scheduled', date: '2026-10-17', ...selfRun('rep.two') };
+  const assigned = (session, job, at) => createJobAssignmentAccess(env, session, { now: () => at }).assigned(job);
+  const inside = new Date('2026-10-18T16:00:00Z'), past = new Date('2026-10-21T16:00:00Z');
+  assert.equal(await assigned(rep, visit, inside), true);
+  assert.equal(await assigned(rep, visit, past), false, 'past SELF_RUN_DAYS');
+  assert.equal(await assigned(rep, { ...visit, status: 'cancelled' }, inside), false, 'office-cancelled');
+  assert.equal(await assigned(rep, { ...visit, convertedJobId: 'j9', walkthroughVisit: { startedBy: 'rep.two' }, walkthroughOutcome: { outcome: 'sold_on_site' } }, inside), false, 'finished');
+  assert.equal(await assigned(rep, { ...visit, d2d: { ...visit.d2d, selfRun: false } }, past), true, 'an ordinary walkthrough is untouched');
+  assert.equal(await assigned({ ...rep, [SELF_WALKTHROUGH]: 'w9' }, visit, past), true, 'a session granted this visit on the request\'s own clock');
+  // The endpoints that gate on assignment alone all go through it.
+  for (const file of ['functions/api/quo-send.js', 'functions/api/drive-upload.js', 'functions/_lib/approved-send.js', 'functions/api/employee-hub.js', 'functions/api/crew-jobs.js'])
+    assert.match(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), /createJobAssignmentAccess\(/, file);
 });

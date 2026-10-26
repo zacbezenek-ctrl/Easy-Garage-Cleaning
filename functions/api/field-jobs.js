@@ -40,7 +40,7 @@ async function context(request, env, now) {
   const session = await getHubSession(request, env);
   if (!session) throw fieldFailure('Sign in to the Employee Hub to open your jobs.', 401, 'FIELD_AUTH_REQUIRED');
   if (!firebaseServiceAccountConfigured(env)) throw fieldFailure('Secure job storage is not connected. Contact operations.', 503, 'FIELD_STORAGE_UNAVAILABLE');
-  const manager = hasBusinessAccess(session), access = createJobAssignmentAccess(env, session), store = createFieldStore(env);
+  const manager = hasBusinessAccess(session), access = createJobAssignmentAccess(env, session, { now }), store = createFieldStore(env);
   return { session, manager, access, store, visits: fieldVisitsEnabled(env), jobOperations: can(session, 'jobs.operate', env), now };
 }
 

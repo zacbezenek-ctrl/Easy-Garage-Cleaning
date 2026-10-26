@@ -99,7 +99,7 @@ export function crewJobsHandlers({ session = getHubSession, storage = dispatchSt
       try { rows = await storage(env).jobRecords(CREW_LISTING_FIELDS); }
       catch (error) { return reply(503, { ok: false, code: error.code || 'schedule_storage_unavailable', error: error.code ? error.message : 'Schedule storage is unavailable' }); }
       const manager = hasBusinessAccess(actor);
-      const access = createJobAssignmentAccess(env, actor);
+      const access = createJobAssignmentAccess(env, actor, { now });
       const jobs = [], at = now();
       for (const job of rows.filter(row => !privateRecord(row))) {
         // REP-WALKTHROUGH: a Knock rep's own self-run visit leaves their list once their right to it ends.
@@ -129,7 +129,7 @@ export function crewJobsHandlers({ session = getHubSession, storage = dispatchSt
 
       const job = await readJob(env, jobId).catch(() => null);
       if (!job) return reply(404, { ok: false, error: 'This shift no longer exists' });
-      const access = createJobAssignmentAccess(env, actor);
+      const access = createJobAssignmentAccess(env, actor, { now });
       // Managers get the whole job, less any labor copy an older save left on it unless they see labor dollars
       // (JOB-COST-PRIVACY; scripts/backfill-job-labor-private.mjs moves those copies to the private record).
       const managerJob = row => seesLaborCost(actor, env) ? row : withoutJobLabor(row);

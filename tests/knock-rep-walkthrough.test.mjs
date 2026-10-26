@@ -74,7 +74,7 @@ test('the rep\'s own walkthrough is booked to them today at the tapped time and 
   assert.doesNotMatch(JSON.stringify(booked.body), /kim@example|555-1904|\+1970/, 'no customer contact in the answer the phone opens the walkthrough from');
 
   // Assigned to the rep themselves: the rule the walkthrough app's visit lookup and crew home use.
-  const me = createJobAssignmentAccess(w.env, { user: 'Rep.One', displayName: 'Rep One' }), bea = createJobAssignmentAccess(w.env, { user: 'Est.Bea', displayName: 'Bea Estimator' });
+  const clock = { now: () => new Date(NOW) }, me = createJobAssignmentAccess(w.env, { user: 'Rep.One', displayName: 'Rep One' }, clock), bea = createJobAssignmentAccess(w.env, { user: 'Est.Bea', displayName: 'Bea Estimator' }, clock);
   assert.deepEqual([await assignedDuring(visit, TODAY, TODAY, me), await assignedDuring(visit, TODAY, TODAY, bea)], [true, false]);
   const setter = w.fake.get(`knock_setters/${visit.id}`);
   // No estimator recorded: the rep is never their own estimator (an estimator who takes it over is, by signing it).
