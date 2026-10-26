@@ -182,6 +182,29 @@ async function readEmployeeProfile(env, username) {
   return { data: null };
 }
 
+// Who can be sent a direct message: the Hub's configured staff plus every stored employee profile that is not inactive.
+// Names only; nothing about pay, contact details or roles leaves here.
+async function chatRecipient(env, username) {
+  const wanted = personKey(username);
+  if (!wanted) return null;
+  const configured = listHubUserProfiles(env).find(profile => same(profile.user, wanted));
+  if (configured) return { username: configured.user, displayName: configured.displayName || configured.user };
+  const stored = (await readEmployeeProfile(env, wanted)).data;
+  if (!stored || stored.status === 'inactive') return null;
+  return { username: stored.username, displayName: stored.preferredName || stored.displayName || stored.username };
+}
+function chatRoster(env, storedProfiles) {
+  const people = new Map();
+  for (const profile of listHubUserProfiles(env)) people.set(personKey(profile.user), { username: profile.user, displayName: profile.displayName || profile.user });
+  for (const profile of storedProfiles) {
+    const key = personKey(profile?.username);
+    if (!key || profile.status === 'inactive') continue;
+    const name = profile.preferredName || profile.displayName || people.get(key)?.displayName || profile.username;
+    people.set(key, { username: people.get(key)?.username || profile.username, displayName: String(name).slice(0, 80) });
+  }
+  return [...people.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
+}
+
 async function jobMember(session, job, access) {
   if (manager(session)) return true;
   return access.assigned(job);
@@ -241,7 +264,14 @@ async function moveCrewJobTime(env, session, action) {
   return { ok: true, jobId: action.jobId, moved, skipped };
 }
 
+// DIRECT-MESSAGES: a direct message is read by its two people only, managers and the owner included, so a crew member
+// can reach the person they need without the whole team (or the CRM) seeing it.
+const dmParticipant = (session, data) => Array.isArray(data?.participants) && data.participants.some(person => same(person, session.user));
+// A direct message's channel names both people the same way on either side: dm: and the two usernames, sorted.
+export const directChannel = (left, right) => `dm:${[personKey(left), personKey(right)].sort().join('|')}`;
+
 function visibleTo(session, collection, data) {
+  if (collection === 'directMessages') return dmParticipant(session, data);
   if (manager(session) || ['announcements', 'teamMessages'].includes(collection)) return true;
   if (collection === 'jobMessages') return false;
   if (collection === 'messageReads') return same(data?.employee, session.user);
@@ -317,6 +347,21 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
   // A read marker is always the caller's own, managers included: the messageReads branch below sets employee = session.user.
   // A manager's new team or job message takes the server's time and their own name, as crew messages do, so read markers
   // (clamped to server time) compare against the same clock.
+  // Direct messages follow the same rules for everyone, managers included: sent as yourself, to one real staff member.
+  if (collection === 'directMessages') {
+    if (existing) {
+      if (same(existing.sender, session.user) && existing.body === String(incoming.body || '').trim().slice(0, 1200) && same(existing.to, incoming.to)) return existing;
+      throw new Error('Only a new direct message can be saved; a sent one cannot be changed');
+    }
+    const body = String(incoming.body || '').trim().slice(0, 1200);
+    if (!body) throw new Error('Message text is required');
+    if (same(incoming.to, session.user)) throw new Error('Choose someone other than yourself (invalid recipient)');
+    const recipient = await chatRecipient(env, incoming.to);
+    if (!recipient) throw new Error('That person is not an active EGC employee (invalid recipient)');
+    return { id, to: recipient.username, toName: recipient.displayName, participants: [session.user, recipient.username],
+      channel: directChannel(session.user, recipient.username), body, sender: session.user, senderName: session.displayName,
+      createdAt: now, updatedAt: now, status: 'active' };
+  }
   if (manager(session) && collection !== 'messageReads' && !(collection === 'training' && incoming.moduleId)) return collection === 'profiles' ? legacyManagerProfile({ env, session, existing, incoming, id, now })
     : { ...(existing || {}), ...incoming, id, ...(!existing && ['teamMessages', 'jobMessages'].includes(collection) ? { sender: session.user, senderName: session.displayName, createdAt: now, updatedAt: now } : {}) };
 
@@ -418,6 +463,7 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
       const job = await readJob(env, channel.slice(4));
       if (!job || !await jobMember(session, job, createJobAssignmentAccess(env, session))) throw new Error('This job room is limited to assigned crew');
     }
+    if (channel.startsWith('dm:') && !channel.slice(3).split('|').some(person => same(person, session.user))) throw new Error('This direct message is limited to its two people');
     if (existing && !same(existing.employee, session.user)) throw new Error('This read marker belongs to another employee');
     // How far the person has seen: the newest message their screen showed (seenThrough), never later than now and never
     // moving back. A client that sends no seenThrough (an older cached Hub) marks now, as before.
@@ -481,7 +527,7 @@ export async function onRequestGet({ request, env }) {
     // Chat's 15-second refresh reads only message families. Authorization below is
     // identical to the full view, including current job-assignment checks.
     const messagesOnly = params.get('view') === 'messages';
-    const names = messagesOnly ? ['teamMessages', 'jobMessages', 'messageReads'] : [...COLLECTIONS];
+    const names = messagesOnly ? ['teamMessages', 'jobMessages', 'messageReads', 'directMessages'] : [...COLLECTIONS];
     // A missing index or legacy-query setting needs only one shared fallback scan.
     let fallbackRows;
     const fallback = () => fallbackRows ??= readAll(env);
@@ -507,6 +553,7 @@ export async function onRequestGet({ request, env }) {
       if (jobAccess.get(jobId)) collections.jobMessages.push(row.data);
     }
     if (messagesOnly) return reply(200, { ok: true, collections });
+    const roster = chatRoster(env, rows.filter(row => row.collection === 'profiles').map(row => row.data));
     // Approval establishes team membership before the employee creates a profile.
     // Project only roster fields; application credentials and review data stay private.
     const accounts = manager(session) ? await listEmployeeApplications(env) : [];
@@ -544,7 +591,7 @@ export async function onRequestGet({ request, env }) {
     for (const name of ['profiles', 'timeEntries', 'requests']) collections[name] = collections[name].map(row => visiblePay(session, env, name, row));
     // Each timecard's job time (current segment, per-job work and travel, general time) for the Hub's labels.
     collections.timeEntries = collections.timeEntries.map(row => withJobTime(row, viewedAt));
-    return reply(200, { ok: true, collections, payVisibility: seesOthersPay(session, env) ? 'all' : 'own', paySet: canSetPay(session, env), clockInWithoutFix: clockInWithoutFix(env), timecardCorrections: manager(session) && can(session, 'time.approve', env) && timecardCorrectionsEnabled(env), slipAlerts: slipAlertsFor(session, env), ...(includeAccounts ? { accounts: seesOthersPay(session, env) ? accounts : accounts.map(account => payHidden('accounts', account)) } : {}) });
+    return reply(200, { ok: true, collections, chatRoster: roster, payVisibility: seesOthersPay(session, env) ? 'all' : 'own', paySet: canSetPay(session, env), clockInWithoutFix: clockInWithoutFix(env), timecardCorrections: manager(session) && can(session, 'time.approve', env) && timecardCorrectionsEnabled(env), slipAlerts: slipAlertsFor(session, env), ...(includeAccounts ? { accounts: seesOthersPay(session, env) ? accounts : accounts.map(account => payHidden('accounts', account)) } : {}) });
   } catch (error) {
     return reply(502, { ok: false, ...(error.code ? { code: error.code } : {}), error: String(error.message || 'Employee Hub storage failed') });
   }
@@ -612,7 +659,7 @@ export async function onRequestPost({ request, env }) {
         if (collection === 'timeEntries') return reply(200, { ok: true, record: withJobTime(visiblePay(session, env, collection, await writeTimecard(env, session, id, data, target)), new Date().toISOString()) });
         // A replayed message that is already saved writes nothing, but still marks its family (vaultSnapshot): the save
         // it repeats may have landed without its mark (an older deployment) and polls must show it.
-        const replay = data === current.data && ['teamMessages', 'jobMessages'].includes(collection);
+        const replay = data === current.data && ['teamMessages', 'jobMessages', 'directMessages'].includes(collection);
         if (replay) await markVaultFamiliesChanged(env, [collection]);
         const saved = replay ? data : await writeOne(env, collection, id, data, ['profiles', 'messageReads'].includes(collection) ? target : null);
         return reply(200, { ok: true, record: visiblePay(session, env, collection, collection === 'profiles' ? legacyProfileView(saved, new Date().toISOString()) : saved) });

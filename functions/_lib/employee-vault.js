@@ -8,7 +8,7 @@ import { encodeFirestoreFields } from './firestore-job.js';
 const PROJECT_ID = 'egcw-1ec83';
 const DOCUMENTS = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 export const EMPLOYEE_HUB_RECORD_TYPE = 'employee_hub_v2';
-export const EMPLOYEE_HUB_COLLECTIONS = new Set(['profiles', 'timeEntries', 'announcements', 'requests', 'incidents', 'equipment', 'training', 'teamMessages', 'jobMessages', 'messageReads']);
+export const EMPLOYEE_HUB_COLLECTIONS = new Set(['profiles', 'timeEntries', 'announcements', 'requests', 'incidents', 'equipment', 'training', 'teamMessages', 'jobMessages', 'messageReads', 'directMessages']);
 const encoder = new TextEncoder();
 const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
