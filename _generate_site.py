@@ -3718,11 +3718,11 @@ def patch_thank_you_page(text):
     main = f"""<main>
 <section class="thank-celebrate">
 <div class="thank-check" aria-hidden="true">✓</div>
-<h1>You're all set — we'll be in touch shortly</h1>
-<p class="section-sub" style="margin:0 auto 28px;max-width:48ch">Thanks for your quote request. We typically respond within <strong>5 minutes</strong> during business hours (Mon–Sat, 7am–7pm).</p>
+<h1>You're all set — watch for our text</h1>
+<p class="section-sub" style="margin:0 auto 28px;max-width:48ch">Thanks for your request — it just hit our phones. We'll <strong>text you from {PHONE_DISPLAY} as soon as we're off the current job</strong> (Mon–Sat, 7am–7pm) to set up your free on-site walkthrough.</p>
 <div class="thank-steps">
-<div class="thank-step"><span class="thank-step-num">01</span><div><strong>Text more photos</strong><br>Faster than email — wide shots of the full garage work best. <a href="sms:{PHONE}?body=Hi!%20I%20just%20submitted%20a%20quote%20and%20have%20more%20photos." class="content-link">Text {PHONE_DISPLAY}</a></div></div>
-<div class="thank-step"><span class="thank-step-num">02</span><div><strong>Watch for our call</strong><br>We'll reach out with a flat-rate price — you only pay after you approve.</div></div>
+<div class="thank-step"><span class="thank-step-num">01</span><div><strong>Watch for our text</strong><br>It comes from {PHONE_DISPLAY}. Save the number so it doesn't get filtered, then reply to pick your walkthrough time.</div></div>
+<div class="thank-step"><span class="thank-step-num">02</span><div><strong>Send photos if you have them</strong><br>Reply with a few wide shots of the garage so we know what we're walking into. <a href="sms:{PHONE}?body=Hi!%20I%20just%20submitted%20a%20quote%20and%20have%20more%20photos." class="content-link">Text {PHONE_DISPLAY}</a></div></div>
 <div class="thank-step"><span class="thank-step-num">03</span><div><strong>Questions?</strong><br><a href="tel:{PHONE}" class="content-link">Call {PHONE_DISPLAY}</a> or <a href="/faq.html" class="content-link">read our FAQ</a>.</div></div>
 </div>
 <div style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:8px">
@@ -4419,7 +4419,7 @@ def patch_static_pages():
                 text = patch_thank_you_page(text)
                 text = re.sub(
                     r'<meta name="description" content="[^"]*"',
-                    '<meta name="description" content="Thanks — we\'ll call or text within 5 minutes with your flat-rate garage quote. Easy Garage Cleaning, Fort Collins."',
+                    '<meta name="description" content="Thanks — we\'ll text you from (970) 999-1818 to set up your free on-site walkthrough. Easy Garage Cleaning, Fort Collins."',
                     text,
                     count=1,
                 )
