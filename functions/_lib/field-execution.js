@@ -128,6 +128,37 @@ export function fieldViewerWorksOn(job, viewer, start, end) {
 }
 
 const earlierDenverDay = (at, now = Date.now()) => { const ms = Date.parse(at || ''), current = typeof now === 'number' ? now : Date.parse(now); return Number.isFinite(ms) && Number.isFinite(current) && denverToday(new Date(ms)) < denverToday(new Date(current)); };
+// The viewer works the job today (Denver): a day of their own segment, or of the job when it has none. A manager counts
+// any segment on today.
+function worksToday(job, options) {
+  const ms = typeof options.now === 'number' ? options.now : Date.parse(options.now || new Date().toISOString()), today = denverToday(new Date(ms)), viewer = assignmentKey(options.viewer);
+  return jobSegments(job).some(row => row && (options.manager === true || !row.segmentId || ownsSegment(row, viewer)) && occupiedDays(row).includes(today));
+}
+// FIELD-TAP-TIME: when a status or End day tap was made on the phone (crew/job.js sends tappedAt once per action, so an
+// offline retry repeats it). It is the device's clock, so it is kept within the 48 hours before the server's time and
+// never after it; a missing or unreadable one is the server's time. The Hub's Today flags read its Denver day
+// (employee-arrival-deadline.js), so a tap queued offline yesterday and synced today is not today's arrival.
+const TAP_WINDOW_MS = 48 * 3600000;
+export function fieldTapTime(input, now) {
+  const nowMs = Date.parse(now), tapped = Date.parse(typeof input?.tappedAt === 'string' ? input.tappedAt : '');
+  return Number.isFinite(tapped) && Number.isFinite(nowMs) ? new Date(Math.min(nowMs, Math.max(nowMs - TAP_WINDOW_MS, tapped))).toISOString() : now;
+}
+/* The tap times one status or End day tap records. activity and activityTappedAt stay an honest pair: a tap made
+   before the one stored (a second phone's queued Pause from yesterday, synced after today's Start) is stale. It is
+   recorded in the job's history but changes neither the job's current activity, its time nor the job clock, so it
+   cannot turn today's recorded arrival back into Late or lend its activity to a newer tap's time. Only another
+   person's stored tap can make a tap stale: one phone's outbox replays its own taps in order, so a phone whose clock
+   runs slow never has its own later tap dropped. stampAt dates the arrival,
+   dispatch and first start the tap writes: the tap's own time when it was made on an earlier Denver day than the
+   server's (an Arrived queued offline yesterday is yesterday's arrival), else the server's time as before. Only an
+   offline tap carries a phone time (crew/job.js), and these rules only ever move a time into the past, so a wrong or
+   forged phone clock cannot make a crew look on site today. The phone's time is never proof of when the crew
+   arrived. */
+export function fieldTapStamps(state, input, now, actorId) {
+  const tapped = fieldTapTime(input, now), stored = Date.parse(state?.activityTappedAt || '');
+  return { activityTappedAt: tapped, stale: state?.activityBy !== actorId && Number.isFinite(stored) && stored > Date.parse(tapped),
+    stampAt: earlierDenverDay(tapped, now) ? tapped : now, earlierDay: earlierDenverDay(tapped, now) };
+}
 export function fieldJobProjection(job, events = [], options = {}) {
   const { view, segments } = fieldSegmentView(job, options), names = options.resourceNames || {};
   const instructions = job.jobInstructions && typeof job.jobInstructions === 'object' ? job.jobInstructions : job.instructions && typeof job.instructions === 'object' ? job.instructions : {}, scope = job.scope || {}, logistics = job.logistics || {};
@@ -176,8 +207,9 @@ export function fieldJobProjection(job, events = [], options = {}) {
     canEdit: !frozen, canManageChecklist: options.manager === true && !frozen, capabilities: options.capabilities || null,
     // A job left in Working overnight (the crew went home without Pause or End day) still offers "Start today's work":
     // the Working tap is how today's arrival is recorded (employee-arrival-deadline.js), and the page otherwise hides the
-    // status the job already has. The day is Denver's; options.now is injected in tests.
-    startTodayOffered: !frozen && stage === 'in_progress' && fieldActivity(job) === 'in_progress' && earlierDenverDay(state.activityAt || job.startedAt, options.now),
+    // status the job already has. The day is Denver's, read from when the last tap was made on the phone; options.now is
+    // injected in tests. Only someone who works the job today is offered it.
+    startTodayOffered: !frozen && stage === 'in_progress' && fieldActivity(job) === 'in_progress' && earlierDenverDay(state.activityTappedAt || state.activityAt || job.startedAt, options.now) && worksToday(job, options),
     allowedStatuses: frozen ? [] : ({ scheduled: ['dispatched'], confirmed: ['dispatched'], crew_assigned: ['dispatched'], dispatched: ['arrived', 'delayed'], arrived: ['in_progress', 'waiting'], in_progress: ['paused', 'waiting', 'delayed', 'in_progress'] }[stage] || []).filter(status => status !== 'paused' || fieldActivity(job) !== 'day_ended'),
   };
 }
@@ -191,7 +223,7 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
   const state = job.fieldExecution || {}, actorId = actor.user, actorName = actor.displayName || actor.user;
   const stamp = { at: now, actorId, actorName };
   const event = { id: input.requestId, action: input.action, actorId, actorName, createdAt: now, state: 'applied', visibility: 'crew' };
-  let patch = {}, milestone = null;
+  let patch = {}, milestone = null, staleTap = false;
   if (!['note', 'resolve_issue'].includes(input.action) && closed(job)) throw fieldFailure('This job is closed. Its execution record cannot be changed.', 409, 'FIELD_JOB_CLOSED');
   switch (input.action) {
     case 'note': {
@@ -234,8 +266,9 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
         if (missing.length) throw fieldFailure('Complete arrival preparation before starting work.', 409, 'FIELD_START_INCOMPLETE', { missing });
       }
       if (['paused', 'waiting', 'delayed'].includes(next) && fieldText(input.reason).length < 3) throw fieldFailure('Add a short reason so dispatch knows what is happening.');
-      const canonical = ['paused', 'waiting', 'delayed'].includes(next) ? current : next;
-      patch = { status: canonical, pipelineStatus: canonical, fieldExecution: { ...state, activity: next, activityAt: now, activityBy: actorId, activityReason: fieldText(input.reason, 1000) }, ...(next === 'in_progress' && !job.startedAt ? { startedAt: now, startedBy: actorId } : {}), ...(next === 'arrived' ? { arrivedAt: now, arrivedBy: actorId } : {}), ...(next === 'dispatched' ? { dispatchedAt: now, dispatchedBy: actorId } : {}) };
+      const canonical = ['paused', 'waiting', 'delayed'].includes(next) ? current : next, { activityTappedAt, stale, stampAt } = fieldTapStamps(state, input, now, actorId);
+      staleTap = stale;
+      patch = { status: canonical, pipelineStatus: canonical, fieldExecution: stale ? { ...state } : { ...state, activity: next, activityAt: now, activityTappedAt, activityBy: actorId, activityReason: fieldText(input.reason, 1000) }, ...(next === 'in_progress' && !job.startedAt ? { startedAt: stampAt, startedBy: actorId } : {}), ...(next === 'arrived' ? { arrivedAt: stampAt, arrivedBy: actorId } : {}), ...(next === 'dispatched' ? { dispatchedAt: stampAt, dispatchedBy: actorId } : {}) };
       if (next === 'in_progress' && current !== 'in_progress') {
         const items = fieldChecklist(job).filter(item => ['departure', 'arrival'].includes(item.stage));
         const progress = { completedAt: now, completedBy: actorId, completedCount: items.filter(item => item.completed).length, totalCount: items.length, standardItems: items };
@@ -285,7 +318,8 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
     }
     default: throw fieldFailure('Choose a supported job action.');
   }
-  if (['status', 'complete'].includes(input.action)) {
+  // A stale tap (fieldTapStamps) leaves the job clock as the newer tap set it.
+  if (['status', 'complete'].includes(input.action) && !staleTap) {
     const time = advanceFieldTime(job, input.action === 'complete' ? null : input.status, actor, input.requestId, now);
     if (time.clock) patch.fieldExecution = { ...(patch.fieldExecution || state), jobTime: time.clock };
     if (time.segment) event.timeSegment = time.segment;

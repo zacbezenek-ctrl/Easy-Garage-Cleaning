@@ -355,7 +355,7 @@ class JobActualsScreenTests(unittest.TestCase):
     def test_estimator_accuracy_ranks_the_steady_estimator_and_shows_hours_only(self):
         page, card = self.open_accuracy(1280)
         # Est.Alex: 8 -> 8, 8 -> 9, 10 -> 12 and 7.25 -> 7 man-hours: 0%, +12.5%, +20%, -3.4%; average miss 9.0%, under by 7.3%.
-        expect(card.get_by_role('status')).to_have_text('Most accurate this month: est.alex — off by 9.0% on average across 4 jobs.')
+        expect(card.get_by_role('status')).to_have_text('Most accurate in the last 30 days: est.alex — off by 9.0% on average across 4 jobs.')
         alex = card.locator('tr[data-estimator="est.alex"]')
         expect(alex.locator('td[data-label="Jobs"]')).to_have_text('4')
         expect(alex.locator('td[data-label="Average miss"]')).to_have_text('9.0%')
@@ -379,7 +379,7 @@ class JobActualsScreenTests(unittest.TestCase):
 
     def test_estimator_accuracy_on_a_phone(self):
         page, card = self.open_accuracy(390, 844, mobile=True)
-        expect(card.get_by_role('status')).to_contain_text('Most accurate this month: est.alex')
+        expect(card.get_by_role('status')).to_contain_text('Most accurate in the last 30 days: est.alex')
         card.get_by_text('Estimate vs actual, job by job').click()
         page.screenshot(path=str(RESULTS / 'job-actuals-estimator-accuracy-390.png'), full_page=True)
         self.assert_layout(page, phone=True)
@@ -390,10 +390,18 @@ class JobActualsScreenTests(unittest.TestCase):
         card.get_by_text('Estimate vs actual, job by job').click()
         expect(details).to_have_attribute('open', '')
         expect(details.locator('tbody tr')).to_have_count(20)
-        card.get_by_role('button', name=re.compile(r'^Show all \d+ jobs$')).click()
+        show = card.get_by_role('button', name=re.compile(r'^Show all \d+ jobs$'))
+        show.scroll_into_view_if_needed()
+        before = page.evaluate('window.scrollY')
+        show.click()
         expect(details).to_have_attribute('open', '')
         self.assertGreater(details.locator('tbody tr').count(), 20)
-        expect(details.locator('summary')).to_be_focused()
+        # Focus moves to the first row Show all added, where the button was: the page does not jump back to the list top.
+        first_added = details.locator('tbody tr').nth(20)
+        expect(first_added).to_be_focused()
+        self.assertGreaterEqual(page.evaluate('window.scrollY'), before - 100, 'the page stays where the reader was')
+        box, height = first_added.bounding_box(), page.viewport_size['height']
+        self.assertTrue(0 <= box['y'] < height, f'the focused row is on screen: {box}')
         card.get_by_role('button', name='Last 90 days').click()
         expect(details).to_have_attribute('open', '')
         expect(card.get_by_role('button', name='Last 90 days')).to_be_focused()

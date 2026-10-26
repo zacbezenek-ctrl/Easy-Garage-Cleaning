@@ -62,6 +62,11 @@ jobs:
         env:
           FIELD_PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
         run: node tests/field-multiday.browser.mjs
+      - name: Team Lead scoped job controls on a phone through real HTTP handlers
+        if: ${{ !cancelled() }}
+        env:
+          FIELD_PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
+        run: node tests/team-lead-job-operations.browser.mjs
       - name: Canvassing rules, per-rep API access and the Larimer import on the emulator
         if: ${{ !cancelled() }}
         env:

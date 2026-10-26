@@ -242,6 +242,9 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     customersByKey: key => query('customers', [...CUSTOMER_FIELDS, 'searchKeys'], 20000)({ field: 'searchKeys', op: 'ARRAY_CONTAINS', value: key }),
     // CREW-SCHEDULE (functions/api/crew-schedule.js): the crew records alone, and the work dated in a bounded window.
     crewResources: () => query('dispatchResources', CREW_RESOURCE_FIELDS, 2000)({ field: 'recordType', op: 'EQUAL', value: 'crew' }),
+    // SHIFT-SWAP (shift-swaps.js): swap requests by one field (from, to, or status IN the open states), masked to
+    // `fields`, complete and failing closed like every query here. Equality filters only: no composite index.
+    shiftSwaps: (spec, fields) => query('shiftSwaps', fields, 500)(spec),
     // SIGNOFF (job-signoff.js): jobs completed since an ISO time (one range on completedAt, Firestore's automatic
     // single-field index) and the jobs a supervisor marked as needing follow-up, both masked to `fields`.
     completedJobsSince: (since, fields, limit = 5000) => query('jobs', fields, limit)({ field: 'completedAt', op: 'GREATER_THAN_OR_EQUAL', value: since }),

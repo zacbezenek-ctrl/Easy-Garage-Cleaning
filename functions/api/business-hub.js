@@ -3,12 +3,13 @@ import { createBusinessStore } from '../_lib/business-hub-store.js';
 import { businessHubModules } from '../_lib/business-hub-modules.js';
 import { createInviteDelivery } from '../_lib/business-hub-invite-delivery.js';
 import { getHubSession } from '../_lib/hub-session.js';
+import { canDispatch } from '../_lib/dispatch-permissions.js';
 import { customerMoneyState, customerPaymentNeedsReview } from '../_lib/customer-payments.js';
 import { createCustomerPortalSessionCookie, clearCustomerPortalSessionCookie } from '../_lib/customer-portal.js';
 export async function onRequest(context) {
   const { request, env } = context;
   return createBusinessHandler({
-    store: createBusinessStore(env), getStaff: req => getHubSession(req, env),
+    store: createBusinessStore(env), getStaff: req => getHubSession(req, env), canCreateJob: actor => canDispatch(actor, env),
     finance: customerMoneyState, needsReview: customerPaymentNeedsReview,
     projectCookie: (jobId, claims) => createCustomerPortalSessionCookie(env, jobId, claims),
     clearProjectCookie: clearCustomerPortalSessionCookie, invites: createInviteDelivery({ env }),

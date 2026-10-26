@@ -31,7 +31,7 @@ const ROOT_READS = 25;
 // money inputs mirror customerMoneyState and customerPaymentNeedsReview, the
 // quote inputs projectReleased (pricesPendingApproval.status: a signed job held for the owner's price approval).
 export const ACCOUNT_JOB_FIELDS = Object.freeze([
-  'type', 'recordType', 'customerId', 'customerAccountOwnerJobId', 'customerPortalLinkVersion', 'businessAccountId', 'status', 'pipelineStatus', 'date', 'time', 'endTime', 'address', 'serviceType', 'arrivalWindow',
+  'type', 'recordType', 'customerId', 'customerAccountOwnerJobId', 'customerPortalLinkVersion', 'businessAccountId', 'status', 'pipelineStatus', 'date', 'endDate', 'time', 'endTime', 'address', 'serviceType', 'arrivalWindow',
   'quoteStatus', 'total', 'priceQuoted', 'lockedTotal', 'rate', 'createdAt', 'updatedAt', 'pricesPendingApproval.status',
   'estimate.number', 'estimate.status', 'estimate.amount', 'estimate.sentAt', 'estimate.validUntil', 'estimate.acceptedAt',
   'customerApproval.status', 'customerApproval.approvedAt', 'customerApproval.amount',
@@ -110,7 +110,7 @@ async function customerRows(store, customerId, pageSize, maxJobs) {
 function jobView(job) {
   return {
     jobId: job.id, type: job.type, service: text(job.serviceType, 120) || (job.type === 'walkthrough' ? 'Walkthrough' : 'Garage service'), status: stage(job),
-    date: isoDate(job.date), time: clock(job.time), endTime: clock(job.endTime), address: text(job.address, 240), arrivalWindow: text(job.arrivalWindow, 80),
+    date: isoDate(job.date), endDate: isoDate(job.endDate || job.date), time: clock(job.time), endTime: clock(job.endTime), address: text(job.address, 240), arrivalWindow: text(job.arrivalWindow, 80),
   };
 }
 
@@ -225,7 +225,7 @@ export async function readCustomerAccountJob(store, session, jobId) {
   if (businessManaged(job, root)) throw fail('CUSTOMER_ACCOUNT_JOB_BUSINESS', 'This project is shared with a business account. Its team opens it from the Business Hub.', 409);
   const linkVersion = customerPortalLinkVersion(root);
   if (linkVersion === null) throw fail('CUSTOMER_ACCOUNT_JOB_REVIEW', 'This project needs review by Easy Garage Cleaning before it can be opened.', 409);
-  return { job: jobView(job), linkVersion, linkRoot: root.id };
+  return { job: jobView(job), linkVersion, linkRoot: root.id, revision: job.revision, rootRevision: root.revision };
 }
 
 /** Hands a verified account job to the existing per-job portal: an owner

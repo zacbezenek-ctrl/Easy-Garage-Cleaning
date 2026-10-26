@@ -110,7 +110,7 @@ export function customerLoginVerifyHandlers({ storage = env => customerAccountSt
       // No project to open (none active, or only Business Hub projects): any per-job
       // portal cookie left by an earlier sign-in on this browser is cleared.
       const project = signedIn.prepared || '';
-      return redirect(project ? '/customer-portal' : '/client-login?status=signed_in', [signedIn.session.cookie, project || clearCustomerPortalSessionCookie()]);
+      return redirect('/my-visits', [signedIn.session.cookie, project || clearCustomerPortalSessionCookie()]);
     },
   };
 }
