@@ -134,6 +134,31 @@ test('a lost connection keeps the action queued with its request ID, and later r
   }
 });
 
+test('a status or End day tap whose direct send fails keeps when it was stored for its replays; other actions do not', async () => {
+  const { box } = outbox(), status = field('Crew.One', 'job-a', 'status', { status: 'dispatched' });
+  const { item } = await box.enqueue(status);
+  await box.flush({ user: 'Crew.One', direct: status.requestId, transport: transport({ field: () => fail('The server did not confirm this action.', 0, 'OUTBOX_NETWORK') }) });
+  assert.equal(plain(await box.items('Crew.One'))[0].payload.tappedAt, item.queuedAt, 'stamped with the time it was stored');
+  const back = transport();
+  await box.flush({ user: 'Crew.One', transport: back });
+  assert.equal(back.sent('field')[0].tappedAt, item.queuedAt);
+  // A server error, and a refusal kept for review, stamp it too; an offline tap's own time is never replaced.
+  const ended = field('Crew.One', 'job-a', 'end_day', { notes: 'Synthetic notes' }), offline = field('Crew.One', 'job-b', 'status', { status: 'arrived', tappedAt: '2026-09-22T14:00:00.000Z' });
+  const kept = (await box.enqueue(ended)).item;
+  await box.flush({ user: 'Crew.One', direct: ended.requestId, transport: transport({ field: () => fail('This job changed.', 409, 'FIELD_REVISION_CONFLICT') }) });
+  assert.equal(plain(await box.items('Crew.One'))[0].payload.tappedAt, kept.queuedAt);
+  await box.remove(ended.requestId); await box.enqueue(offline);
+  await box.flush({ user: 'Crew.One', direct: offline.requestId, transport: transport({ field: () => fail('Retry shortly', 503, '') }) });
+  assert.equal(plain(await box.items('Crew.One'))[0].payload.tappedAt, '2026-09-22T14:00:00.000Z');
+  await box.remove(offline.requestId);
+  // A note, and a status that was never a direct send, are not stamped.
+  const note = field('Crew.One', 'job-a', 'note', { body: 'Synthetic note', issue: false, visibility: 'crew' }), behind = field('Crew.One', 'job-a', 'status', { status: 'arrived' });
+  await box.enqueue(note); await box.enqueue(behind);
+  await box.flush({ user: 'Crew.One', direct: note.requestId, transport: transport({ field: () => fail('The server did not confirm this action.', 0, 'OUTBOX_NETWORK') }) });
+  await box.flush({ user: 'Crew.One', transport: transport({ field: input => input.action === 'status' ? fail('The server did not confirm this action.', 0, 'OUTBOX_NETWORK') : undefined }) });
+  assert.deepEqual(plain(await box.items('Crew.One')).map(row => [row.payload.action, row.payload.tappedAt]), [['status', undefined]]);
+});
+
 test('a revision conflict on replay is surfaced and only an explicit retry re-sends the same action', async () => {
   const { box } = outbox(), item = field('Crew.One', 'job-a', 'note', { body: 'Needs review', issue: false, visibility: 'crew' });
   await box.enqueue(item);

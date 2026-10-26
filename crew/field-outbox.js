@@ -124,6 +124,11 @@
   // as not allowed (403: this job is not one of the crew member's assigned jobs) is dropped and reported, never left in
   // the crew member's clock lane where it would hold their own clock and job-time actions until they found it.
   const dropOnRefusal = (item, error) => item.kind === 'clock' && item.payload?.op === 'job_time' && item.payload.source === 'status' && Number(error?.status) === 403;
+  // A status or End day tap whose direct send was not confirmed (a weak signal: the phone looked online) keeps when it
+  // was made, as an offline tap does (crew/job.js): queuedAt is when it was stored on this phone. A later replay is then
+  // dated by the tap, not by when it reached the server; the server clamps it (fieldTapTime) and leaves the
+  // fingerprint unchanged, so a send that did land but lost its reply still matches on replay.
+  const keepTapTime = item => item.kind === 'field' && ['status', 'end_day'].includes(item.payload?.action) && !item.payload.tappedAt && item.queuedAt ? { ...item, payload: { ...item.payload, tappedAt: item.queuedAt } } : item;
   const detail = error => ({ message: String(error?.message || 'This action was not confirmed.').slice(0, 1000), code: String(error?.code || '').slice(0, 80), status: Number(error?.status) || 0, missing: Array.isArray(error?.missing) ? error.missing.map(item => String(item).slice(0, 500)).slice(0, 40) : [] });
 
   async function sendClock(item, transport) {
@@ -212,6 +217,7 @@
           // Another crew action can land between a photo's version check and
           // its upload; the photo is sent again at once with the new version.
           const moved = isPhoto(item) && error?.code === 'FIELD_REVISION_CONFLICT';
+          if (isDirect) item = keepTapTime(item);
           const kind = moved ? 'transient' : classify(error), serverFailures = (Number(item.serverFailures) || 0) + (kind === 'transient' ? 1 : 0);
           // A server error that keeps repeating waits for Retry or Discard like
           // a refusal, so it cannot hold every later action indefinitely.

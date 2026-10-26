@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from './helpers/vm-realm.mjs';
 import { storage, FixedDate } from './helpers/hub-dom.mjs';
+import { fakeIndexedDB } from './helpers/fake-indexeddb.mjs';
 import { flags, visitRow, arrivalDeadline, enRouteDeadline, startAt, denverDate } from '../functions/_lib/arrival-deadline.js';
 import { projectDispatchJob } from '../functions/_lib/dispatch-service.js';
 import { formatArrivalWindow } from '../functions/_lib/dispatch-arrival.js';
-import { fieldChecklist, fieldCommand, fieldJobProjection } from '../functions/_lib/field-execution.js';
+import { fieldChecklist, fieldCommand, fieldFingerprint, fieldJobProjection } from '../functions/_lib/field-execution.js';
 import { fieldVisitCommand } from '../functions/_lib/field-execution-visits.js';
 
 // FIELD-FLAGS: every instant here is fixed; nothing reads the real clock.
@@ -486,5 +487,30 @@ for (const [name, command] of [['FIELD_MULTIDAY_VISITS off', fieldCommand], ['FI
     // A tap made today is stamped with the server's time, as before.
     const sameDay = tapAt(command, twoDay(), 'dispatched', denver('2026-09-22', '07:39'), denver('2026-09-22', '07:40'));
     assert.equal(sameDay.dispatchedAt, denver('2026-09-22', '07:40'));
+  });
+}
+
+// A weak signal: the phone looked online, so the tap went out without tappedAt, but the send failed. The outbox keeps
+// the time the tap was stored (crew/field-outbox.js keepTapTime), and the replay the next day is the tap's day.
+for (const [name, command] of [['FIELD_MULTIDAY_VISITS off', fieldCommand], ['FIELD_MULTIDAY_VISITS on', fieldVisitCommand]]) {
+  test(`an online tap whose send fails and replays the next day is recorded on the tap's day (${name})`, async () => {
+    const context = vm.createContext({ console, setTimeout, clearTimeout, Promise, JSON, URL, Error, TypeError, Map, Set, encodeURIComponent, indexedDB: fakeIndexedDB() });
+    context.self = context; vm.runInContext(source('crew/field-outbox.js'), context);
+    const tappedAt = denver('2026-09-22', '16:00'), box = context.EGCFieldOutbox.create({ now: () => new Date(tappedAt) });
+    const requestId = '00000000-0000-4000-8000-0000000000a1', payload = { action: 'status', status: 'paused', reason: 'Synthetic traffic', jobId: 'synthetic-flag-job', requestId, expectedRevision: 'seen-1', expectedUser: 'crew.one' };
+    const { direct } = await box.enqueue({ requestId, kind: 'field', user: 'crew.one', jobId: 'synthetic-flag-job', payload });
+    assert.equal(direct, true, 'sent at once, like an online tap');
+    const sent = [], wire = fails => ({ revision: async () => 'server-rev', field: async input => { sent.push(JSON.parse(JSON.stringify(input))); if (fails) throw Object.assign(new Error('The server did not confirm this action.'), { status: 0, code: 'OUTBOX_NETWORK' }); return { ok: true }; } });
+    const first = await box.flush({ user: 'crew.one', transport: wire(true), direct: requestId });
+    assert.equal(first.stopped.reason, 'network');
+    assert.equal(sent[0].tappedAt, undefined, 'the online send itself carries no phone time');
+    await box.flush({ user: 'crew.one', transport: wire(false) });
+    assert.equal(sent[1].tappedAt, tappedAt, 'the replay carries when the tap was made');
+    assert.equal(await fieldFingerprint('crew.one', sent[1]), await fieldFingerprint('crew.one', sent[0]), 'a send that landed but lost its reply still matches its replay');
+    // The replay reaches the server on day 2.
+    const replayed = { ...working(command), ...command(working(command), tapper, sent[1], denver('2026-09-23', '07:30')).patch };
+    assert.equal(replayed.fieldExecution.activityTappedAt, tappedAt, 'recorded on the tap\'s day');
+    assert.equal(replayed.fieldExecution.activityAt, denver('2026-09-23', '07:30'));
+    assert.deepEqual(kinds(flags(visitRow(replayed, replayed.assignmentSegments[1]), { now: at(denver('2026-09-23', '08:15')) })), ['late'], 'not day 2\'s arrival');
   });
 }

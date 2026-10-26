@@ -512,7 +512,9 @@
     // Controls lock at once, before the action is stored, so a second tap cannot race it.
     // A status or End day tap made offline carries when it was made on this phone, set once here so its replay sends
     // the same action (and fingerprint); the Hub dates that tap by it, not by when it reached the server. An online tap
-    // sends none, so the server's clock dates it and a wrong phone clock cannot move it to another day.
+    // sends none, so the server's clock dates it and a wrong phone clock cannot move it to another day. An online tap
+    // whose send goes unanswered (a weak signal) gets the time it was stored here once it waits in the outbox
+    // (field-outbox.js keepTapTime), so a replay the next day is still dated by the tap.
     const tapped = ['status', 'end_day'].includes(payload.action) && offline() ? { tappedAt: new Date().toISOString() } : {};
     const input = { ...payload, ...tapped, jobId, requestId: crypto.randomUUID(), expectedRevision: S.job.expectedRevision, expectedUser: S.user.user };
     const item = { requestId: input.requestId, kind: 'field', user: S.user.user, jobId, payload: input };

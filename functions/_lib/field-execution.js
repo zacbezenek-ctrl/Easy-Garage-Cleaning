@@ -214,8 +214,10 @@ export function fieldJobProjection(job, events = [], options = {}) {
   };
 }
 
+// tappedAt is left out: a tap whose direct send went unanswered is replayed with the time it was made on the phone
+// (crew/field-outbox.js keepTapTime), and must still match the send that may already have landed.
 export async function fieldFingerprint(actor, input) {
-  const normalize = value => Array.isArray(value) ? value.map(normalize) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).filter(key => !['expectedRevision', 'expectedUser'].includes(key)).sort().map(key => [key, normalize(value[key])])) : value;
+  const normalize = value => Array.isArray(value) ? value.map(normalize) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).filter(key => !['expectedRevision', 'expectedUser', 'tappedAt'].includes(key)).sort().map(key => [key, normalize(value[key])])) : value;
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ actor, input: normalize(input) }))))].map(value => value.toString(16).padStart(2, '0')).join('');
 }
 
