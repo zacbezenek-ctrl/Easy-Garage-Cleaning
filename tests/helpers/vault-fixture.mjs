@@ -69,11 +69,13 @@ export function vaultFirestore(t) {
       if (!matches(documents.get(key), condition)) return refused(condition);
       documents.set(key, { name: `${ROOT}/${key}`, fields: body.fields, updateTime: version() });
     }
+    // Document DELETE (crew-push.js drops a subscription the push service says is gone): Firestore answers 200 either way.
+    if (method === 'DELETE') { documents.delete(key); return Response.json({}); }
     if (method !== 'GET' && method !== 'PATCH') throw new Error(`Unexpected ${method} ${url}`);
     if (method === 'GET' && key.split('/').length % 2 === 1) return Response.json({ documents: [...documents].filter(([name]) => name.startsWith(`${key}/`) && !name.slice(key.length + 1).includes('/')).map(([, doc]) => structuredClone(doc)) });
     return documents.has(key) ? Response.json(structuredClone(documents.get(key))) : Response.json({ error: { status: 'NOT_FOUND' } }, { status: 404 });
   });
-  const writes = () => requests.filter(request => request.method === 'PATCH' || request.url.pathname.endsWith(':commit') && !request.body.writes.every(isRevision));
+  const writes = () => requests.filter(request => request.method === 'PATCH' || request.method === 'DELETE' || request.url.pathname.endsWith(':commit') && !request.body.writes.every(isRevision));
   return { documents, requests, commits, revisions, hooks, writes, snapshot: () => JSON.stringify([...documents].sort(([a], [b]) => a.localeCompare(b))) };
 }
 

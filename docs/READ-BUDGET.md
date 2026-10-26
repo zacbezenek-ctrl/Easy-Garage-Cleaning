@@ -134,6 +134,15 @@ billed reads with the repo's read meter, before against after.
 3. **Crew job-room checks:** 1 job GET per room on each crew poll (about 72,000 a day here). They stay uncached, so a
    removed crew member loses a room on the next poll.
 
+## Crew-chat phone alerts (CREW-PUSH)
+
+`EGC_CREW_CHAT_PUSH` adds no read to any poll. Each browser subscription is one sealed document in its own server-only
+collection, `employee_push_subscriptions`, outside `jobs`, so it never enlarges a `jobs` scan or the vault families the
+Hub polls. Only a newly saved chat message reads them: one query over the subscriptions (one read per subscribed
+device), the staff roster (the employee accounts, as a sign-in already reads them) and, for a job room, the job once.
+With 15 devices and 150 messages a day that is about 2,500 reads a day, against the polls' millions. A replayed queued
+message reads nothing more.
+
 ## For the owner
 
 **In the Firebase console** (project `egcw-1ec83`):

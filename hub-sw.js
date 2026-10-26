@@ -108,21 +108,39 @@ self.addEventListener('fetch', event => {
 // MANAGER-SLIP-ALERTS (employee-slip-alerts.js): a slip alert names view 'today' and its job. The URL is built only from
 // this fixed list of screens and a job id that is a plain document id; anything else opens the screen without a job, or
 // My day. An open Hub is not reloaded: it is focused and told the job (message egc-alert-open), and opens the row itself.
+// CREW-PUSH (functions/_lib/crew-push.js): a crew-chat alert names view 'crew_chat' and its room, 'team' or 'job:<id>'
+// with the same plain document id; the Hub opens on that room (?room=) or, already open, is told it.
 const ALERT_VIEWS = new Set(['my_day', 'crew_chat', 'today']);
 const ALERT_JOB = /^[A-Za-z0-9_-]{1,128}$/;
+const ALERT_ROOM = /^(?:team|job:[A-Za-z0-9_-]{1,128})$/;
 self.addEventListener('notificationclick', event => {
   event.notification.close();
   const data = event.notification.data;
   const view = ALERT_VIEWS.has(data?.view) ? data.view : 'my_day';
   const job = view === 'today' && typeof data?.job === 'string' && ALERT_JOB.test(data.job) ? data.job : '';
+  const room = view === 'crew_chat' && typeof data?.room === 'string' && ALERT_ROOM.test(data.room) ? data.room : '';
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const hub = windows.find(client => { try { return /^\/employee(?:\.html)?\/?$/.test(new URL(client.url).pathname); } catch { return false; } });
     if (hub) {
       const focused = await hub.focus();
-      if (job) try { (focused || hub).postMessage({ type: 'egc-alert-open', view, job }); } catch {}
+      if (job || room) try { (focused || hub).postMessage({ type: 'egc-alert-open', view, ...(job ? { job } : { room }) }); } catch {}
       return focused;
     }
-    return self.clients.openWindow(`/employee?view=${view}${job ? `&job=${job}` : ''}`);
+    return self.clients.openWindow(`/employee?view=${view}${job ? `&job=${job}` : room ? `&room=${encodeURIComponent(room)}` : ''}`);
   })().catch(() => {}));
+});
+
+// A crew-chat alert pushed while the Hub is closed. The server sends only the sender's name and the room (never the
+// message text); only those plain fields are shown, each cut to length, and the alert always shows, as a push must.
+self.addEventListener('push', event => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch { data = {}; }
+  const text = (value, fallback, max) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : fallback;
+  const room = typeof data?.room === 'string' && ALERT_ROOM.test(data.room) ? data.room : 'team';
+  event.waitUntil(self.registration.showNotification(text(data?.title, 'EGC crew chat', 80), {
+    body: text(data?.body, 'New crew-chat message', 160),
+    tag: text(data?.tag, room, 180),
+    data: { view: 'crew_chat', room },
+  }).catch(() => {}));
 });
