@@ -131,7 +131,7 @@ export async function onRequest(context) {
     response.headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'");
   }
   // Client Login and its link-confirm page: private, uncacheable, same-origin scripts and forms only.
-  if (/^\/client-login(?:\.html|\.js|\.css)?\/?$/.test(pathname) || pathname === '/api/customer-login' || pathname === '/api/customer-login-verify') {
+  if (/^\/(?:client-login|my-visits)(?:\.html|\.js|\.css)?\/?$/.test(pathname) || pathname === '/api/customer-login' || pathname === '/api/customer-login-verify') {
     response.headers.set('Cache-Control', 'no-store');
     response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
     // The confirm page's form POST needs a real Origin; strict-origin still never sends its token-bearing URL.

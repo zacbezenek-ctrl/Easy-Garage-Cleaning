@@ -94,6 +94,24 @@ test('GET keeps jobs led when timecards cannot be read, and says so', async () =
   assert.deepEqual(body.last30.map(row => [row.employee, row.jobsLed, row.hours]), [['crew.one', 1, 0]]);
 });
 
+test('Team Lead performance is a narrow count read; it grants no job-actuals or money access', async () => {
+  const { requireJobActualsViewer } = await import('../functions/_lib/job-actuals-settings.js');
+  const { can } = await import('../functions/_lib/staff-roles.js');
+  for (const actor of [
+    { user: 'lead', role: 'team_lead', businessAccess: false },
+    { user: 'lead', role: 'crew', staffRoles: ['team_lead'], businessAccess: false },
+  ]) {
+    const response = await get(api({ actor }).handlers), body = await response.json();
+    assert.equal(response.status, 200);
+    assert.doesNotMatch(JSON.stringify(body), /Cents|cost|price|amount|hourlyRate|phone|address|email/i);
+    assert.throws(() => requireJobActualsViewer(actor));
+    for (const permission of ['money.refund','money.charge_stored_card','pay.manage','dispatch.write']) assert.equal(can(actor, permission, {}), false);
+  }
+  for (const actor of [{ user: 'lead', role: 'crew_lead' }, { user: 'rep', role: 'sales' }, { role: 'team_lead' }, { user: 'former', role: 'team_lead', staffRoles: ['crew'] }]) {
+    assert.notEqual((await get(api({ actor }).handlers)).status, 200);
+  }
+});
+
 test('the saved arrival window label stands in for a missing window end; no window at all falls back to start + 15 minutes', () => {
   assert.equal(new Date(arrivalDeadline(job('l', { arrivalWindowStart: null, arrivalWindowEnd: null, arrivalWindow: '8:00 AM – 10:30 AM' }))).toISOString(), '2026-10-10T16:30:00.000Z', '10:30 MDT from the label');
   assert.equal(new Date(arrivalDeadline(job('p', { time: '13:00', arrivalWindowStart: null, arrivalWindowEnd: null, arrivalWindow: '1:00 PM – 2:00 PM' }))).toISOString(), '2026-10-10T20:00:00.000Z', 'PM label');

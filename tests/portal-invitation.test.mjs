@@ -10,7 +10,7 @@ import { decodeFirestoreFields, encodeFirestoreFields } from '../functions/_lib/
 const env = { HUB_SESSION_SECRET: 'test-portal-invitation', FIREBASE_API_KEY: 'firebase-test-invitation', HIGHLEVEL_API_KEY: 'ghl-test', HIGHLEVEL_LOCATION_ID: 'location-1', HUB_AUTH_USERS_JSON: JSON.stringify({ ZacB: { passwordHash: 'test', displayName: 'Zac', role: 'owner' }, Crew: { passwordHash: 'test', displayName: 'Crew', role: 'crew' } }) };
 const approved = { type: 'job', customer: 'Test Customer', phone: '(970) 555-0123', email: 'test@example.com', estimate: { status: 'accepted', amount: 1000 }, highlevelContactId: 'contact-1', customerPortalInvitationRequestedAt: '2026-09-06T12:00:00Z' };
 
-async function fixture(run, { job = {}, contact = {}, sendStatus = 200, sendThrows = false, sendBody, failMetadata = false, failTags = false, onContact, onClaim } = {}) {
+async function fixture(run, { job = {}, contact = {}, sendStatus = 200, sendThrows = false, sendBody, failMetadata = false, failTags = false, onContact, onClaim, settings, settingsBody, settingsStatus = 200 } = {}) {
   let stored = { ...structuredClone(approved), ...job }, version = 0, ledger = null, ledgerVersion = 0, jobReadsDown = false;
   const messages = [], upserts = [], allCalls = [];
   const originalFetch = globalThis.fetch;
@@ -21,6 +21,10 @@ async function fixture(run, { job = {}, contact = {}, sendStatus = 200, sendThro
   globalThis.fetch = async (input, options = {}) => {
     const url = new URL(input);
     allCalls.push({ url: url.href, options });
+    if (url.pathname.endsWith('/messaging_settings/automation')) {
+      if (settingsBody !== undefined) return new Response(JSON.stringify(settingsBody), { status: settingsStatus });
+      return settings === undefined ? new Response('{}', { status: 404 }) : new Response(JSON.stringify({ fields: encodeFirestoreFields(settings), updateTime: '2026-09-06T12:00:00.000Z' }), { status: settingsStatus });
+    }
     if (url.pathname.includes('/portal_invitations/')) {
       const time = () => `2026-09-06T13:00:00.${String(ledgerVersion).padStart(6, '0')}Z`;
       if (options.method === 'PATCH') {
@@ -78,6 +82,29 @@ test('accepted quote sends a valid private link to the saved contact exactly onc
   assert.equal((await sendAcceptedQuotePortal(env, 'job-1')).status, 'submitted');
   assert.equal(messages.length, 1);
 }));
+
+test('a saved global pause prevents direct invitations and contact creation', async () => fixture(async ({ messages, upserts, ledger, allCalls }) => {
+  assert.deepEqual(await sendAcceptedQuotePortal(env, 'job-1'), { status: 'paused', reason: 'messaging_paused' });
+  assert.equal(messages.length, 0); assert.equal(upserts.length, 0); assert.equal(ledger(), null);
+  assert.equal(allCalls.some(call => call.url.includes('leadconnectorhq.com')), false);
+}, { settings: { paused: true }, job: { highlevelContactId: '' } }));
+
+test('invalid or unavailable pause settings fail closed before a provider write', async () => {
+  for (const options of [{ settings: { paused: 'false' } }, { settings: {}, settingsStatus: 503 }, ...[{}, [], { fields: {}, updateTime: '' }, { fields: [], updateTime: 'version' }].map(settingsBody => ({ settingsBody }))]) await fixture(async ({ messages, upserts }) => {
+    assert.equal((await sendAcceptedQuotePortal(env, 'job-1')).status, 'settings_unavailable');
+    assert.equal(messages.length, 0); assert.equal(upserts.length, 0);
+  }, options);
+});
+
+test('a pause after the delivery claim cancels the send and an explicit unpause can retry once', async () => {
+  const settings = { paused: false }; let first = true;
+  await fixture(async ({ messages, ledger }) => {
+    assert.equal((await sendAcceptedQuotePortal(env, 'job-1')).status, 'paused'); assert.equal(messages.length, 0); assert.equal(ledger().status, 'paused');
+    settings.paused = false;
+    assert.equal((await sendAcceptedQuotePortal(env, 'job-1')).status, 'submitted');
+    assert.equal((await sendAcceptedQuotePortal(env, 'job-1')).status, 'submitted'); assert.equal(messages.length, 1);
+  }, { settings, onClaim: () => { if (first) { first = false; settings.paused = true; } } });
+});
 
 test('concurrent acceptance requests claim only one delivery', async () => fixture(async ({ messages }) => {
   await Promise.all([sendAcceptedQuotePortal(env, 'job-1'), sendAcceptedQuotePortal(env, 'job-1')]);

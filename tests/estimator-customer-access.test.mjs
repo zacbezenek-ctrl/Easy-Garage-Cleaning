@@ -391,3 +391,28 @@ test('an office resave that leaves the name, phone and address unchanged does no
   const mine = await get(sales);
   assert.deepEqual([mine.body.review.draft.customerName, mine.body.review.draft.phone, mine.body.review.draft.address, mine.body.review.draft.handoffNotes], ['Casey Example', '9705550199', '9 Other Road', 'Use the side door']);
 });
+
+test('resuming a saved job by its id alone (no walkthrough in the URL) never hands an estimator another estimator\'s draft or capture', async () => {
+  const { walkthroughCaptureHandlers } = await import('../functions/api/walkthrough-capture.js');
+  const f = fixture();
+  f.rows.get('jobs/w1').assignedCrew = [otherSales.user];
+  // Estimator A drafts the quote of their assigned walkthrough and records the stored details on its capture.
+  const own = await saveDraft(f, otherSales, { requestId: randomUUID(), customerId: 'ghl_provider7', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', draft: draft() });
+  assert.equal(own.status, 200, own.text);
+  const id = own.body.job.id, capture = actor => walkthroughCaptureHandlers({ session: async () => actor, storage: () => f.store, now: () => new Date(NOW) });
+  assert.equal((await call(capture(otherSales).post({ request: json('/api/walkthrough-capture', { action: 'save', jobId: id, requestId: randomUUID(), expectedRevision: 0, data: { customerName: 'Jordan Example', address: '742 Synthetic Way' } }), env: ROLES }))).status, 200);
+  // A's own recovery works: the job alone finds its walkthrough.
+  const resumed = await prepare(f, otherSales, { jobId: id });
+  assert.deepEqual([resumed.status, resumed.body.sourceWalkthroughId, resumed.body.customerId], [200, 'w1', 'ghl_provider7']);
+  // Estimator B gets nothing through the same recovery, the quote or the capture.
+  const seen = [];
+  for (const response of [await prepare(f, sales, { jobId: id }), await readDraft(f, sales, id), await call(capture(sales).get({ request: new Request(`${SITE}/api/walkthrough-capture?jobId=${id}`), env: ROLES }))]) {
+    seen.push(response.text);
+    assert.equal(response.status, 403, response.text);
+  }
+  assert.deepEqual(leaks(seen.join('\n')), []);
+  assert.equal(/Jordan|Garage reset/.test(seen.join('\n')), false);
+  // The office hands the job to B: the recovery opens it for them.
+  f.job(id).assignedCrew = [sales.user];
+  assert.equal((await prepare(f, sales, { jobId: id })).status, 200);
+});

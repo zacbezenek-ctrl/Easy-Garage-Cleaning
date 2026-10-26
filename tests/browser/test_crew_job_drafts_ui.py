@@ -195,7 +195,7 @@ class CrewJobDraftsBrowserTests(unittest.TestCase):
         expect(page.locator('.section-heading .badge').first).to_have_text('paused')
         self.assertEqual(len(self.posts), 1)
         post = self.posts[0]
-        self.assertEqual(sorted(post), ['action', 'expectedRevision', 'expectedUser', 'jobId', 'reason', 'requestId', 'status'])
+        self.assertEqual(sorted(post), ['action', 'expectedRevision', 'expectedUser', 'jobId', 'reason', 'requestId', 'status'], 'an online tap sends no phone time: the server dates it (#219)')
         self.assertEqual({key: post[key] for key in ['action', 'status', 'reason', 'jobId', 'expectedRevision', 'expectedUser']},
                          {'action': 'status', 'status': 'paused', 'reason': 'Customer asked us to stop until 2 PM', 'jobId': 'job-1', 'expectedRevision': 'rev-synced', 'expectedUser': 'Crew.One'})
         self.assertTrue(UUID.match(post['requestId']))
@@ -432,6 +432,9 @@ class CrewJobDraftsBrowserTests(unittest.TestCase):
         expect(reason).to_have_value('Back after the dump run')
         self.assertEqual(self.caret('#reason'), [True, 23, 23], 'the reason keeps focus and its caret')
         self.assertEqual([(post['action'], post['status'], post.get('reason')) for post in self.posts], [('status', 'paused', 'Synthetic first pause'), ('status', 'in_progress', None)])
+        # Taps made offline carry when they were made on the phone, set once when queued (#219).
+        for post in self.posts: self.assertRegex(post.get('tappedAt') or '', r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$', 'an offline tap carries its phone time')
+        self.assertLessEqual(self.posts[0]['tappedAt'], self.posts[1]['tappedAt'])
         self.assert_phone_layout()
         # The normal save: one more status action through the field outbox with the typed reason, and the form closes.
         with page.expect_request(lambda request: request.method == 'POST' and urlparse(request.url).path == '/api/field-jobs'):
@@ -439,7 +442,7 @@ class CrewJobDraftsBrowserTests(unittest.TestCase):
         expect(page.locator('#feedback')).to_contain_text('Saved to the job.')
         expect(page.locator('#status-form')).to_have_count(0); expect(badge).to_have_text('paused')
         self.assertEqual(len(self.posts), 3); post = self.posts[2]
-        self.assertEqual(sorted(post), ['action', 'expectedRevision', 'expectedUser', 'jobId', 'reason', 'requestId', 'status'])
+        self.assertEqual(sorted(post), ['action', 'expectedRevision', 'expectedUser', 'jobId', 'reason', 'requestId', 'status'], 'an online tap sends no phone time: the server dates it (#219)')
         self.assertEqual({key: post[key] for key in ['action', 'status', 'reason', 'jobId', 'expectedRevision', 'expectedUser']},
                          {'action': 'status', 'status': 'paused', 'reason': 'Back after the dump run', 'jobId': 'job-1', 'expectedRevision': 'rev-3', 'expectedUser': 'Crew.One'})
         self.assertTrue(UUID.match(post['requestId'])); self.assertNotIn(post['requestId'], [earlier['requestId'] for earlier in self.posts[:2]])
