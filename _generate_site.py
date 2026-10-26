@@ -4417,6 +4417,12 @@ def patch_static_pages():
             text = patch_sitewide_pricing(text)
             if path.name == "thank-you.html":
                 text = patch_thank_you_page(text)
+                # Someone who just sent a request needs no Call/Text/Walkthrough bar: it covers the steps
+                # while they scroll and its Walkthrough button invites a second request.
+                text = re.sub(r'\s*<div class="mobile-sticky-cta"[\s\S]*?</div>', '', text)
+                text = re.sub(r'\s*<a[^>]*class="mobile-text-chip"[\s\S]*?</a>', '', text)
+                if 'id="thank-no-bar"' not in text:
+                    text = text.replace("</head>", '<style id="thank-no-bar">@media(max-width:1023px){body{padding-bottom:env(safe-area-inset-bottom,0px)}}</style>\n</head>', 1)
                 text = re.sub(
                     r'<meta name="description" content="[^"]*"',
                     '<meta name="description" content="Thanks — we\'ll text you from (970) 999-1818 to set up your free on-site walkthrough. Easy Garage Cleaning, Fort Collins."',
