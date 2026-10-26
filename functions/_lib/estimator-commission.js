@@ -124,7 +124,8 @@ export async function estimatorLedger({ kstore, dispatch, env = {}, estimatorKey
   const [offices, sales, setters] = await Promise.all([unclassified.length ? kstore.getMany('knock_estimator_jobs', unclassified) : new Map(), directSalesFor(kstore, direct.map(({ job }) => job.id)),
     setterAttributions(kstore, env, { rows: records, terms, nowMs, limit: setterLimit, ...(readJob ? { readJob } : { readJobs: setterBatchReaderFor(dispatch) }) })]);
   const saleFor = new Map(sales.map(sale => [sale.handoff?.job?.ref, sale]));
-  const shares = setters.rows.map(estimatorShare).filter(row => !signer || row.estimatorKey === signer && !row.reviewReasons.includes('estimator_attribution_conflict'));
+  // REP-WALKTHROUGH: a walkthrough the rep ran and signed (channel direct_sale) has no estimator share at all.
+  const shares = setters.rows.filter(row => row.channel !== 'direct_sale').map(estimatorShare).filter(row => !signer || row.estimatorKey === signer && !row.reviewReasons.includes('estimator_attribution_conflict'));
   const directRows = direct.map(({ job, signedAt }) => projectEstimatorJob(job, { terms, nowMs, office: offices.get(job.id) || null, directSale: saleFor.get(job.id) || null, signedAt }));
   return { rows: [...shares, ...directRows], setters, truncated: setters.truncated, overflow: records.slice(setterLimit) };
 }

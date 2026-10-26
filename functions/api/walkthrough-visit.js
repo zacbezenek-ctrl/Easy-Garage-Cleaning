@@ -1,5 +1,7 @@
 import { getHubSession } from '../_lib/hub-session.js';
-import { recordWalkthroughVisit, walkthroughVisitEnabled, walkthroughVisitState, walkthroughVisitStorage } from '../_lib/walkthrough-visit.js';
+import { WALKTHROUGH_VISIT_OPERATIONS, recordWalkthroughVisit, walkthroughPerformer, walkthroughVisitEnabled, walkthroughVisitState, walkthroughVisitStorage } from '../_lib/walkthrough-visit.js';
+import { createKnockStore } from '../_lib/knock-store.js';
+import { selfVisitReplay, selfWalkthroughSession } from '../_lib/knock-self-walkthrough.js';
 import { firstGhlTagAttempt, ghlTagChangeKey, ghlTagEntryId, ghlTagOutboxEnabled } from '../_lib/ghl-tag-outbox.js';
 
 const LIMIT = 8192;
@@ -18,7 +20,11 @@ function sameOrigin(request) {
   try { return new URL(origin).origin === new URL(request.url).origin; } catch { return false; }
 }
 
-export function walkthroughVisitHandlers({ session = getHubSession, storage = walkthroughVisitStorage, now = () => new Date(), ghlTags = firstGhlTagAttempt } = {}) {
+// REP-WALKTHROUGH: a Knock rep with Walkthroughs on records their own self-run walkthrough, and only that visit.
+// purpose 'finish': a converted visit the rep started still takes its Finish or No-show (knock-self-walkthrough.js).
+const ownVisit = (actor, env, store, knock, visitId, at, purpose = '') => selfWalkthroughSession(actor, env, [visitId], { readJob: id => store().read('jobs', id), knock: knock(env), performer: person => walkthroughPerformer(person, env), now: at, purpose });
+
+export function walkthroughVisitHandlers({ session = getHubSession, storage = walkthroughVisitStorage, now = () => new Date(), ghlTags = firstGhlTagAttempt, knock = createKnockStore } = {}) {
   return {
     async get({ request, env }) {
       try {
@@ -28,7 +34,8 @@ export function walkthroughVisitHandlers({ session = getHubSession, storage = wa
         if (keys.some(key => key !== 'visitId') || new Set(keys).size !== keys.length) return reply(400, { ok: false, code: 'walkthrough_visit_invalid', error: 'Choose one walkthrough visit.' });
         // Switched off, the answer is only that: no visit, lock or timecard read (the gameplan asks on every open).
         if (!walkthroughVisitEnabled(env)) return reply(200, { ok: true, enabled: false });
-        return reply(200, { ...await walkthroughVisitState(storage(env), actor, Object.fromEntries(params), now().toISOString()), enabled: walkthroughVisitEnabled(env) });
+        const store = storage(env), viewer = params.has('visitId') ? await ownVisit(actor, env, () => store, knock, params.get('visitId'), now(), 'finish') : actor;
+        return reply(200, { ...await walkthroughVisitState(store, viewer, Object.fromEntries(params), now().toISOString()), enabled: walkthroughVisitEnabled(env) });
       } catch (error) { return failure(error); }
     },
     async post({ request, env, waitUntil }) {
@@ -43,7 +50,11 @@ export function walkthroughVisitHandlers({ session = getHubSession, storage = wa
         if (new TextEncoder().encode(raw).byteLength > LIMIT) return reply(413, { ok: false, code: 'walkthrough_visit_too_large', error: 'The walkthrough action is too large.' });
         let input;
         try { input = JSON.parse(raw); } catch { return reply(400, { ok: false, code: 'walkthrough_visit_json_invalid', error: 'The walkthrough action could not be read.' }); }
-        const at = now().toISOString(), result = await recordWalkthroughVisit(storage(env), actor, input, at);
+        const store = storage(env), plainInput = input && typeof input === 'object' && !Array.isArray(input);
+        const granted = plainInput ? await ownVisit(actor, env, () => store, knock, input.visitId, now(), input.action === 'start' ? '' : 'finish') : actor;
+        // A saved action the rep's phone sends again after a lost answer, once their right ended: its replay only.
+        const viewer = plainInput && !walkthroughPerformer(granted, env) ? await selfVisitReplay(actor, env, input, { readReceipt: id => store.read(WALKTHROUGH_VISIT_OPERATIONS, id), readJob: id => store.read('jobs', id), knock: knock(env), now: now() }) : granted;
+        const at = now().toISOString(), result = await recordWalkthroughVisit(store, viewer, input, at);
         // EGC_GHL_TAG_OUTBOX: an outcome's HighLevel tags (if it queued any) get their first attempt after the response.
         if (ghlTagOutboxEnabled(env) && result.action !== 'start') ghlTags({ env, waitUntil }, [await ghlTagEntryId(result.visit?.id, ghlTagChangeKey('walkthrough-outcome', result.requestId))], at);
         return reply(200, result);

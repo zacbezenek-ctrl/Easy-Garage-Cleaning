@@ -1,5 +1,5 @@
 import { can } from './staff-roles.js';
-import { assignmentKey, createJobAssignmentAccess } from './job-assignment.js';
+import { assignmentClock, assignmentKey, createJobAssignmentAccess } from './job-assignment.js';
 import { nameWords, namesAgree } from './knock-bridge.js';
 
 /*
@@ -46,18 +46,19 @@ const maskEmail = value => { const [name, domain] = email(value).split('@'); ret
 export const maskedCustomer = (row, id) => ({ id: id || '', revision: row.revision, phone: maskPhone(row.phone), email: maskEmail(row.email), contactDetails: 'masked' });
 
 /** Whether a walkthrough is the estimator's own: assigned to them or started by them. */
-export async function walkthroughVisible(source, actor, env) {
+// now (optional): the request's clock for the assignment gate (job-assignment.js assignmentClock).
+export async function walkthroughVisible(source, actor, env, now) {
   if (!plain(source) || source.type !== 'walkthrough' || source.recordType) return false;
-  return same(source.walkthroughVisit?.startedBy, actor.user) || await createJobAssignmentAccess(env, actor).assigned(source);
+  return same(source.walkthroughVisit?.startedBy, actor.user) || await createJobAssignmentAccess(env, actor, assignmentClock(now)).assigned(source);
 }
 
 /** Whether an estimator sees this customer in full: their own customer, their walkthrough's or their assigned job's. */
-export async function fullCustomerAccess(customer, actor, { env = {}, source = null, job = null } = {}) {
+export async function fullCustomerAccess(customer, actor, { env = {}, source = null, job = null, now } = {}) {
   if (!plain(customer) || !customer.id) return false;
   // A customer the estimator created from a CRM contact is the CRM's record, not something they typed: not theirs in full.
   if (same(customer.createdBy, actor.user) && customer.source !== 'verified_provider_contact') return true;
-  if (source && source.customerId === customer.id && await walkthroughVisible(source, actor, env)) return true;
-  return Boolean(job) && job.customerId === customer.id && !job.recordType && await createJobAssignmentAccess(env, actor).assigned(job);
+  if (source && source.customerId === customer.id && await walkthroughVisible(source, actor, env, now)) return true;
+  return Boolean(job) && job.customerId === customer.id && !job.recordType && await createJobAssignmentAccess(env, actor, assignmentClock(now)).assigned(job);
 }
 
 /** The reference this estimator saved a job with (authorCustomerRef), or ''; typed: the name, phone and address they
@@ -75,7 +76,7 @@ export const refPatch = (pick, actor, client = {}) => pick?.ref ? { authorCustom
  * reference, and only under a name that agrees with the stored one. The caller still checks the record's revision and
  * that the phone, email or CRM link match (identityMatches).
  */
-export async function authorCustomer(store, actor, access, value, { env = {}, clientName = '', source = null, job = null, prefix = '' } = {}) {
+export async function authorCustomer(store, actor, access, value, { env = {}, clientName = '', source = null, job = null, prefix = '', now } = {}) {
   let id = value, ref = '';
   if (isCustomerRef(value)) {
     const receipt = await store.read('customerOperations', receiptOf(value));
@@ -84,7 +85,7 @@ export async function authorCustomer(store, actor, access, value, { env = {}, cl
   }
   const customer = await store.read('customers', id);
   if (!restrictedAuthor(actor, access, env)) return { customer, restricted: false, full: true, ref };
-  const full = await fullCustomerAccess(customer, actor, { env, source, job });
+  const full = await fullCustomerAccess(customer, actor, { env, source, job, now });
   if (!full && !ref) throw fail(prefix + 'customer_ref_required', 'Find this customer again before saving the quote.', 403);
   if (!full && plain(customer) && !estimatorNamesAgree(customer.name, clientName)) throw fail(prefix + 'customer_review_required', 'This phone or email belongs to an existing customer under a different name. Nothing was saved. Ask the office to attach this quote to the right customer.', 409);
   return { customer, restricted: true, full, ref };
@@ -92,27 +93,27 @@ export async function authorCustomer(store, actor, access, value, { env = {}, cl
 
 /** What an author is shown of a saved job's customer: {restricted, full, ref, name}, read from the stored records. name
  * is what to show as the customer's name when not full: the name this estimator typed, never the stored one. */
-export async function jobCustomerAccess(store, actor, access, job, { env = {} } = {}) {
+export async function jobCustomerAccess(store, actor, access, job, { env = {}, now } = {}) {
   if (!restrictedAuthor(actor, access, env)) return { restricted: false, full: true, ref: '', name: '' };
   const ref = jobRef(job, actor), name = typedName(job, actor), typed = { phone: typedField(job, actor, 'phone', 40), address: typedField(job, actor, 'address', 500) };
   const customer = job?.customerId ? await store.read('customers', job.customerId) : null;
   const source = job?.sourceWalkthroughId ? await store.read('jobs', job.sourceWalkthroughId) : null;
-  return { restricted: true, full: await fullCustomerAccess(customer, actor, { env, source, job }), ref, name, typed };
+  return { restricted: true, full: await fullCustomerAccess(customer, actor, { env, source, job, now }), ref, name, typed };
 }
 
 /** Whether an author may open a saved job's quote: always, unless restricted; then a draft they started or saved, a
  * job they created, or one whose customer they may see. A draft another estimator started stays with them and the
  * office unless the office gave it to this one (the job, or its walkthrough, assigned to them): owning the customer
  * is not enough, since a revision there would let them sign it and take its commission (acceptance.recordedBy). */
-export async function authorOpensJob(store, actor, access, job, env = {}) {
+export async function authorOpensJob(store, actor, access, job, env = {}, now) {
   if (!restrictedAuthor(actor, access, env)) return true;
   const starter = job?.quoteDraft?.createdBy;
   if (starter && !same(starter, actor.user)) {
     const source = job.sourceWalkthroughId ? await store.read('jobs', job.sourceWalkthroughId) : null;
-    return await createJobAssignmentAccess(env, actor).assigned(job) || Boolean(source) && source.id === job.sourceWalkthroughId && await walkthroughVisible(source, actor, env);
+    return await createJobAssignmentAccess(env, actor, assignmentClock(now)).assigned(job) || Boolean(source) && source.id === job.sourceWalkthroughId && await walkthroughVisible(source, actor, env, now);
   }
   if (same(starter, actor.user) || same(job?.createdBy, actor.user) || jobRef(job, actor)) return true;
-  return (await jobCustomerAccess(store, actor, access, job, { env })).full;
+  return (await jobCustomerAccess(store, actor, access, job, { env, now })).full;
 }
 
 /** The customer id an author is shown: the reference they used, else the record id when they may see it, else ''. */

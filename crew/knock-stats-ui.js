@@ -201,10 +201,11 @@ function moneyScreen(_app, params) {
         }) : null),
       h('section', { class: 'card stack' }, h('h2', {}, `Walkthrough setting — ${CHANNEL_PERCENTS.setter}%`),
         h('p', {}, setterRuleText(rates.setter)),
-        h('p', { class: 'caption muted' }, `Direct-estimator work stays at ${CHANNEL_PERCENTS.estimator}% and junk at zero.`),
+        h('p', { class: 'caption muted' }, `Direct-estimator work stays at ${CHANNEL_PERCENTS.estimator}% and junk at zero. A walkthrough you run yourself and the customer signs pays you ${CHANNEL_PERCENTS.directSale}%, never stacked with a setter or estimator share.`),
         // Once the owner approved the setter terms, each walkthrough shows your 13%: earned, or projected at the closed price.
         (data.setters?.rows || []).map(row => h('div', { class: 'list-row list-row--static' },
-          h('span', {}, `${row.walkthroughId}: ${row.state.replaceAll('_', ' ')}${row.state === 'earned' && Number.isFinite(row.earnedCommission) ? ` · ${money(row.earnedCommission, true)} earned`
+          // REP-WALKTHROUGH: a walkthrough you ran yourself pays your door-sale rate, not the setter's.
+          h('span', {}, `${row.walkthroughId}${row.channel === 'direct_sale' ? ` (you ran it · ${CHANNEL_PERCENTS.directSale}%)` : ''}: ${row.state.replaceAll('_', ' ')}${row.state === 'earned' && Number.isFinite(row.earnedCommission) ? ` · ${money(row.earnedCommission, true)} earned`
             : Number.isFinite(row.projectedCommission) ? ` · ${money(row.projectedCommission, true)} once paid in full` : ''}`),
           h('span', { class: 'caption muted' }, (row.reviewReasons || []).join(', ').replaceAll('_', ' ')))),
         data.setters?.truncated ? h('p', { class: 'caption muted' }, 'More setter records need review.') : null),

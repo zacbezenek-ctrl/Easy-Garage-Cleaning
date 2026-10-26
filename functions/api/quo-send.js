@@ -74,9 +74,9 @@ function normPhone(raw) {
   if (d.length > 10) return '+' + d;
   return '';
 }
-async function assignedToJob(job, session, env) {
+async function assignedToJob(job, session, env, now) {
   if (hasBusinessAccess(session)) return true;
-  return createJobAssignmentAccess(env, session).assigned(job);
+  return createJobAssignmentAccess(env, session, { now }).assigned(job);
 }
 
 // The saved flat rate, shown the way crew/prejob.html fills its rate field.
@@ -208,7 +208,7 @@ export function quoSendHandlers({ session: readSession = getHubSession, now = ()
       if (!fieldId(jobId)) return json(400, { ok: false, error: 'A valid assigned job is required' });
       let job;
       try { job = await readJob(env, jobId); } catch { return json(503, { ok: false, code: 'QUO_SEND_STORAGE_UNAVAILABLE', error: 'Your job assignment could not be checked. Retry shortly.' }); }
-      if (!job || !await assignedToJob(job, session, env)) return json(403, { ok: false, error: 'This job is not assigned to you' });
+      if (!job || !await assignedToJob(job, session, env, now)) return json(403, { ok: false, error: 'This job is not assigned to you' });
 
       const headerKey = request.headers.get('Idempotency-Key'), bodyKey = body.idempotency_key;
       if (headerKey != null && bodyKey != null && String(headerKey) !== String(bodyKey)) return json(400, { ok: false, code: 'QUO_SEND_IDEMPOTENCY_KEY_MISMATCH', error: 'The send key does not match. Reload before retrying.' });

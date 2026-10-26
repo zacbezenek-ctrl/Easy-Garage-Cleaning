@@ -54,7 +54,7 @@ export function crewScheduleHandlers({ session = getHubSession, storage = dispat
       try {
         const store = storage(env);
         const [crews, jobs] = await Promise.all([store.crewResources(), scheduleJobs(store, window)]);
-        const body = await crewSchedule({ session: actor, env, crews, jobs, access: createJobAssignmentAccess(env, actor), names: ids => names(env, ids), ...window, now: now() });
+        const body = await crewSchedule({ session: actor, env, crews, jobs, access: createJobAssignmentAccess(env, actor, { now }), names: ids => names(env, ids), ...window, now: now() });
         return reply(200, body);
       } catch {
         return reply(503, { ok: false, code: 'crew_schedule_storage_unavailable', error: 'The crew schedule could not be loaded. Retry when connected.' });

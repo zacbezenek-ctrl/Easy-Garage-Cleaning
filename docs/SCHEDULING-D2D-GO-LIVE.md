@@ -53,6 +53,23 @@ schedule. Commission follows the rules already in the app: 25% for a direct door
 the door 13% to the rep who set it plus 7% to the estimator. Admin → Sales lists anything that did not reach the Hub,
 with the reason and a **Book in Hub** button.
 
+**Reps doing the walkthrough themselves** (owner decision 2026-10-21). On the walkthrough form a rep can tap **Do the
+walkthrough now** instead of booking an estimator: the visit is booked to them for right now and the full walkthrough
+(every item, vehicles, pricing, signing) opens with the customer filled in. When the rep gets the customer's signature,
+the job pays the rep 25% and nothing else: no setter 13% and no estimator 7%. If an estimator takes it over and
+signs it instead, it pays like any walkthrough set at the door: 13% to the rep and 7% to that estimator. To turn it on
+for a rep, turn on **Walkthroughs** for that rep in Knock Admin → Reps (it applies on their next action, no sign-out
+needed). It does not give them the Sales role: they open only the walkthroughs they start this way, never Dispatch,
+other customers or anyone else's visits, and they are never booked as an estimator for other reps' walkthroughs.
+If the phone or email the rep types already belongs to a customer in the Hub, an estimator is booked instead and the
+rep sees "An estimator will do this one." (the same words whenever "do it now" ends with an estimator, so it never
+says the customer was known); the rep sees nothing about that customer. The rep's access to their own walkthrough ends
+once it is signed, cancelled or lost, and 3 days after its date at the latest. Owners and managers always
+have it. Reps without it see only **Set walkthrough**. It needs the bridge
+(`EGC_KNOCK_JOB_BRIDGE`) on. On these walkthroughs the rep types their notes (the audio recorder stays with
+estimators), the office staffs the crew in Dispatch, and a manager's Hub sends the signed job to HighLevel, as it does
+for an estimator's.
+
 **Hub schedule board.** Dispatch → **Board** shows crews, estimators and a **Door-to-door** panel for the day: reps on
 shift, their areas, doors knocked, sales and walkthroughs set, with links to the jobs they made. Owners, managers and
 team leads can see it. A job or walkthrough already on the loaded board opens in the Hub's own editor; any other opens

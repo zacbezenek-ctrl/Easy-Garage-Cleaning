@@ -2,7 +2,7 @@ import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { patchJob, readJob } from '../_lib/firestore-job.js';
 import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-account.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
-import { createJobAssignmentAccess, jobCrewNames as crewNames } from '../_lib/job-assignment.js';
+import { createJobAssignmentAccess, jobCrewNames as crewNames, ownWalkthroughRight } from '../_lib/job-assignment.js';
 import { crewJobProjection, CREW_PROJECTION_FIELDS } from '../_lib/crew-job-projection.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { mutateDispatchSelfAssignment } from '../_lib/dispatch-service.js';
@@ -10,6 +10,7 @@ import { travelEstimator } from '../_lib/dispatch-travel.js';
 import { seesLaborCost } from '../_lib/pay-visibility.js';
 import { withoutJobLabor } from '../_lib/job-labor-private.js';
 import { walkthroughStatusFields } from '../_lib/walkthrough-state.js';
+import { SELF_RUN_CARD_FIELDS, selfRunCardHidden } from '../_lib/knock-self-walkthrough.js';
 
 const reply = (status, body) => new Response(JSON.stringify(body), {
   status,
@@ -86,7 +87,7 @@ const OPEN_SHIFT_FIELDS = ['time', 'endTime', 'serviceType', 'crewNeeded', 'crew
 const MANAGER_VIEW_FIELDS = ['customer', 'address', 'time', 'endTime', 'serviceType',
   'customerName', 'name', 'timeWindow', 'scheduledTime', 'quoteAmount', 'total', 'priceQuoted', 'amount', 'cubicYards',
   'customerAddress', 'customerPhone', 'phone', 'notes'];
-export const CREW_LISTING_FIELDS = Object.freeze([...new Set([...FILTER_FIELDS, ...CREW_PROJECTION_FIELDS, ...OPEN_SHIFT_FIELDS, ...MANAGER_VIEW_FIELDS])]);
+export const CREW_LISTING_FIELDS = Object.freeze([...new Set([...FILTER_FIELDS, ...CREW_PROJECTION_FIELDS, ...OPEN_SHIFT_FIELDS, ...MANAGER_VIEW_FIELDS, ...SELF_RUN_CARD_FIELDS])]);
 
 export function crewJobsHandlers({ session = getHubSession, storage = dispatchStorage, now = () => new Date(), travel = travelEstimator } = {}) {
   return {
@@ -98,9 +99,11 @@ export function crewJobsHandlers({ session = getHubSession, storage = dispatchSt
       try { rows = await storage(env).jobRecords(CREW_LISTING_FIELDS); }
       catch (error) { return reply(503, { ok: false, code: error.code || 'schedule_storage_unavailable', error: error.code ? error.message : 'Schedule storage is unavailable' }); }
       const manager = hasBusinessAccess(actor);
-      const access = createJobAssignmentAccess(env, actor);
-      const jobs = [];
+      const access = createJobAssignmentAccess(env, actor, { now });
+      const jobs = [], at = now(), ownRight = ownWalkthroughRight(actor, env);
       for (const job of rows.filter(row => !privateRecord(row))) {
+        // REP-WALKTHROUGH: a Knock rep's own self-run visit leaves their list once their right to it ends.
+        if (!manager && job.type === 'walkthrough' && !ownRight && selfRunCardHidden(job, actor, at)) continue;
         // A manager's walkthrough row also says where it stands (WT-OUTCOME), as the crew projection does.
         if (manager || await access.assigned(job) || await availabilityOwner(job, access)) jobs.push(manager ? job.type === 'walkthrough' ? { ...job, ...walkthroughStatusFields(job) } : job : crewJobProjection(job, { viewer: actor.user }));
         else if (availableOpenShift(job)) jobs.push(publicOpenShift(job));
@@ -126,7 +129,7 @@ export function crewJobsHandlers({ session = getHubSession, storage = dispatchSt
 
       const job = await readJob(env, jobId).catch(() => null);
       if (!job) return reply(404, { ok: false, error: 'This shift no longer exists' });
-      const access = createJobAssignmentAccess(env, actor);
+      const access = createJobAssignmentAccess(env, actor, { now });
       // Managers get the whole job, less any labor copy an older save left on it unless they see labor dollars
       // (JOB-COST-PRIVACY; scripts/backfill-job-labor-private.mjs moves those copies to the private record).
       const managerJob = row => seesLaborCost(actor, env) ? row : withoutJobLabor(row);

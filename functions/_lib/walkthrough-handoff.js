@@ -2,7 +2,7 @@ import { mutateDispatch } from './dispatch-service.js';
 import { saveJobReads } from './dispatch-window-reads.js';
 import { requireQuoteAuthor } from './quote-permissions.js';
 import { authorCustomer, authorOpensJob, fullCustomerAccess, walkthroughVisible, jobCustomerAccess, maskedCustomer, refPatch, restrictedAuthor, shownCustomerId } from './estimator-customer-access.js';
-import { assignmentKey, createJobAssignmentAccess, jobCrewNames } from './job-assignment.js';
+import { assignmentClock, assignmentKey, createJobAssignmentAccess, jobCrewNames } from './job-assignment.js';
 import { localInstant } from './operations-portal-records.js';
 import { customerIdentityPatch } from './customer-identity.js';
 import { suggestedDurationMinutes } from './quote-duration.js';
@@ -52,7 +52,7 @@ const customerProjection = row => row ? Object.fromEntries(['id', 'name', 'phone
 // reaches a job through its walkthrough only when that walkthrough is theirs
 // (sourceOk: assigned to them or started by them).
 // draftOk (restricted only): authorOpensJob, the quote-draft rule: a draft they started, or one the office gave them.
-const draftOpens = async (store, actor, access, job, env, restricted) => restricted && plain(job?.quoteDraft) && await authorOpensJob(store, actor, access, job, env);
+const draftOpens = async (store, actor, access, job, env, restricted, now) => restricted && plain(job?.quoteDraft) && await authorOpensJob(store, actor, access, job, env, now);
 const authorsJob = (job, source, actor, restricted = false, sourceOk = false, draftOk = false) => plain(job?.quoteDraft) && (!restricted || draftOk) || Boolean(source) && job.sourceWalkthroughId === source.id && (!restricted || sourceOk) || Boolean(job?.createdBy) && job.createdBy === actor.user;
 // DISPATCH-RULES: a quote author who is not a dispatcher never sees the roster
 // (prepareHandoff), so the Dispatch rows of a save (its warnings, replayed or
@@ -350,12 +350,19 @@ function appliedCents(previous) {
   const applied = customerMoneyTotals(previous).appliedCents, deposit = Number(previous.deposit?.paidAmount);
   return Number.isSafeInteger(applied) ? applied : Number.isFinite(deposit) && deposit > 0 ? Math.round(deposit * 100) : 0;
 }
+const firstSigner = (previous, actor) => {
+  const first = previous?.acceptance?.firstRecordedBy || previous?.acceptance?.recordedBy || actor.user;
+  return first !== actor.user ? { firstRecordedBy: first } : {};
+};
 function financePatch(plan, previous, jobId, actor, now, builder = null) {
   const terms = signedPaymentTerms(plan, appliedCents(previous));
   const total = plan.quote.total, amount = terms.depositRequiredCents === undefined ? plan.quote.deposit : terms.depositRequiredCents / 100, prior = plain(previous?.deposit) ? previous.deposit : {};
   const paid = typeof prior.paidAmount === 'number' && Number.isFinite(prior.paidAmount) ? Math.max(0, prior.paidAmount) : 0;
   const patch = { total, priceQuoted: total, quoteStatus: 'approved', termsVersion: plan.terms_version,
-    acceptance: { acceptedAt: plan.acceptance.accepted_at, acceptedBy: plan.acceptance.accepted_by, method: 'in_person_signature', termsVersion: plan.terms_version, signatureCaptured: true, signatureData: plan.signature, recordedBy: actor.user, recordedAt: now },
+    acceptance: { acceptedAt: plan.acceptance.accepted_at, acceptedBy: plan.acceptance.accepted_by, method: 'in_person_signature', termsVersion: plan.terms_version, signatureCaptured: true, signatureData: plan.signature, recordedBy: actor.user, recordedAt: now,
+      // REP-WALKTHROUGH: who signed the first handoff stays through a revision someone else signs (knock-setters.js
+      // repRanWalkthrough reads it, else recordedBy); a first signing, or a revision by the same signer, adds nothing.
+      ...firstSigner(previous, actor) },
     customerApproval: { status: 'approved', approvedAt: plan.acceptance.accepted_at, approvedBy: plan.acceptance.accepted_by, amount: total, source: 'in_person_signature' },
     estimate: { number: previous?.estimate?.number || `EST-${jobId.slice(-6).toUpperCase()}`, revision: Number.isInteger(previous?.estimate?.revision) ? previous.estimate.revision + 1 : 1, status: 'accepted', amount: total, depositRequired: amount, acceptedAt: plan.acceptance.accepted_at, acceptedBy: plan.acceptance.accepted_by, acceptanceMethod: 'in_person_signature', termsVersion: plan.terms_version, createdAt: previous?.estimate?.createdAt || now, source: 'walkthrough',
       // A builder quote's scope is its priced lines (compositeScope, as a sent builder quote's): the homeowner never
@@ -405,7 +412,8 @@ function soldOutcome(source, sold, actor, requestId, deviceAt) {
  * money, or visit completion. Managers can safely resume after a lost response.
  * Quote authors (options.env, P2-12) use it too for the jobs they may revise
  * (authorsJob); only dispatchers see the roster or any other job. */
-export async function prepareHandoff(store, actor, query = {}, { env = {} } = {}) {
+// now (optional): the request's clock for the assignment gate (job-assignment.js).
+export async function prepareHandoff(store, actor, query = {}, { env = {}, now } = {}) {
   const access = requireQuoteAuthor(actor, env);
   if (Object.keys(query).some(key => !['sourceWalkthroughId', 'jobId'].includes(key))) throw fail('invalid_request', 'The walkthrough lookup is invalid.', 400);
   for (const id of [query.sourceWalkthroughId, query.jobId].filter(Boolean)) if (!safeId(id)) throw fail('invalid_request', 'Choose a valid saved walkthrough or job.', 400);
@@ -429,14 +437,14 @@ export async function prepareHandoff(store, actor, query = {}, { env = {} } = {}
   const restricted = restrictedAuthor(actor, access, env);
   // An estimator opens a job through the draft rule (draftOpens: a draft they started, or one the office gave them),
   // its walkthrough when that is theirs, or a job the office assigned to them (#268: resuming a saved job).
-  if (job && !access.dispatcher && !authorsJob(job, source, actor, restricted, restricted && await walkthroughVisible(source, actor, env), await draftOpens(store, actor, access, job, env, restricted)) && !(restricted && await createJobAssignmentAccess(env, actor).assigned(job))) throw fail('job_forbidden', 'Only an operations manager or owner can open this job. Start from its walkthrough or quote draft.', 403);
+  if (job && !access.dispatcher && !authorsJob(job, source, actor, restricted, restricted && await walkthroughVisible(source, actor, env, now), await draftOpens(store, actor, access, job, env, restricted, now)) && !(restricted && await createJobAssignmentAccess(env, actor, assignmentClock(now)).assigned(job))) throw fail('job_forbidden', 'Only an operations manager or owner can open this job. Start from its walkthrough or quote draft.', 403);
   const customerId = job?.customerId || source?.customerId || '';
   const customer = customerId ? await store.read('customers', customerId) : null;
   if (customerId && !customer) throw fail('customer_missing', 'The linked customer is unavailable. Repair the customer link before saving.');
   // A quote author sees the customer's contact details only through a job they may revise. An estimator sees them
   // only for their own customer, an assigned walkthrough's or an assigned job's; any other customer is masked and
   // named by their own customer reference, or not at all (estimator-customer-access.js).
-  const seen = !restricted ? { full: true, ref: '' } : job ? await jobCustomerAccess(store, actor, access, job, { env }) : { full: await fullCustomerAccess(customer, actor, { env, source }), ref: '' };
+  const seen = !restricted ? { full: true, ref: '' } : job ? await jobCustomerAccess(store, actor, access, job, { env, now }) : { full: await fullCustomerAccess(customer, actor, { env, source, now }), ref: '' };
   const shown = customer && (access.dispatcher || job) ? seen.full ? customerProjection(customer) : maskedCustomer(customer, seen.ref) : null;
   // crewAutoAssign (EGC_DISPATCH_CREW_AUTO_ASSIGN only): the page offers crew openings (handoffCrewOpenings) and Dispatch staffs the sold job.
   return { ok: true, authority: 'employee_hub', sourceWalkthroughId: source?.id || '', sourceRevision: source?.revision || '', jobId: job?.id || '', expectedRevision: job?.revision || '', customerId: shownCustomerId(customer?.id, seen), customer: shown, roster: access.dispatcher ? await store.roster() : [], ...(crewAutoAssignEnabled(env) ? { crewAutoAssign: true } : {}) };
@@ -541,7 +549,7 @@ export async function releaseHandoffPrices(store, actor, input, now = new Date()
   requireRevision(job);
   if (!operational(job) || !plain(job.compositeQuote) && !plain(job.pricesPendingApproval)) throw fail('not_builder_quote', 'This job was not priced in the quote builder, so it has no builder prices to release.');
   if (CLOSED_STATES.includes(state(job))) throw fail('job_closed', 'This job is cancelled or finished, so its estimate is not sent.');
-  if (!access.dispatcher && !authorsJob(job, null, actor, restrictedAuthor(actor, access, env), false, await draftOpens(store, actor, access, job, env, restrictedAuthor(actor, access, env)))) throw fail('job_forbidden', 'Only an operations manager or owner can release this job. Start from its walkthrough or quote draft.', 403);
+  if (!access.dispatcher && !authorsJob(job, null, actor, restrictedAuthor(actor, access, env), false, await draftOpens(store, actor, access, job, env, restrictedAuthor(actor, access, env), now))) throw fail('job_forbidden', 'Only an operations manager or owner can release this job. Start from its walkthrough or quote draft.', 403);
   if (job.revision !== input.expectedRevision) throw fail('job_changed', 'This job changed. Reload it before releasing its estimate.');
   if (!plain(job.pricesPendingApproval)) return view(job, false, false);
   const gate = releaseGate(job, plain(job.compositeQuote) ? await compositeState(env) : null, { owner: isOwner(actor) });
@@ -627,7 +635,8 @@ export async function releaseAllHeldHandoffs(store, actor, now = new Date().toIS
  * signed revision re-prices and re-approves an existing job, so an open portal
  * card checkout opened for the earlier terms is expired, or reported as
  * checkout_needs_review, exactly as a quote draft revision does. */
-export async function saveWalkthroughHandoff(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, compositeState = compositeStateDefault, winterSale = winterSaleReaders, pickup = pickupReaders } = {}) {
+// replayOnly (REP-WALKTHROUGH, a Knock rep's unchanged resend): answer an earlier save from its receipt, never write.
+export async function saveWalkthroughHandoff(store, actor, input, now = new Date().toISOString(), { env = {}, checkouts = null, compositeState = compositeStateDefault, winterSale = winterSaleReaders, pickup = pickupReaders, replayOnly = false } = {}) {
   const access = requireQuoteAuthor(actor, env);
   if (!plain(input) || Object.keys(input).some(key => !['actorId', 'requestId', 'customerId', 'sourceWalkthroughId', 'sourceRevision', 'jobId', 'expectedRevision', 'plan'].includes(key)) || !requestId(input.requestId) || !safeId(input.customerId) || input.jobId && !safeId(input.jobId)) throw fail('invalid_request', 'The accepted walkthrough needs a stable request and customer identity.', 400);
   if (input.actorId && input.actorId !== actor.user) throw fail('actor_changed', 'The signed-in employee changed. Reopen the original account to recover this request.', 403);
@@ -651,7 +660,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     savedHandoffPayload(saved, input.requestId);
     const checkout = receipt.originalJobRevision && typeof checkouts === 'function' ? await checkouts(saved).catch(() => ({ status: 'needs_review', reason: 'checkout_unconfirmed' })) : null;
     const open = checkout && !['none', 'current', 'expired'].includes(checkout.status) ? [{ code: 'checkout_needs_review', message: 'An open card checkout for the earlier quote could not be closed. Review it in Stripe before the customer pays.' }] : [];
-    return result(saved, true, [...(receipt.warnings || []), ...open], checkout, receipt.crewAuto, await jobCustomerAccess(store, actor, access, saved, { env }));
+    return result(saved, true, [...(receipt.warnings || []), ...open], checkout, receipt.crewAuto, await jobCustomerAccess(store, actor, access, saved, { env, now }));
   }
   // A quote author who is not a dispatcher gets no crew identities (assignedCrew is
   // always []; the crew page does not read it): warnings say what staffing needs.
@@ -663,12 +672,13 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       ...(plain(crew) ? { crew: { ...crew, date: saved.date || '', time: saved.time || '', endTime: saved.endTime || '' } } : {}), ...(plain(saved.compositeQuote) || plain(saved.pricesPendingApproval) ? { pricing: pricingView(saved) } : {}) };
   }
   const prior = await replay(); if (prior) return prior;
+  if (replayOnly) throw fail('forbidden', 'This walkthrough is no longer open to you. Ask the office.', 403);
   // D-DEPOSIT: a new signature is on the current terms. A page still showing the earlier 50% terms (opened before they
   // changed) is refused, and nothing is saved; a save it made before is replayed above, on the terms it was signed on.
   if (plan.terms_version !== CURRENT_SIGNED_TERMS) throw fail('terms_outdated', 'This signature is on the earlier deposit terms (50% upfront). Nothing was saved. Reload the walkthrough so the homeowner reviews and signs the current terms: a 25% deposit now and the remaining 75% on the job day.');
   // An estimator names a customer they may not see only by their own customer-resolve reference, under an agreeing name.
   const named = await authorCustomer(store, actor, access, input.customerId, { env, clientName: plan.client.name, prefix: 'handoff_',
-    source: input.sourceWalkthroughId && safeId(input.sourceWalkthroughId) ? await store.read('jobs', input.sourceWalkthroughId) : null, job: input.jobId ? await store.read('jobs', input.jobId) : null });
+    source: input.sourceWalkthroughId && safeId(input.sourceWalkthroughId) ? await store.read('jobs', input.sourceWalkthroughId) : null, job: input.jobId ? await store.read('jobs', input.jobId) : null, now });
   const customer = named.customer; requireRevision(customer);
   if (!identityMatches(plan.client, customer)) throw fail('customer_mismatch', 'The signed customer details do not match the selected customer. Review the phone, email and CRM link.');
   let source = null;
@@ -694,7 +704,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   let placedAddress = null;
   if (previous && !access.dispatcher) {
     const restricted = restrictedAuthor(actor, access, env);
-    if (!authorsJob(previous, source, actor, restricted, restricted && await walkthroughVisible(source, actor, env), await draftOpens(store, actor, access, previous, env, restricted))) throw fail('revision_forbidden', 'Only an operations manager or owner can revise this job. Start from its walkthrough or quote draft.', 403);
+    if (!authorsJob(previous, source, actor, restricted, restricted && await walkthroughVisible(source, actor, env, now), await draftOpens(store, actor, access, previous, env, restricted, now))) throw fail('revision_forbidden', 'Only an operations manager or owner can revise this job. Start from its walkthrough or quote draft.', 403);
     const unplaced = state(previous) === 'unscheduled' && !previous.date && !previous.time;
     if (!unplaced && (plan.quote.job_date !== previous.date || (previous.endDate || previous.date) !== plan.quote.job_date || plan.quote.start_time !== previous.time || plan.quote.end_time !== previous.endTime)) throw fail('schedule_change_forbidden', `Only an operations manager or owner can move a scheduled job. Keep its saved schedule${previous.date ? ` (${previous.date} ${previous.time || ''}–${previous.endTime || ''})` : ''} or ask Dispatch to move it.`, 403);
     if (!unplaced && !sameAddress(plan.client.address, previous.address)) throw fail('schedule_change_forbidden', `Only an operations manager or owner can change the service address of a scheduled job. Keep its saved address or ask Dispatch to change it.`, 403);

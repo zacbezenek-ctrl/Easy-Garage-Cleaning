@@ -13,7 +13,7 @@ const ID = /^[A-Za-z0-9_-]{1,120}$/, STAFF_KEY = /^[a-z0-9._-]{1,64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const SETTER_JOB_FIELDS = Object.freeze(['type', 'status', 'pipelineStatus', 'convertedJobId', 'sourceWalkthroughId', 'walkthroughOutcome',
   'walkthroughCompletedAt', 'scheduleOccurrence', 'date', 'time', 'estimate', 'customerApproval',
-  'acceptance.recordedBy', 'acceptance.acceptedAt', 'total', 'priceQuoted', 'lockedTotal', 'rate',
+  'acceptance.recordedBy', 'acceptance.firstRecordedBy', 'acceptance.acceptedAt', 'total', 'priceQuoted', 'lockedTotal', 'rate',
   'payment', 'deposit', 'invoice', 'refunds', 'changeOrders', 'giftWallet',
   // The approved setter terms read the signed handoff's evidence (signedGarageHandoff: its lines, else its finish scope)
   // and when a cancelled job was cancelled (adjustmentHold).
@@ -109,6 +109,21 @@ export const handoffSigner = job => {
   return STAFF_KEY.test(key) ? key : '';
 };
 
+/* REP-WALKTHROUGH (owner decision 2026-10-21): a walkthrough the Knock bridge booked a rep to run themselves ("Do the
+   walkthrough now", knock-bridge.js bookSelfRun: selfRun with their Hub staff key) and whose customer signature that rep
+   recorded on the handoff pays the door-sale 25% to the rep alone, never the setter 13% plus an estimator's 7%. If
+   anyone else signed it (an estimator took it over) it is an ordinary door-set walkthrough: 13% to the rep and 7% to
+   the signer, the estimator by that signature (the bridge records no estimator on a self-run walkthrough, and the rep
+   is never read as their own estimator). */
+// Who signed the job's first handoff: a manager's later signed revision never takes the rep's walkthrough from them.
+export const firstHandoffSigner = job => {
+  const key = String(job?.acceptance?.firstRecordedBy || job?.acceptance?.recordedBy || '').trim().toLowerCase();
+  return STAFF_KEY.test(key) ? key : '';
+};
+// The staff key must be the setter's own (repKeyFor), so a visit an estimator was given can never pay the rep 25%.
+export const repRanWalkthrough = (record, job) => record?.selfRun === true && STAFF_KEY.test(String(record.repStaffKey || '')) && repKeyFor(record.repStaffKey) === record.setterKey &&
+  firstHandoffSigner(job) === record.repStaffKey;
+
 /* Closed (an accepted estimate and its time) and how it was collected (the unified totals and payment ledger): the
    evidence both walkthrough channels earn on, the setter's and the estimator's. null while not closed. */
 export function collectionEvidence(job) {
@@ -173,7 +188,9 @@ export function adjustmentHold(job, evidence, reasons, floorMs, nowMs = Date.now
 // The estimator the Knock bridge booked (knock-bridge.js recordD2dSetter), not one the office recorded.
 const bridgeEstimator = record => record.source === 'knock_walkthrough' || record.recordedBy === 'knock-bridge' || String(record.estimatorReference || '').startsWith('knock-walkthrough:');
 export function projectSetterAttribution(record, visit, job, directSales = [], nowMs = Date.now(), terms = null) {
-  const approved = terms?.verified === true, recordedEstimator = String(record.estimatorKey || '').trim().toLowerCase();
+  // REP-WALKTHROUGH: on a self-run record the rep is never the estimator (repRanWalkthrough), so any signer but them is.
+  const recorded = String(record.estimatorKey || '').trim().toLowerCase();
+  const approved = terms?.verified === true, recordedEstimator = record.selfRun === true && recorded === record.repStaffKey ? '' : recorded;
   const result = { id: record.id || record.walkthroughId, walkthroughId: record.walkthroughId, channel: 'appointment_setter',
     setterKey: record.setterKey, estimatorKey: recordedEstimator || null, estimatorEvidence: recordedEstimator ? 'admin_recorded_unreconciled' : 'unverified',
     closingActorKey: null, directSaleRepKey: null, serviceClassification: record.serviceClassification,
@@ -186,13 +203,18 @@ export function projectSetterAttribution(record, visit, job, directSales = [], n
   if (!job || job.type !== 'job' || job.id !== visit.convertedJobId || job.sourceWalkthroughId !== visit.id || !job.revision) return { ...result, state: 'review_required', reviewReasons: ['conversion_link_unverified'] };
   result.jobId = job.id;
   result.closingActorKey = typeof job.acceptance?.recordedBy === 'string' ? job.acceptance.recordedBy : null;
+  // REP-WALKTHROUGH: the rep ran and signed it: one direct-sale share (25%) to them, no estimator share.
+  const repRan = repRanWalkthrough(record, job);
+  if (repRan) Object.assign(result, { channel: 'direct_sale', rate: CHANNEL_PERCENTS.directSale / 100, estimatorKey: null, estimatorEvidence: 'rep_ran_walkthrough' });
+  const ownRole = repRan ? 'direct_rep' : 'setter';
   const classification = approved && record.serviceClassification === 'unverified' && signedGarageHandoff(job) ? 'garage' : record.serviceClassification;
   if (approved) {
     // recordedAt: when the record was made, the source a statement's lookback is counted from (estimator-commission.js).
     Object.assign(result, { jobDate: typeof job.date === 'string' ? job.date : null, serviceClassification: classification,
       classificationEvidence: classification === record.serviceClassification ? 'recorded' : 'signed_handoff', projectedCommission: null, earnedAt: null, recordedAt: record.recordedAt ?? null });
     const signer = handoffSigner(job);
-    if (!recordedEstimator && signer) Object.assign(result, { estimatorKey: signer, estimatorEvidence: 'handoff_signer' });
+    if (repRan) { /* the rep is the signer: no estimator share to attribute */ }
+    else if (!recordedEstimator && signer) Object.assign(result, { estimatorKey: signer, estimatorEvidence: 'handoff_signer' });
     else if (recordedEstimator && signer && signer !== recordedEstimator && bridgeEstimator(record) && !record.estimatorClassifiedAt) result.reviewReasons.push('estimator_attribution_conflict');
   }
   const direct = directSales.find(sale => sale.handoff?.job?.ref === job.id);
@@ -202,10 +224,12 @@ export function projectSetterAttribution(record, visit, job, directSales = [], n
   if (['cancelled', 'canceled', 'no_show'].includes(job.pipelineStatus || job.status)) result.reviewReasons.push('cancellation_review');
   const evidence = collectionEvidence(job);
   if (!evidence) return { ...result, state: 'awaiting_close' };
-  const allocation = commissionAllocations({ channel: 'appointment_setter', jobId: job.id, serviceClassification: classification,
-    setterKey: record.setterKey, estimatorKey: result.estimatorKey || '', directRepKey: result.directSaleRepKey || '', ...approvedBase(terms, evidence) });
+  const allocation = repRan
+    ? commissionAllocations({ channel: 'direct_sale', jobId: job.id, serviceClassification: classification, directRepKey: record.setterKey, ...approvedBase(terms, evidence) })
+    : commissionAllocations({ channel: 'appointment_setter', jobId: job.id, serviceClassification: classification,
+      setterKey: record.setterKey, estimatorKey: result.estimatorKey || '', directRepKey: result.directSaleRepKey || '', ...approvedBase(terms, evidence) });
   // A cancelled job projects nothing: it cannot be earned while it stays cancelled.
-  if (approved) Object.assign(result, { allocations: allocation.allocations, projectedCommission: result.reviewReasons.includes('cancellation_review') ? null : centsToDollars(allocation.allocations.find(item => item.role === 'setter')?.amountCents) });
+  if (approved) Object.assign(result, { allocations: allocation.allocations, projectedCommission: result.reviewReasons.includes('cancellation_review') ? null : centsToDollars(allocation.allocations.find(item => item.role === ownRole)?.amountCents) });
   if (!evidence.verified) result.reviewReasons.push('collection_unverified');
   if (evidence.collected !== null) result.customerCollectedRevenue = evidence.collected;
   const floors = [record.recordedAt, record.classifiedAt, record.estimatorClassifiedAt];
@@ -218,7 +242,7 @@ export function projectSetterAttribution(record, visit, job, directSales = [], n
   const qualifyingAt = new Date(qualified.at).toISOString();
   if (!approved) return { ...result, state: 'review_required', qualifyingAt, allocations: allocation.allocations, reviewReasons: [...allocation.reviewReasons, 'payroll_anchor_unconfigured'] };
   if (allocation.state !== 'calculated') return { ...result, state: 'review_required', qualifyingAt, reviewReasons: allocation.reviewReasons };
-  const earnedAt = earnedTime(qualified.at, terms, ...floors), own = centsToDollars(allocation.allocations.find(item => item.role === 'setter').amountCents);
+  const earnedAt = earnedTime(qualified.at, terms, ...floors), own = centsToDollars(allocation.allocations.find(item => item.role === ownRole).amountCents);
   return { ...result, state: 'earned', qualifyingAt, earnedAt, earnedCommission: own, payableCommission: own };
 }
 

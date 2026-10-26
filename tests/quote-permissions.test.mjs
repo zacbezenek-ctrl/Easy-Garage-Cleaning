@@ -440,7 +440,8 @@ test('the crew client opens the walkthrough for business staff and for accounts 
   for (const profile of [{ egc_u: 'Crew.Person', egc_business_access: 'false', egc_capabilities: '[]' }, { egc_u: 'Phone.Person', egc_capabilities: '["customer.send"]' }, { egc_u: '', egc_capabilities: '["quotes.author"]' }]) assert.equal(browser(profile).canRunWalkthrough(), false, profile.egc_u);
   // Security invariant: the walkthrough page gates on the server-reported capability, never on a name list.
   const page = readFileSync(new URL('../crew/gameplan.html', import.meta.url), 'utf8'), auth = readFileSync(new URL('../crew/hub-auth.js', import.meta.url), 'utf8');
-  assert.match(page, /if\(user&&!EGCHubAuth\.canRunWalkthrough\(user\)\)\{denyWalkthrough\(\);return null\}/);
+  // REP-WALKTHROUGH: or the server's own selfRun answer for the one visit in the address (a Knock rep's walkthrough).
+  assert.match(page, /if\(user&&!EGCHubAuth\.canRunWalkthrough\(user\)&&!await selfRunOpen\(\)\)\{denyWalkthrough\(\);return null\}/);
   assert.match(auth, /href !== '\/crew\/gameplan' \|\| canRunWalkthrough\(\)/);
   assert.doesNotMatch(auth, /zacb|tylerg|alexk/i);
 });

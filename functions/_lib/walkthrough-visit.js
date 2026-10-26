@@ -4,7 +4,8 @@ import { validDate } from './dispatch-time.js';
 import { hasBusinessAccess } from './hub-session.js';
 import { can, capabilityMode, staffRoleAccessEnabled } from './staff-roles.js';
 import { WALKTHROUGH_DENIAL } from './quote-permissions.js';
-import { assignmentKey, createJobAssignmentAccess } from './job-assignment.js';
+import { SELF_WALKTHROUGH_REPLAY, selfRunFinishable, selfRunOpen, selfRunVisit, selfWalkthroughVisitId } from './knock-self-walkthrough.js';
+import { assignmentClock, assignmentKey, createJobAssignmentAccess } from './job-assignment.js';
 import { employeeVaultReadOnly, employeeVaultSecret } from './employee-vault-key.js';
 import { commitVaultDocuments, readCollectionRecords, readOne, sealedFields } from './employee-vault.js';
 import { activeTimecard, authorizeTimecard } from './employee-timecards.js';
@@ -60,13 +61,22 @@ const occurrenceView = value => plain(value) ? { number: Number.isInteger(value.
  * quotes.author capability (owner, manager, sales); otherwise the dispatch-level owner or
  * manager (business access) or the signed sales role. With EGC_STAFF_ROLE_ACCESS
  * (AUTH-ROLES) it is walkthrough.perform, the same capability the gameplan, its handoff
- * and customer-resolve check. */
+ * and customer-resolve check. REP-WALKTHROUGH: also a Knock rep's session for their own self-run walkthrough
+ * (knock-self-walkthrough.js, given only to a request naming that visit). */
 export function walkthroughPerformer(session, env = {}) {
   if (!plain(session) || typeof session.user !== 'string' || !session.user.trim()) return false;
+  if (selfWalkthroughVisitId(session)) return true;
   if (staffRoleAccessEnabled(env)) return can(session, 'walkthrough.perform', env);
   if (capabilityMode(session, env) === 'staff_roles') return can(session, 'quotes.author', env);
   return hasBusinessAccess(session) && ['owner', 'manager'].includes(session.role) || session.role === 'sales';
 }
+
+// REP-WALKTHROUGH: for a Knock rep's one-visit grant, their open visit counts (shown to them, and holding their next
+// Start) only while it is still theirs to finish (knock-self-walkthrough.js). One whose right ended (cancelled, left past
+// the window, reassigned, signed and not finished in time) is the office's: the rep never sees its customer again, and
+// it never blocks their next walkthrough. Everyone else keeps the lock as before.
+const lockCounts = (session, open, now) => !selfWalkthroughVisitId(session) ||
+  selfRunVisit(open, session) && (selfRunOpen(open, new Date(now)) || selfRunFinishable(open, session, new Date(now)));
 
 const denied = env => fail('forbidden', staffRoleAccessEnabled(env) ? WALKTHROUGH_DENIAL : 'Only sales reps, managers and the owner can record walkthrough visits.', 403);
 
@@ -186,6 +196,8 @@ export async function recordWalkthroughVisit(store, session, input, now = new Da
     return result(saved, receipt, true);
   }
   const prior = await replay(); if (prior) return prior;
+  // A Knock rep's resend after their right ended (knock-self-walkthrough.js selfVisitReplay) only replays.
+  if (session[SELF_WALKTHROUGH_REPLAY] === true) throw denied(roles);
 
   const visit = await store.read('jobs', request.visitId);
   if (!visit || visit.type !== 'walkthrough' || visit.recordType || !safeId(visit.id)) throw fail('not_found', 'This walkthrough visit could not be found. Refresh your schedule.', 404);
@@ -194,7 +206,7 @@ export async function recordWalkthroughVisit(store, session, input, now = new Da
   // occurrence: this action records the rebooked one and keeps the earlier one in the history.
   const previous = rebooked(visit) ? { record: started(visit) ? visit.walkthroughVisit : null, outcome: outcomeOf(visit) } : null;
   const record = !previous && started(visit) ? visit.walkthroughVisit : null, outcome = previous ? null : outcomeOf(visit), startedBy = record ? assignmentKey(record.startedBy) : '';
-  if (!manager && !booker && !(startedBy ? startedBy === actor : await store.assigned(session, visit))) throw fail('not_assigned', 'This walkthrough is not assigned to you. Ask a manager to assign it before recording it.', 403);
+  if (!manager && !booker && !(startedBy ? startedBy === actor : await store.assigned(session, visit, now))) throw fail('not_assigned', 'This walkthrough is not assigned to you. Ask a manager to assign it before recording it.', 403);
   if (request.expectedRevision !== visit.revision) throw fail('revision_conflict', 'This walkthrough changed. Refresh it and review before recording.');
 
   const writes = [], role = typeof session.role === 'string' && session.role ? session.role : null;
@@ -222,7 +234,7 @@ export async function recordWalkthroughVisit(store, session, input, now = new Da
     const lock = await store.read(WALKTHROUGH_VISIT_LOCKS, lockId(actor));
     if (lock?.openVisitId && lock.openVisitId !== visit.id) {
       const open = await store.read('jobs', lock.openVisitId);
-      if (open && open.type === 'walkthrough' && !open.recordType && started(open) && !outcomeOf(open)) throw fail('outcome_required', 'Record the outcome of your open walkthrough before starting another.', 409, { visitId: open.id, startedAt: open.walkthroughVisit.startedAt, customer: text(open.customer, 200) });
+      if (open && open.type === 'walkthrough' && !open.recordType && started(open) && !outcomeOf(open) && lockCounts(session, open, now)) throw fail('outcome_required', 'Record the outcome of your open walkthrough before starting another.', 409, { visitId: open.id, startedAt: open.walkthroughVisit.startedAt, customer: text(open.customer, 200) });
     }
     if (request.skipTimecard) repTime = { status: 'skipped', segmentId: null };
     else {
@@ -319,7 +331,7 @@ export async function walkthroughVisitState(store, session, query = {}, now = ne
     visit = await store.read('jobs', query.visitId);
     if (!visit || visit.type !== 'walkthrough' || visit.recordType) throw fail('not_found', 'This walkthrough visit could not be found. Refresh your schedule.', 404);
     const startedBy = started(visit) ? assignmentKey(visit.walkthroughVisit.startedBy) : '';
-    if (!manager && !booker && startedBy !== actor && !await store.assigned(session, visit)) throw fail('not_assigned', 'This walkthrough is not assigned to you.', 403);
+    if (!manager && !booker && startedBy !== actor && !await store.assigned(session, visit, now)) throw fail('not_assigned', 'This walkthrough is not assigned to you.', 403);
   }
   const lock = await store.read(WALKTHROUGH_VISIT_LOCKS, lockId(actor));
   const open = lock?.openVisitId ? await store.read('jobs', lock.openVisitId) : null;
@@ -329,7 +341,7 @@ export async function walkthroughVisitState(store, session, query = {}, now = ne
     shift = { available: true, clockedIn: Boolean(active), onBreak: Boolean(view?.onBreak), needsReview: Boolean(view?.summary.needsReview), current: view?.current ? { kind: view.current.kind, jobId: view.current.jobId, startedAt: view.current.startedAt } : null };
   } catch (error) { shift = { available: false, code: /^walkthrough_visit_/.test(error?.code || '') ? error.code : 'walkthrough_visit_time_unavailable' }; }
   return { ok: true, authority: 'employee_hub', asOf: now, viewer: { id: actor, manager }, visit: walkthroughVisitProjection(visit),
-    openVisit: open && open.type === 'walkthrough' && !open.recordType && started(open) && !outcomeOf(open) ? walkthroughVisitProjection(open) : null, shift };
+    openVisit: open && open.type === 'walkthrough' && !open.recordType && started(open) && !outcomeOf(open) && lockCounts(session, open, now) ? walkthroughVisitProjection(open) : null, shift };
 }
 
 export function walkthroughVisitStorage(env, fetcher = firestoreFetch) {
@@ -344,7 +356,7 @@ export function walkthroughVisitStorage(env, fetcher = firestoreFetch) {
       try { return await dispatch.read(collection, id); }
       catch { throw fail('storage_unavailable', 'Walkthrough records could not be loaded. Retry.', 503); }
     },
-    assigned: (session, job) => createJobAssignmentAccess(env, session).assigned(job),
+    assigned: (session, job, at) => createJobAssignmentAccess(env, session, assignmentClock(at)).assigned(job),
     // The rep's own active shift, found as the Hub clock finds it: the per-employee time
     // lock, else a scan of the vault timecards. Two active shifts need a manager.
     async activeShift(session) {

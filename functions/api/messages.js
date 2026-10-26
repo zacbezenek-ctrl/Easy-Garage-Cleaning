@@ -71,7 +71,7 @@ export function messagesHandlers({
         if (!object(input) || !ACTIONS.has(input.action) || !UUID.test(input.requestId || '')) return reply(400, { ok: false, code: 'messaging_request_invalid', error: 'Use a supported message action with a unique request ID.' });
         const actor = { ...viewer, kind: 'human', source: 'hub' }, meter = metered(storage(env), messenger(env), budgetOf(env)), store = meter.store;
         const reserve = () => { if (meter.left() < CLAIM_COST) throw Object.assign(new Error('This message was not attempted. Send it again.'), { code: 'messaging_not_attempted', status: 503 }); };
-        const service = createApprovedSendService({ store, messenger: meter.messenger, clock: now, env, secret: env?.HUB_SESSION_SECRET || '', links: links(env), assignment: person => access(env, person), reserve, ...options(env) });
+        const service = createApprovedSendService({ store, messenger: meter.messenger, clock: now, env, secret: env?.HUB_SESSION_SECRET || '', links: links(env), assignment: person => access(env, person, { now }), reserve, ...options(env) });
         const { action, requestId, items, ...item } = input;
         const batch = action.startsWith('batch_');
         if (batch) {
