@@ -134,7 +134,7 @@ test('a refused clock-in is reported and dropped; managers, offline phones and p
   assert.match(offline.card(), /<button type="button" class="clock-btn" onclick="crewClock\('clock_in'\)" disabled>Clock in<\/button><small class="clock-note" role="status">Connect to clock in or out here\.<\/small>/);
   await offline.context.crewClock('clock_in');
   assert.equal(offline.posts.length, 0);
-  assert.match(home, /<script src="\/crew\/field-outbox\.js\?v=20260929crewtime2"><\/script>/, 'the home loads the same outbox build the job page and worker use');
+  assert.match(home, /<script src="\/crew\/field-outbox\.js\?v=20261022weaktap"><\/script>/, 'the home loads the same outbox build the job page and worker use');
   assert.ok(home.indexOf('field-outbox.js') < home.lastIndexOf('<script>'), 'before the page script');
 });
 
