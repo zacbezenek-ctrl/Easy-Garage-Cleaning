@@ -216,22 +216,22 @@ jobs:
           done
   browser:
     runs-on: ubuntu-latest
+    # Chromium's system packages took 8+ of the 20 minutes on slow apt mirrors (2026-10-27), so the last tests were
+    # cancelled. The same Playwright image as the WebKit jobs carries Python, Chromium and its packages.
+    container:
+      image: mcr.microsoft.com/playwright/python:v1.57.0-noble
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
       # Some browser fixtures render server modules with Node (money documents).
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: npm install --ignore-scripts --no-audit --no-fund
       - run: pip install playwright==1.57.0
-      - run: python -m playwright install --with-deps chromium
       - name: Isolated real-browser Action Center tests
         run: python tests/browser/test_operations_ui.py
       - name: Isolated real-browser recording review tests
