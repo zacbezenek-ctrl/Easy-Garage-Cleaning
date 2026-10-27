@@ -115,8 +115,9 @@ test('later schedule paths cannot create provider writes or turn on notification
 
 test('actual HighLevel route blocks every handoff tool before provider calls',async t=>{
   const job={type:'walkthrough',customerId:'c1',ownerWalkthrough:{providerWrites:'blocked',mode:'hub_only'}};
-  const requests=new Map(['schedule','lifecycle','post_job','game_plan','sales_exit'].map(tool=>[tool,{tool,job_id:'recorded',event:'job-cancelled'}]));
-  const r=await highLevelRequestLog(t,FLAG_OFF_ENV,{recorded:job},requests);
+  const jobId='recorded_visit_'+'a'.repeat(40);
+  const requests=new Map(['schedule','lifecycle','post_job','game_plan','sales_exit'].map(tool=>[tool,{tool,job_id:jobId,event:'job-cancelled'}]));
+  const r=await highLevelRequestLog(t,FLAG_OFF_ENV,{[jobId]:job},requests);
   assert.equal(r.calls.length,0);for(const response of r.responses){assert.equal(response.status,409);assert.equal(response.body.code,'OWNER_RECORDING_READ_ONLY');}
 });
 

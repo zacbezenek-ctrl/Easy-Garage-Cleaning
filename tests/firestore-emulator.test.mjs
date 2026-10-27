@@ -351,6 +351,7 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
         await assertFails(db.doc('jobs/owner-recorded').update({date:'2099-01-01',notify:true}));
         await assertFails(db.doc('jobs/owner-recorded').delete());
         await assertFails(db.doc('jobs/forged-recording').set({type:'walkthrough',ownerWalkthrough:{providerWrites:'blocked'}}));
+        await assertFails(db.doc('jobs/recorded_visit_forged').set({type:'walkthrough'}));
         await assertFails(db.doc('walkthroughProviderLinks/provider-1').set({jobId:'forged'}));
         await assertFails(db.doc('walkthroughRecordings/request-1').set({jobId:'forged'}));
       }

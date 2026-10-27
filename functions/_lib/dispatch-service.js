@@ -519,7 +519,7 @@ async function executeDispatch(store, session, input, now, options = {}, context
       // A split job is keyed by its first segment's start (the hull), like one visit.
       const start = store.segmentsEnabled === true && Array.isArray(changes.assignmentSegments) && changes.assignmentSegments.length ? validateSegments(changes.assignmentSegments,{roster,resources}).hull : changes;
       const bookingKey = start.date && start.time ? await digest({ customerId: customer.id, kind: input.kind, date: start.date, time: start.time, timeZone: DISPATCH_TIME_ZONE }) : null;
-      id = bookingKey ? `visit_${bookingKey.slice(0,40)}` : `dispatch_${receiptId.replaceAll('-','')}`;
+      id = bookingKey ? `${options.ownerWalkthrough ? 'recorded_visit' : 'visit'}_${bookingKey.slice(0,40)}` : `dispatch_${receiptId.replaceAll('-','')}`;
       if (await store.read('jobs',id) || start.date && (await reads.where('customerId',customer.id)).some(job => visibleJob(job) && job.customerId === customer.id && (job.type === 'walkthrough' ? 'walkthrough' : 'job') === input.kind && job.date === start.date && job.time === start.time)) throw fail('dispatch_job_already_exists','This customer already has that visit at the selected time. Open the existing job.',409);
       let source = null, template = null;
       if (input.sourceTemplateJobId) {

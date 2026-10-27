@@ -28,7 +28,8 @@ checked. Lost responses replay a durable owner/request receipt. The browser
 retains an uncertain request in owner-scoped session storage and offers
 **Verify saved recording** after reopening. Preview alone writes nothing.
 
-The server-owned `ownerWalkthrough.providerWrites = blocked` policy prevents
+The server-owned `recorded_visit_*` identity and
+`ownerWalkthrough.providerWrites = blocked` policy prevent
 later calendar sync, tag/mirror intents and HighLevel handoff retries. Only the
 owner may edit these records. Hub-only edits remain silent. Imported time/status
 changes are refused in ordinary Dispatch: review the existing appointment in
@@ -37,12 +38,13 @@ quote/payment flow. Compensation and global calendar mappings are unchanged.
 
 ## Release
 
-1. Review tests and CI on the draft PR, then merge only this repair.
+1. Review tests and CI on the draft PR. Keep it unmerged until the rule below is
+   published, because merging starts the Pages production deployment.
 2. Publish `firestore.rules` to the Hub's existing Firebase project before making
    the new action available. The rule blocks SDK creation, mutation and deletion
    of these visits. Receipt collections remain server-only under the catch-all.
    No indexes, credentials or data migration are needed.
-3. Deploy Cloudflare Pages from the exact merged commit. Verify the new script,
+3. Merge only this repair and deploy Cloudflare Pages from that exact commit. Verify the new script,
    owner-only endpoint and rejection for other roles without live bookings.
    Railway needs no release: its scheduler resolves the visit through the Pages
    bridge, which rejects recorded snapshots before any provider call.
