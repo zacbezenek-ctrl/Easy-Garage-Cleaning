@@ -22,19 +22,19 @@ jobs:
   recording-webkit:
     name: iPhone WebKit transcript and recording workflow
     runs-on: ubuntu-latest
-    # WebKit's system packages (playwright install --with-deps) alone have taken 7-9 minutes on slow runner mirrors,
-    # so 8 minutes cancelled these jobs before any test ran (main and PRs, 2026-10-26/27).
-    timeout-minutes: 20
+    # Installing WebKit's system packages on the runner (playwright install --with-deps) took 7-20+ minutes on slow
+    # apt mirrors and cancelled these jobs before any test ran (main and PRs, 2026-10-26/27). Playwright's own image
+    # already carries Python, the pinned playwright package, WebKit and its packages, so nothing is fetched from apt.
+    container:
+      image: mcr.microsoft.com/playwright/python:v1.57.0-noble
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install playwright==1.57.0
-      - run: python -m playwright install --with-deps webkit
+      - name: Check the image's Playwright version
+        run: python -c "from importlib.metadata import version; v = version('playwright'); print(v); assert v == '1.57.0', v"
       - name: Mobile gestures, readable inputs and scrollable sheets
         env:
           EGC_TEST_BROWSER: webkit
@@ -58,19 +58,19 @@ jobs:
   field-pay-webkit:
     name: iPhone WebKit field payments and receipt review
     runs-on: ubuntu-latest
-    # WebKit's system packages (playwright install --with-deps) alone have taken 7-9 minutes on slow runner mirrors,
-    # so 8 minutes cancelled these jobs before any test ran (main and PRs, 2026-10-26/27).
-    timeout-minutes: 20
+    # Installing WebKit's system packages on the runner (playwright install --with-deps) took 7-20+ minutes on slow
+    # apt mirrors and cancelled these jobs before any test ran (main and PRs, 2026-10-26/27). Playwright's own image
+    # already carries Python, the pinned playwright package, WebKit and its packages, so nothing is fetched from apt.
+    container:
+      image: mcr.microsoft.com/playwright/python:v1.57.0-noble
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install playwright==1.57.0
-      - run: python -m playwright install --with-deps webkit
+      - name: Check the image's Playwright version
+        run: python -c "from importlib.metadata import version; v = version('playwright'); print(v); assert v == '1.57.0', v"
       - name: Exact balance, private receipt, manager review and safe retries
         env:
           EGC_TEST_BROWSER: webkit
