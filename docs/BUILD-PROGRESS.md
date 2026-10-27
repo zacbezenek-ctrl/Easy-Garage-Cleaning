@@ -457,7 +457,14 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
 - **CREW-NOTIFY** Crew schedule notices behind `EGC_CREW_NOTIFICATIONS_ENABLED` (off): dispatch, bridge and recurring
   saves queue per-employee notices in the same commit, and the signed messaging cron texts them (crew_assignment,
   crew_unassignment, crew_schedule_change; owner-approved wording) only to an opted-in employee's own number on a
-  HighLevel contact tagged egc-staff. MY EGC → Schedule alerts shows each employee their feed. Gaps: no Web Push yet.
+  HighLevel contact tagged egc-staff. MY EGC → Schedule alerts shows each employee their feed. Crew-chat Web Push: CREW-PUSH.
+- **CREW-PUSH** Crew-chat phone alerts while the Hub is closed, behind `EGC_CREW_CHAT_PUSH` (off) with `HUB_OFFLINE_ENABLED`
+  and the `EGC_VAPID_*` keys: a new message (Hub POST /api/employee-hub, after the reply) is pushed with WebCrypto
+  (RFC 8291/8292, functions/_lib/web-push.js) to the readers of its room (general: current staff; job room: assigned crew
+  and managers), never the sender; the lock screen shows sender and room only. Subscriptions are sealed in the
+  server-only employee_push_subscriptions collection (/api/hub-push), read once per message, never by polls; 404/410
+  ones are dropped. hub-sw.js shows the alert and a tap opens the room. Gaps: direct messages (#283), message preview
+  (owner decision).
 - **MONEY-GHL-PARITY** With `MONEY_API_ENABLED` on, a confirmed server money save (estimate, approval, deposit, payment,
   invoice) starts the same egc-<event> HighLevel lifecycle trigger as the legacy finance save, through the suite's own
   syncCustomerCommunication (claimed once per save; a save it cannot confirm shows as needs attention). Flag off: no

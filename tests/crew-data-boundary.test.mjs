@@ -59,7 +59,9 @@ test('canonical Firestore job grants cannot bypass server crew projection or com
  assert.match(ownedData,/recordType == 'schedule_lock' && !documentId\.matches\('_egc_schedule_lock_\.\*'\)/);
  // A new literal recordType in server code must be classified: deny it to SDK writes above, or
  // (only if browsers legitimately write it, or it lives outside jobs) list it here.
- const browserWritable=new Set(['schedule_lock','crew_availability']);
+ // employee_push_v1 (CREW-PUSH, functions/_lib/crew-push.js) lives outside jobs: its own server-only
+ // employee_push_subscriptions collection, read only there, which the rules' catch-all denies to browsers.
+ const browserWritable=new Set(['schedule_lock','crew_availability','employee_push_v1']);
  const serverTypes=new Set();
  const functionsRoot=fileURLToPath(new URL('../functions/',import.meta.url));
  for(const entry of readdirSync(functionsRoot,{recursive:true,withFileTypes:true}).filter(entry=>entry.isFile()&&entry.name.endsWith('.js'))){

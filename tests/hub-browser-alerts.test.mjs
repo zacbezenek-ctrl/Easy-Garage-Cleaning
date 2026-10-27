@@ -9,7 +9,7 @@ import vm from './helpers/vm-realm.mjs';
 const collectionNames = ['profiles', 'timeEntries', 'announcements', 'requests', 'incidents', 'equipment', 'training', 'teamMessages', 'jobMessages', 'messageReads'];
 const response = body => ({ ok: true, status: 200, json: async () => body });
 
-function suite({ registration = null, alerts = 'on', desktop = false, hubApp = false } = {}) {
+function suite({ registration = null, alerts = 'on', desktop = false, hubApp = false, crewPush = null } = {}) {
   const values = new Map([['egc_u', 'Crew.One'], ['egc_role', 'crew']]);
   if (alerts) values.set('egc_browser_alerts', alerts);
   const storage = { getItem: key => values.has(key) ? values.get(key) : null, setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) };
@@ -19,11 +19,11 @@ function suite({ registration = null, alerts = 'on', desktop = false, hubApp = f
     static async requestPermission() { return 'granted'; }
     constructor(title) { constructed.push(title); if (desktop) return; throw new TypeError("Failed to construct 'Notification': Illegal constructor. Use ServiceWorkerRegistration.showNotification() instead."); }
   }
-  const env = { values, constructed, registration, toasts: [], collections: Object.fromEntries(collectionNames.map(name => [name, []])) };
+  const env = { values, constructed, registration, toasts: [], workerListeners: [], collections: Object.fromEntries(collectionNames.map(name => [name, []])) };
   const context = {
     console, URLSearchParams, Intl, Promise, Set, Map, Error, TypeError,
     sessionStorage: storage, localStorage: storage, me: 'Crew.One', jobsCache: [],
-    navigator: { serviceWorker: { getRegistration: async () => env.registration } },
+    navigator: { serviceWorker: { getRegistration: async () => env.registration, addEventListener: (type, listener) => env.workerListeners.push([type, listener]) } },
     Notification: AndroidNotification,
     location: { pathname: '/employee', search: '' },
     setInterval: () => 1, clearInterval() {}, setTimeout: () => 1, clearTimeout() {},
@@ -37,6 +37,8 @@ function suite({ registration = null, alerts = 'on', desktop = false, hubApp = f
   context.showToast = text => env.toasts.push(text);
   // HUB_OFFLINE_ENABLED, as employee-offline-queue.js reports it once /api/hub-offline answers.
   if (hubApp) context.EGCHubOffline = { state: () => ({ enabled: true, known: true }) };
+  // CREW-PUSH: employee-crew-push.js, as the page loads it before employee-suite.js.
+  if (crewPush) context.EGCCrewPush = crewPush;
   context.window = context;
   const source = readFileSync(new URL('../employee-suite.js', import.meta.url), 'utf8')
     .replace(/\}\)\(\);\s*$/, 'Object.assign(globalThis,{ui:{S,refreshPeople,myDayBoard}});})();');
@@ -219,4 +221,41 @@ test('a storage error while checking alerts never fails the refresh or My day', 
   await env.settle();
   assert.equal(env.api.S.peopleState.error, '');
   assert.match(env.api.myDayBoard(), /opsEnableAlerts\(\)/, 'alerts read as off');
+});
+
+// CREW-PUSH (employee-crew-push.js): the alerts button also subscribes the phone, turning alerts off removes it, an
+// iPhone outside the home-screen Hub is told how to add it, and a tapped phone alert opens its chat room.
+function crewPush({ install = false } = {}) {
+  const calls = { enable: 0, disable: 0, sync: 0 };
+  return { calls, needsInstall: () => install, installCopy: 'Synthetic add-to-home-screen steps', enable: async () => { calls.enable++; return 'on'; }, disable: async () => { calls.disable++; }, sync: () => { calls.sync++; }, note: () => '<p id="ops-crew-push-note"></p>' };
+}
+
+test('Enable browser alerts subscribes the phone for crew-chat alerts; Turn off removes it; My day has the note', async () => {
+  const push = crewPush(), env = suite({ alerts: '', desktop: true, crewPush: push });
+  await env.api.refreshPeople();
+  assert.match(env.api.myDayBoard(), /ops-crew-push-note/);
+  await env.context.opsEnableAlerts();
+  assert.equal(push.calls.enable, 1);
+  assert.equal(env.toasts.at(-1), 'Employee Hub alerts enabled');
+  env.context.opsDisableAlerts();
+  assert.equal(push.calls.disable, 1);
+});
+
+test('on an iPhone in Safari, Enable browser alerts says how to add the Hub to the home screen and asks nothing', async () => {
+  let asked = 0;
+  const push = crewPush({ install: true }), env = suite({ alerts: '', crewPush: push });
+  env.context.Notification.requestPermission = async () => { asked++; return 'granted'; };
+  await env.api.refreshPeople();
+  await env.context.opsEnableAlerts();
+  assert.deepEqual([env.toasts.at(-1), asked, push.calls.enable, env.values.get('egc_browser_alerts')], ['Synthetic add-to-home-screen steps', 0, 0, undefined]);
+});
+
+test('a phone alert tapped while the Hub is open opens its chat room; an unsafe room is ignored', async () => {
+  const env = suite({ crewPush: crewPush() });
+  await env.api.refreshPeople();
+  const message = data => env.workerListeners.filter(([type]) => type === 'message').forEach(([, listener]) => listener({ data }));
+  message({ type: 'egc-alert-open', view: 'crew_chat', room: 'job:job-1' });
+  assert.equal(env.api.S.chatChannel, 'job:job-1');
+  message({ type: 'egc-alert-open', view: 'crew_chat', room: 'job:../x' });
+  assert.equal(env.api.S.chatChannel, 'job:job-1', 'unchanged');
 });

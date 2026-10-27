@@ -217,3 +217,25 @@ Two switches, in this order. Both are off until you set them, and neither sends 
 125. [ ] **Set `HUB_OFFLINE_ENABLED=true` in Preview, test it on one Android phone and one iPhone, then set it in Production.** Without it, slip alerts reach managers on a computer or an iPhone but not on Android. On each manager's Android phone, open the Hub in Chrome and install it ("Install app" or "Add to Home screen"), then open it from the home-screen icon. Tell the crew that a clock-in tapped with no signal waits on the phone, and that they must clock in again if the Hub says it was refused. Roll back by deleting the variable: the next Hub load removes the app's saved files.
 126. [ ] **Set `EGC_MANAGER_SLIP_ALERTS=true` (Preview first, then Production).** Managers get the alerts only after the next step. Roll back by deleting the variable; the Field agenda flags keep showing either way.
 127. [ ] **Each manager, on each phone or computer they use: open the Hub (the installed app on Android), go to My day and tap Enable browser alerts, then allow notifications.** A test alert, "Employee Hub alerts are on", should appear at once, and My day should show "Browser alerts on". If My day instead says alerts aren't available in this browser, that device can't show them: on Android, open the installed app instead of a Chrome tab. If no test alert appears, check the phone's notification settings for the Hub or the browser. From then on, the first real slip alert comes the first time a crew slips. Alerts need the Hub open on that device, even in the background: with every Hub tab or the app closed, nothing alerts.
+
+## Crew-chat phone alerts (CREW-PUSH)
+
+Crew chat alerts phones even when the Hub is closed or the phone is locked, so crew and managers can stop texting each other
+in HighLevel. It needs the installable Hub (`HUB_OFFLINE_ENABLED`, item 125) first. Staff only: no customer message and no
+HighLevel write. The alert shows who wrote and in which room, never the message text.
+
+128. [ ] **Make the key pair on your own computer: `node scripts/generate-vapid-keys.mjs` in a copy of this repo.** It prints
+     two lines to your screen only. In Cloudflare Pages → Settings → Variables and Secrets (Preview, then Production), add
+     `EGC_VAPID_PUBLIC_KEY` as a plain variable and `EGC_VAPID_PRIVATE_KEY` as a secret (Encrypt). Never paste the private
+     key anywhere else.
+129. [ ] **Set `EGC_CREW_CHAT_PUSH=true` in Preview** (with `HUB_OFFLINE_ENABLED=true` there), redeploy, and test with two
+     people: an Android phone with the Hub installed, and an iPhone (iOS 16.4 or later) with the Hub added to the home
+     screen. On each, My day → Enable browser alerts. Close the Hub, lock the phone, and post in General crew chat and in a
+     job room from the other account. Each phone should alert with the sender and the room, tapping it should open that
+     room, and the sender's own phone should not alert. Then set it in Production.
+130. [ ] **Tell the crew:** "Install the Hub. Android: open the Hub in Chrome, tap Install app (or Add to Home screen). iPhone:
+     open it in Safari, tap Share, then Add to Home Screen. Open it from the new icon, sign in, go to My day and tap Enable
+     browser alerts, then Allow. Crew chat now reaches your phone; use it instead of texting in HighLevel."
+131. [ ] **Decide on message previews.** Alerts show only the sender and the room because a lock screen can be read by
+     anyone nearby (customers included). Showing the first words of the message is a small follow-up if you want it.
+     Roll back any time by deleting `EGC_CREW_CHAT_PUSH`: alerts stop at once; nothing else changes.

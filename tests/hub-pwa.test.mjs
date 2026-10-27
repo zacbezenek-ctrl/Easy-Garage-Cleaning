@@ -518,3 +518,31 @@ test('a tapped Hub alert closes, focuses an open Hub window as it is, and otherw
   assert.deepEqual(JSON.parse(JSON.stringify(running.posted)), [{ type: 'egc-alert-open', view: 'today', job: 'late-job' }]);
   assert.deepEqual((await tap({ view: 'today', job: 'late&x' }, ['/employee'])).posted, [], 'an unsafe job id is not posted either');
 });
+
+// CREW-PUSH (functions/_lib/crew-push.js): a crew-chat alert pushed while the Hub is closed shows only the plain fields it
+// expects, always shows (as a push must), and a tap opens that room.
+test('a pushed crew-chat alert shows the sender and room it names, cut to length, and opens that room when tapped', async () => {
+  const sw = await installed(), shown = [];
+  sw.context.registration.showNotification = async (title, options) => { shown.push([title, JSON.parse(JSON.stringify(options))]); };
+  const push = async data => { await sw.dispatch('push', { data: data === undefined ? null : { json: () => { if (data instanceof Error) throw data; return data; } } }); return shown.at(-1); };
+  assert.deepEqual(await push({ title: 'EGC crew chat', body: 'Synthetic Crew posted in a job room (Tue, Oct 27)', tag: 'message-1', view: 'crew_chat', room: 'job:job-1' }),
+    ['EGC crew chat', { body: 'Synthetic Crew posted in a job room (Tue, Oct 27)', tag: 'message-1', data: { view: 'crew_chat', room: 'job:job-1' } }]);
+  assert.deepEqual(await push(undefined), ['EGC crew chat', { body: 'New crew-chat message', tag: 'team', data: { view: 'crew_chat', room: 'team' } }], 'an empty push still shows');
+  assert.deepEqual(await push(new SyntaxError('not json')), ['EGC crew chat', { body: 'New crew-chat message', tag: 'team', data: { view: 'crew_chat', room: 'team' } }]);
+  const odd = await push({ title: 'x'.repeat(200), body: { html: '<b>' }, room: 'job:../finance', view: 'finance', icon: 'https://evil.example/i.png' });
+  assert.deepEqual([odd[0].length, odd[1].body, odd[1].data], [80, 'New crew-chat message', { view: 'crew_chat', room: 'team' }], 'an unsafe room is dropped and nothing else is taken');
+  assert.equal(Object.hasOwn(odd[1], 'icon'), false);
+
+  const tap = async (data, windows) => {
+    const calls = { opened: [], posted: [] };
+    sw.context.clients.matchAll = async () => windows.map(url => ({ url: new URL(url, ORIGIN).href, focus: async () => {}, postMessage: message => calls.posted.push(message) }));
+    sw.context.clients.openWindow = async url => { calls.opened.push(url); };
+    await sw.dispatch('notificationclick', { notification: { data, close() {} } });
+    return calls;
+  };
+  assert.deepEqual((await tap({ view: 'crew_chat', room: 'job:job-1' }, [])).opened, ['/employee?view=crew_chat&room=job%3Ajob-1']);
+  assert.deepEqual((await tap({ view: 'crew_chat', room: 'team' }, [])).opened, ['/employee?view=crew_chat&room=team']);
+  for (const room of ['job:a&view=finance', 'job:', 'dm:x', '<img>', 42]) assert.deepEqual((await tap({ view: 'crew_chat', room }, [])).opened, ['/employee?view=crew_chat'], `room ${JSON.stringify(room)} is dropped`);
+  assert.deepEqual((await tap({ view: 'my_day', room: 'team' }, [])).opened, ['/employee?view=my_day'], 'only crew chat takes a room');
+  assert.deepEqual(JSON.parse(JSON.stringify((await tap({ view: 'crew_chat', room: 'job:job-1' }, ['/employee'])).posted)), [{ type: 'egc-alert-open', view: 'crew_chat', room: 'job:job-1' }], 'an open Hub is told the room');
+});

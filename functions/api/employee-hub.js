@@ -15,6 +15,7 @@ import { SELF_PERSONAL_FIELDS, legacyManagerProfile, legacyProfileView, mirrorLe
 import { assertNoOthersPay, assertPayUnchanged, canSetPay, payHidden, payOwnerField, seesOthersPay, visiblePay, withoutPayWrites } from '../_lib/pay-visibility.js';
 import { can, staffPasswordResetEnabled } from '../_lib/staff-roles.js';
 import { slipAlertsFor } from '../_lib/manager-slip-alerts.js';
+import { crewChatPushEnabled, sendCrewChatPush } from '../_lib/crew-push.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const COLLECTIONS = EMPLOYEE_HUB_COLLECTIONS;
@@ -550,7 +551,8 @@ export async function onRequestGet({ request, env }) {
   }
 }
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost(context) {
+  const { request, env } = context;
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, error: 'Sign in required' });
@@ -615,6 +617,12 @@ export async function onRequestPost({ request, env }) {
         const replay = data === current.data && ['teamMessages', 'jobMessages'].includes(collection);
         if (replay) await markVaultFamiliesChanged(env, [collection]);
         const saved = replay ? data : await writeOne(env, collection, id, data, ['profiles', 'messageReads'].includes(collection) ? target : null);
+        // CREW-PUSH (EGC_CREW_CHAT_PUSH): a new message alerts the phones of the people who may read it, after the reply.
+        // A replay already alerted when it was first saved.
+        if (!replay && !current.data && ['teamMessages', 'jobMessages'].includes(collection) && crewChatPushEnabled(env)) {
+          const alerts = sendCrewChatPush(env, { collection, message: saved, readJob });
+          if (typeof context.waitUntil === 'function') context.waitUntil(alerts); else await alerts;
+        }
         return reply(200, { ok: true, record: visiblePay(session, env, collection, collection === 'profiles' ? legacyProfileView(saved, new Date().toISOString()) : saved) });
       } catch (error) {
         if (error.code !== 'EMPLOYEE_HUB_WRITE_CONFLICT' || attempt + 1 === attempts) throw error;
