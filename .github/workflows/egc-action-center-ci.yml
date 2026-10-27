@@ -22,7 +22,9 @@ jobs:
   recording-webkit:
     name: iPhone WebKit transcript and recording workflow
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # WebKit's system packages (playwright install --with-deps) alone have taken 7-9 minutes on slow runner mirrors,
+    # so 8 minutes cancelled these jobs before any test ran (main and PRs, 2026-10-26/27).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,7 +58,9 @@ jobs:
   field-pay-webkit:
     name: iPhone WebKit field payments and receipt review
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # WebKit's system packages (playwright install --with-deps) alone have taken 7-9 minutes on slow runner mirrors,
+    # so 8 minutes cancelled these jobs before any test ran (main and PRs, 2026-10-26/27).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
