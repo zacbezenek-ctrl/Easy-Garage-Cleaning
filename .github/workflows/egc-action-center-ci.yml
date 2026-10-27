@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     # Installing WebKit's system packages on the runner (playwright install --with-deps) took 7-20+ minutes on slow
     # apt mirrors and cancelled these jobs before any test ran (main and PRs, 2026-10-26/27). Playwright's own image
-    # already carries Python, the pinned playwright package, WebKit and its packages, so nothing is fetched from apt.
+    # already carries Python, WebKit and its system packages, so nothing is fetched from apt.
     container:
       image: mcr.microsoft.com/playwright/python:v1.57.0-noble
     timeout-minutes: 15
@@ -33,8 +33,8 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
-      - name: Check the image's Playwright version
-        run: python -c "from importlib.metadata import version; v = version('playwright'); print(v); assert v == '1.57.0', v"
+      # The image holds the browsers and pip but not the playwright package; pip fetches only the wheel.
+      - run: pip install playwright==1.57.0
       - name: Mobile gestures, readable inputs and scrollable sheets
         env:
           EGC_TEST_BROWSER: webkit
@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     # Installing WebKit's system packages on the runner (playwright install --with-deps) took 7-20+ minutes on slow
     # apt mirrors and cancelled these jobs before any test ran (main and PRs, 2026-10-26/27). Playwright's own image
-    # already carries Python, the pinned playwright package, WebKit and its packages, so nothing is fetched from apt.
+    # already carries Python, WebKit and its system packages, so nothing is fetched from apt.
     container:
       image: mcr.microsoft.com/playwright/python:v1.57.0-noble
     timeout-minutes: 15
@@ -69,8 +69,8 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
-      - name: Check the image's Playwright version
-        run: python -c "from importlib.metadata import version; v = version('playwright'); print(v); assert v == '1.57.0', v"
+      # The image holds the browsers and pip but not the playwright package; pip fetches only the wheel.
+      - run: pip install playwright==1.57.0
       - name: Exact balance, private receipt, manager review and safe retries
         env:
           EGC_TEST_BROWSER: webkit
