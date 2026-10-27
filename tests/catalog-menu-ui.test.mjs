@@ -11,6 +11,7 @@ import { quoteDraftHandlers } from '../functions/api/quote-draft.js';
 import { HELD_RELEASE_MARKER, heldJobsHandlers } from '../functions/api/held-jobs.js';
 import { randomUUID } from 'node:crypto';
 import { priceCompositeQuote } from '../functions/_lib/composite-quote.js';
+import { MAX_MENU_CHANGES } from '../functions/_lib/catalog-store.js';
 import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
 import { builderState, fixture, menuItem, owner as fixtureOwner, selection, signedPlan, NOW as SIGNED_AT, ON_ENV } from './helpers/estimator-fixture.mjs';
 import { catalogStorage, readCompositeState } from '../functions/_lib/catalog-store.js';
@@ -126,7 +127,7 @@ test('with the builder flag off the catalog screen shows no menu prices and neve
   }
 });
 
-test('cleaning bases are priced by the owner, Tick all leaves them out, and one request holds at most 100 changes', async () => {
+test('cleaning bases are priced by the owner, Tick all leaves them out, and approving more than 100 saves in batches of 100', async () => {
   const ui = screen();
   await ui.settle(() => ui.root()?.textContent.includes('pricing-menu prices are drafts'), 'the menu prices');
   assert.match(ui.root().textContent, /historical full-service base, which already included hauling/);
@@ -142,13 +143,27 @@ test('cleaning bases are priced by the owner, Tick all leaves them out, and one 
   const ticks = () => ui.root().querySelectorAll('tbody input[type="checkbox"]').filter(box => box.checked && /^Approve /.test(box.getAttribute('aria-label'))).length;
   ui.document.body.querySelectorAll('button').filter(node => node.textContent === 'Tick all in this step')[0].click();
   assert.ok(menu.services.filter(item => item.group === 'cleaning-base').every(item => !ui.row(item.id).querySelector('input[type="checkbox"]').checked), 'Tick all leaves the cleaning bases unticked');
-  const removal = ticks();
-  ui.document.body.querySelectorAll('button').filter(node => node.textContent === 'Tick all in this step').at(-1).click();
-  assert.equal(ticks(), 100, `the storage step fills the request up to 100 (${removal} removal prices were ticked first)`);
-  assert.ok(!off(ui.button('Review 100 changes')));
-  tick(menu.products.filter(item => item.section === 'storage').find(item => !ui.row(item.id).querySelector('input[type="checkbox"]').checked).id);
-  assert.match(ui.root().textContent, /Approve or revoke at most 100 prices at a time: untick 1/);
-  assert.ok(off(ui.button('Review 101 changes')));
+  assert.ok(ticks() > 0, 'Tick all in this step ticks that step');
+  // Tick every draft price: the whole menu but the cleaning bases, more than one request holds (MAX_MENU_CHANGES).
+  ui.button('Tick every draft price').click();
+  const eligible = [...menu.services, ...menu.products].filter(item => item.status !== 'approved' && item.group !== 'cleaning-base').length;
+  assert.ok(eligible > MAX_MENU_CHANGES, `the shipped menu has more than ${MAX_MENU_CHANGES} draft prices (${eligible})`);
+  assert.equal(ticks(), eligible);
+  assert.ok(menu.services.filter(item => item.group === 'cleaning-base').every(item => !ui.row(item.id).querySelector('input[type="checkbox"]').checked), 'the cleaning bases stay for the owner to price');
+  const batches = Math.ceil(eligible / MAX_MENU_CHANGES);
+  assert.match(ui.root().textContent, new RegExp(`${eligible} changes are saved in ${batches} batches of up to ${MAX_MENU_CHANGES}`));
+  const before = ui.fs.posts.length;
+  ui.button(`Review ${eligible} changes`).click();
+  ui.button('Save approvals').click();
+  await ui.settle(() => ui.root().textContent.includes('pricing-menu prices. Builder quotes that use them can be sent now.') && ui.root().textContent.includes(`Approved by you (${eligible})`), 'every batch saved and reloaded');
+  const posts = ui.fs.posts.slice(before);
+  assert.equal(posts.length, batches, 'one request per batch');
+  assert.ok(posts.every(post => post.action === 'menu.approve' && post.approve.length <= MAX_MENU_CHANGES), 'no request holds more than the server takes');
+  assert.equal(new Set(posts.flatMap(post => post.approve.map(entry => entry.id))).size, eligible, 'every ticked price was sent exactly once');
+  assert.equal(posts[0].expectedRevision, null);
+  assert.ok(posts.slice(1).every(post => typeof post.expectedRevision === 'string' && post.expectedRevision), 'each later batch carries the revision the previous save returned');
+  assert.equal(Object.keys(ui.fs.get('pricingMenuApprovals/current').approvals).length, eligible);
+  assert.equal([...ui.fs.docs.keys()].filter(key => key.startsWith('hub_audit/')).length, batches, 'one owner audit entry per batch, each within its 100 keys');
 });
 
 test('the goods markup setting is edited, validated and reviewed like every pricing setting', () => {
