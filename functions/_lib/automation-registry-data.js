@@ -168,6 +168,9 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     trigger('call:missed', 'missed_call', 'Missed inbound call', [], 'Started by the caller, not the Hub.'),
   ],
   automations: [
+    entry({ id: 'hub.owner_walkthrough_import_read', name: 'Owner walkthrough import verification (read only)', system: 'hub', trigger: 'Owner reviews and saves an exact existing appointment from Dispatch', audience: 'staff', channel: 'none', contentSource: 'none', classification: 'internal', disposition: 'internal', sendsToday: 'no', speedToLead: 'none',
+      code: code('functions/_lib/walkthrough-recording.js', 'ghl_contact_write', 'ghl_appointment_write'), evidence: ['docs/owner-walkthrough-recording.md'],
+      notes: 'The scanner counts contact and appointment paths, but these are GET-only verification. Hub-only recording has no provider calls. Imports create only a Hub snapshot, preserve the linked contact, and permanently block provider writes for that recorded visit. Existing provider workflows are unchanged.' }),
     // HighLevel workflows verified in the 2026-09-06 and 2026-09-20 inspections.
     entry({ id: 'ghl.garage_instant_text_nurture', name: 'Garage instant text + nurture', system: 'ghl_workflow', providerId: 'edae095b-6ccb-4620-b66e-e16d172251b2', verifiedAt: '2026-09-20',
       trigger: 'Facebook lead forms (Free Walkthrough offer, three untitled forms, Curb Side Pickup with "Full Garage Transformation"); also enrolled by the Sept 10 router',
@@ -455,6 +458,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
   ],
   // Exact send-path occurrences scanned by scripts/automation-inventory.mjs (--scan prints the current values).
   codeInventory: {
+    'functions/_lib/walkthrough-recording.js': { ghl_contact_write: 1, ghl_appointment_write: 1 },
     'functions/_lib/w19-form-submissions.js': { ghl_opportunity_write: 1, ghl_contact_write: 1 },
     'staff-login.js': { hub_send_endpoint_call: 1 },
     'crew/gameplan-handoff.js': { hub_send_endpoint_call: 1 },

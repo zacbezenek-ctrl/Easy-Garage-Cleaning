@@ -1,4 +1,5 @@
 import {firestoreFetch} from './firebase-service-account.js';
+import {requireProviderWritable} from './walkthrough-recording-policy.js';
 import {encodeFirestoreFields,decodeFirestoreFields} from './firestore-job.js';
 import {localInstant} from './operations-portal-records.js';
 import {dispatchStorage} from './dispatch-storage.js';
@@ -60,6 +61,7 @@ export function schedulingStorage(env,fetcher=firestoreFetch){return{
   async commit(writes){let r;try{r=await fetcher(env,`${URL}:commit`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({writes:writes.map(w=>({update:{name:`${ROOT}/${w.collection}/${w.id}`,fields:encodeFirestoreFields(w.patch)},updateMask:{fieldPaths:Object.keys(w.patch)},currentDocument:w.revision?{updateTime:w.revision}:{exists:false}}))}),signal:AbortSignal.timeout(15000)});}catch{throw failure('schedule_commit_outcome_unknown',503);}if(!r.ok){if(commitConflict(await commitFailure(r)))throw failure('schedule_revision_conflict',409);throw failure('schedule_commit_outcome_unknown',r.status>=500?503:409);}return r.json();}
 };}
 function visitIdentity(visit,customer){
+  requireProviderWritable(visit);
   if(!visit||!safeId(visit.id)||!visitKind(visit.type)||visit.recordType)throw failure('schedule_visit_not_found',404);
   if(!visit.customerId||!customer||customer.id!==visit.customerId)throw failure('schedule_customer_link_missing');
   if(visit.highlevelContactId&&customer.highlevelContactId&&visit.highlevelContactId!==customer.highlevelContactId)throw failure('schedule_contact_link_conflict');
@@ -78,6 +80,7 @@ export async function resolveScheduledVisit(store,id){
 export async function linkScheduledCustomer(store,actor,input,now=new Date().toISOString()){
   if(actor.kind!=='integration'||actor.role!=='integration'||!safeId(input.portalVisitId))throw failure('schedule_customer_link_requires_integration',403);
   const visit=await store.read('jobs',input.portalVisitId),contact=input.providerContact||{};
+  requireProviderWritable(visit);
   if(!visit||!visitKind(visit.type)||visit.revision!==input.expectedRevision||!safeId(contact.id))throw failure('schedule_customer_link_conflict');
   if(visit.highlevelContactId&&visit.highlevelContactId!==contact.id)throw failure('schedule_customer_link_conflict');
   if(!visit.highlevelContactId){
@@ -139,6 +142,7 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
     return {...await resolveScheduledVisit(store,id),replayed:true,requestId:input.requestId};
   }
   const current=await store.read('jobs',id),customer=await store.read('customers',input.portalCustomerId);
+  requireProviderWritable(current);
   if(!customer||customer.id!==input.portalCustomerId)throw failure('schedule_customer_not_found',404);
   if(input.mode==='create'&&current)throw failure('schedule_visit_already_exists');
   if(input.mode!=='create'){

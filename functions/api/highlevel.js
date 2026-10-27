@@ -23,6 +23,7 @@
  */
 
 import { savedHandoffPayload } from '../_lib/walkthrough-handoff.js';
+import { providerWritesBlocked } from '../_lib/walkthrough-recording-policy.js';
 import { requireDispatcher } from '../_lib/dispatch-service.js';
 import { getHubSession, hasBusinessAccess, isHubOwner } from '../_lib/hub-session.js';
 import { sendAcceptedQuotePortal } from '../_lib/portal-invitation.js';
@@ -591,6 +592,14 @@ export async function onRequestPost({ request, env, waitUntil }) {
   try { payload = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
   payload.idempotency_key ||= request.headers.get('Idempotency-Key') || '';
   if (!['game_plan','post_job','schedule','lifecycle','sales_exit'].includes(payload.tool)) return reply(400, { ok: false, error: 'Unsupported HighLevel handoff' });
+  // Before contact upsert, notes, tags, workflows or native schedule RPC. A
+  // manual retry cannot turn an owner-recorded snapshot into a provider write.
+  if (payload.job_id) {
+    let recorded;
+    try { recorded=await readJob(env,payload.job_id); }
+    catch { return reply(503,{ok:false,code:'OWNER_RECORDING_CHECK_UNAVAILABLE',error:'The saved visit could not be verified.'}); }
+    if (providerWritesBlocked(recorded)) return reply(409,{ok:false,code:'OWNER_RECORDING_READ_ONLY',error:'This walkthrough is recorded without provider writes. Review its source in Dispatch.'});
+  }
   if (payload.tool === 'lifecycle') {
     payload.event = String(payload.event || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     if (['garage-sales-exit', 'junk-sales-exit'].includes(payload.event)) return reply(400, { ok: false, error: 'Sales exits require a verified saved job' });

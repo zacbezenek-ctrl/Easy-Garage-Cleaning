@@ -44,6 +44,7 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
         'jobs/_egc_adoption_request_x':{recordType:'adoption_receipt',fingerprint:'synthetic'},
         'jobs/_egc_adoption_source_x':{recordType:'adoption_source',jobId:'assigned'},
         'jobs/removable':{id:'removable',type:'job',status:'unscheduled'},
+        'jobs/owner-recorded':{id:'owner-recorded',type:'walkthrough',ownerWalkthrough:{providerWrites:'blocked',mode:'hub_only'}},
         'jobs/stray-vault':{recordType:'employee_hub_v2',employeeHubType:'profiles',sealedPayload:'ciphertext'},
         'jobs/stray-lock':{recordType:'schedule_lock',date:'2099-09-08',entries:[]},
         'audit_log/existing':{action:'login',detail:'Logged in',by:'zacb',at:'2099-09-01T12:00:00.000Z'},
@@ -343,6 +344,17 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       await assertSucceeds(manager.doc('jobs/assigned').get());
       await assertSucceeds(manager.doc('customers/customer').get());
       await assertSucceeds(manager.doc('jobs/assigned').update({title:'Reviewed by manager'}));
+    });
+    await t.test('owner-recorded walkthroughs and import claims cannot be forged, edited or deleted through SDKs',async()=>{
+      for(const db of [manager,partner,crew,publicDb]) {
+        await assertFails(db.doc('jobs/owner-recorded').update({ownerWalkthrough:FieldValue.delete()}));
+        await assertFails(db.doc('jobs/owner-recorded').update({date:'2099-01-01',notify:true}));
+        await assertFails(db.doc('jobs/owner-recorded').delete());
+        await assertFails(db.doc('jobs/forged-recording').set({type:'walkthrough',ownerWalkthrough:{providerWrites:'blocked'}}));
+        await assertFails(db.doc('walkthroughProviderLinks/provider-1').set({jobId:'forged'}));
+        await assertFails(db.doc('walkthroughRecordings/request-1').set({jobId:'forged'}));
+      }
+      await assertSucceeds(manager.doc('jobs/owner-recorded').get());
     });
     await t.test('server-owned receipts and encrypted records in jobs stay immutable for business SDK sessions',async()=>{
       for(const db of [manager,partner]) for(const path of serverOwned){

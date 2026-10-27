@@ -28,6 +28,8 @@ import { auditWrite } from './hub-audit.js';
 import { DEFAULT_CREWS, NO_CREW, autoAssignedCrew, autoCrewJob, crewAssignment, crewAutoRecord, crewCode, crewCodeInput, crewJobDates, crewPickOrder, crewServes, eligibleCrews, handStaffed, projectCrewOpenings, serviceDaysInput } from './dispatch-crew-assign.js';
 import { dispatchOpenings } from './dispatch-openings.js';
 import { normalizeJobMaterials } from './job-materials.js';
+import { providerWritesBlocked } from './walkthrough-recording-policy.js';
+import { isHubOwner } from './hub-session.js';
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
 const JOB_TYPES = new Set(['job','walkthrough','cleanout','reorg','blocked']);
@@ -88,7 +90,7 @@ function legacyMembers(job, roster) {
   return [...new Set(ids)];
 }
 
-const DTO_FIELDS = ['id','revision','type','customerId','customer','phone','address','title','date','time','endDate','endTime','assignedTo','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','serviceType','syncStatus','highlevelAppointmentId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','requiredSkills','ghlTagEntry','noShowReasonCode','noShowAt','needsDispatchReview','dispatchReviewReason','crewAutoAssigned'];
+const DTO_FIELDS = ['id','revision','type','customerId','customer','phone','address','title','date','time','endDate','endTime','assignedTo','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','serviceType','syncStatus','ownerWalkthrough','highlevelCalendarId','highlevelAppointmentId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','requiredSkills','ghlTagEntry','noShowReasonCode','noShowAt','needsDispatchReview','dispatchReviewReason','crewAutoAssigned'];
 const scopeText = job => typeof job.operationalScope?.text === 'string' ? job.operationalScope.text : typeof job.jobInstructions === 'string' ? job.jobInstructions : job.jobInstructions?.operationalScope || (typeof job.scope === 'string' ? job.scope : '') || job.scopeOfWork || '';
 function recurringTemplateFields(source,actor,now) {
   const output={};
@@ -395,7 +397,7 @@ function conflictCheck(next, jobs, resources, roster,inspection,applies = () => 
 const DISPATCH_RESOURCE_CREW = 'crew';
 const CREW_V2_KEYS = ['priority','serviceDays','code'];
 function auditState(job) {
-  return Object.fromEntries([...(job?.recordType === 'crew' ? CREW_V2_KEYS : []),'date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason','recurrence','reminderDays','notify','shiftPickupEnabled','openShift','sourceTemplateJobId','recurrenceParentId','cancellationReason','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','assignmentSegments','visitPurpose','reworkOfJobId','membershipId','bookingChannel','channelSelfReported','crmLinkReason','scheduleOccurrence','cancellationReasonCode','cancellationInitiatedBy','lateCancel','noShowReasonCode','estimatedDurationMin','durationOverride','requiredSkills','crewAutoAssigned'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
+  return Object.fromEntries([...(job?.recordType === 'crew' ? CREW_V2_KEYS : []),'date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason','recurrence','reminderDays','notify','shiftPickupEnabled','openShift','sourceTemplateJobId','recurrenceParentId','cancellationReason','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','assignmentSegments','visitPurpose','reworkOfJobId','membershipId','bookingChannel','channelSelfReported','crmLinkReason','scheduleOccurrence','cancellationReasonCode','cancellationInitiatedBy','lateCancel','noShowReasonCode','estimatedDurationMin','durationOverride','requiredSkills','crewAutoAssigned','ownerWalkthrough'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
 }
 
 // options.authorize replaces requireDispatcher only for server-built inputs
@@ -420,6 +422,7 @@ function auditState(job) {
 // that pick's record (crewAutoAssigned), so a later move never re-picks over a manager's crew.
 export async function mutateDispatch(store, session, input, now = new Date().toISOString(), options = {}) {
   (options.authorize || requireDispatcher)(session);
+  if (options.ownerWalkthrough && (!isHubOwner(session) || input?.action !== 'schedule.create' || input?.kind !== 'walkthrough')) throw fail('dispatch_recording_forbidden','Only the owner can record a new silent walkthrough.',403);
   for (let attempt = 0; ; attempt++) {
     const context = {};
     try { return await withCrewAlternatives(store,session,await executeDispatch(store,session,input,now,options,context),now,options,context); }
@@ -429,7 +432,7 @@ export async function mutateDispatch(store, session, input, now = new Date().toI
       // read and any later validation read, not merely during the final commit.
       if (!['dispatch_changed_since_operation','dispatch_idempotency_conflict'].includes(error.code) && /^[a-f0-9-]{36}$/i.test(input?.requestId || '')) {
         const receipt = await store.read('dispatchOperations',input.requestId.toLowerCase()).catch(() => null);
-        if (receipt?.fingerprint === await digest({actor:session.user,input})) return executeDispatch(store,session,input,now,options);
+        if (receipt?.fingerprint === await digest({actor:session.user,input,...(options.ownerWalkthrough ? {ownerWalkthrough:options.ownerWalkthrough} : {})})) return executeDispatch(store,session,input,now,options);
       }
       throw error;
     }
@@ -474,7 +477,7 @@ async function executeDispatch(store, session, input, now, options = {}, context
   if(input.sourceJobId&&input.sourceTemplateJobId&&input.sourceJobId!==input.sourceTemplateJobId)throw fail('dispatch_lineage_invalid','Choose one explicit source job for customer account ownership.');
   if(input.sourceJobId&&input.kind!=='job')throw fail('dispatch_lineage_invalid','Customer account lineage can only be chosen for an operational job.');
   if (input.sourceWalkthroughId && input.sourceTemplateJobId) throw fail('dispatch_handoff_invalid','Choose either a walkthrough or a recurring job template.');
-  const fingerprint = await digest({ actor: session.user, input }), receiptId = input.requestId.toLowerCase();
+  const fingerprint = await digest({ actor: session.user, input,...(options.ownerWalkthrough ? {ownerWalkthrough:options.ownerWalkthrough} : {}) }), receiptId = input.requestId.toLowerCase();
   const prior = await store.read('dispatchOperations',receiptId);
   if (prior) {
     if (prior.fingerprint !== fingerprint) throw fail('dispatch_idempotency_conflict','This request ID was already used for different changes. Refresh before saving.',409);
@@ -570,6 +573,11 @@ async function executeDispatch(store, session, input, now, options = {}, context
     if (cancel && Object.keys(input.changes || {}).length) throw fail('dispatch_cancel_patch_invalid','Cancellation cannot also edit job details.');
     if ((current || patch).type === 'blocked') onlyKeys(input.changes || {},['date','time','endDate','endTime','title','opsNotes','notes']);
     if (!cancel) Object.assign(patch,schedulePatch(input.changes || {},current || patch,resources,roster,now,session.user,store.segmentsEnabled === true,options.preserveSegmentNotes === true));
+    if (options.ownerWalkthrough) {
+      const recording=options.ownerWalkthrough,provider=recording.provider;
+      Object.assign(patch,{ownerWalkthrough:recording,notify:false,providerSyncOwner:'owner_recording',syncStatus:provider?'imported':'not_needed',
+        ...(provider ? {highlevelAppointmentId:provider.appointmentId,highlevelCalendarId:provider.calendarId,providerAppointmentStatus:provider.status,syncedAt:now} : {})});
+    }
     if (current && 'assignedCrew' in patch) {
       const retained=value=>patch.assignedCrew.includes(resolveMember(value?.employee || value,roster,true));
       if (Array.isArray(current.shiftClaims)) patch.shiftClaims=current.shiftClaims.filter(retained);
@@ -622,14 +630,17 @@ async function executeDispatch(store, session, input, now, options = {}, context
       next={...next,...patch};
     }
     const scheduleChanged = create || (cancel && !noShow) || restore || ['date','time','endDate','endTime','title','address'].some(key => key in patch && patch[key] !== current?.[key]);
+    if (providerWritesBlocked(current) && !isHubOwner(session)) throw fail('dispatch_recording_forbidden','Only the owner can change a recorded walkthrough.',403);
+    if (providerWritesBlocked(current) && current.ownerWalkthrough.mode==='import' && scheduleChanged) throw fail('dispatch_recording_import_read_only','This is a provider snapshot. Change the existing appointment in HighLevel; do not move or cancel its imported snapshot here.',409);
+    if (providerWritesBlocked(next)) {patch.notify=false;next={...next,notify:false};}
     if (scheduleChanged && current && (current.highlevelContactId || current.highlevelAppointmentId)) {
       const customer = current.customerId ? await store.read('customers',current.customerId) : null;
       if (!customer) throw fail('dispatch_customer_link_required','This provider-linked job needs its canonical customer linked before its appointment can be changed.',409);
       if (current.highlevelContactId && customer.highlevelContactId && current.highlevelContactId !== customer.highlevelContactId) throw fail('dispatch_contact_link_conflict','This job and customer point to different CRM contacts. Correct the link before changing its appointment.',409);
     }
-    if (scheduleChanged && (next.highlevelContactId || next.highlevelAppointmentId) && (interval || next.highlevelAppointmentId)) {
+    if (!providerWritesBlocked(next) && scheduleChanged && (next.highlevelContactId || next.highlevelAppointmentId) && (interval || next.highlevelAppointmentId)) {
       Object.assign(patch,{syncStatus:'pending',syncIdempotencyKey:input.requestId,providerSyncOwner:'operations'}); providerSync = 'pending';
-    } else if (create) patch.syncStatus = 'not_needed';
+    } else if (create && !providerWritesBlocked(next)) patch.syncStatus = 'not_needed';
     next = { ...current, ...patch };
     // AUTO-CREW: what this save asks of the server crew pick (null: nothing, exactly as before).
     const autoPlan = autoCrewPlan({mode:autoMode,input,options,create,current,next,patch,resources,roster}), autoWarnings = [];

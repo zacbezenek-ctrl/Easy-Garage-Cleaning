@@ -1,4 +1,4 @@
-import { getHubSession } from '../_lib/hub-session.js';
+import { getHubSession, isHubOwner } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { dispatchOverview, mutateDispatch } from '../_lib/dispatch-service.js';
 import { bookerAuthorize, mutateBooking, requireScheduleAccess } from '../_lib/dispatch-booking.js';
@@ -73,7 +73,7 @@ export function dispatchHandlers({ session = getHubSession, storage = dispatchSt
         const params = Object.fromEntries(new URL(request.url).searchParams.entries());
         const store = storage(env), photos = crewRosterPhotoStore(store), overview = await dispatchOverview(photos.store,actor,params,now(),{travel:travel({env,store,now}),readiness:true,...(access.booker ? {authorize:bookerAuthorize(env)} : {})});
         // Approved crew headshots (P4-07), read alongside the job scans; an unreadable profile store leaves the roster unchanged.
-        return reply(200,{...overview,...(params.view === 'job' ? {customerHandoff:await customerHandoff(photos.store,overview.job,params.jobId,env)} : {}),...(Array.isArray(overview.roster) ? {roster:await photos.attach(overview.roster)} : {}),...(access.booker && Array.isArray(overview.availability) ? {availability:overview.availability.map(away)} : {}),viewer:{id:actor.user,...(access.booker ? {booker:true} : {}),...(staffRoleAccessEnabled(env) ? {canPerformWalkthrough:can(actor,'walkthrough.perform',env)} : {})},funnel:dispatchFunnelOptions(),...(crewAutoAssignEnabled(env) ? {crewAutoAssign:true} : {})});
+        return reply(200,{...overview,...(params.view === 'job' ? {customerHandoff:await customerHandoff(photos.store,overview.job,params.jobId,env)} : {}),...(Array.isArray(overview.roster) ? {roster:await photos.attach(overview.roster)} : {}),...(access.booker && Array.isArray(overview.availability) ? {availability:overview.availability.map(away)} : {}),viewer:{id:actor.user,...(staffRoleAccessEnabled(env) && isHubOwner(actor) ? {canRecordWalkthrough:true} : {}),...(access.booker ? {booker:true} : {}),...(staffRoleAccessEnabled(env) ? {canPerformWalkthrough:can(actor,'walkthrough.perform',env)} : {})},funnel:dispatchFunnelOptions(),...(crewAutoAssignEnabled(env) ? {crewAutoAssign:true} : {})});
       } catch(error) { return errorResponse(error); }
     },
     async post({request,env,waitUntil}) {

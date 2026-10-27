@@ -109,6 +109,7 @@ function entryWrite(id, jobId, changeKey, kind, fields, requestId, now, source, 
 /** The outbox write for a schedule change (dispatch or the bridge) and the job's ghlTagEntry pointer, or null.
  * The caller commits the write with the change and sets patch.ghlTagEntry = pointer. */
 export async function scheduleTagWrites({ jobId, before = null, after, action, requestId, now, source = 'dispatch' }) {
+  if (after?.ownerWalkthrough?.providerWrites === 'blocked') return null;
   const kind = scheduleTagEvent(before, after, action);
   if (!kind || !safeId(jobId)) return null;
   const changeKey = ghlTagChangeKey(source, requestId), id = await ghlTagEntryId(jobId, changeKey);
@@ -124,6 +125,7 @@ export async function scheduleTagWrites({ jobId, before = null, after, action, r
 /** The outbox write for a recorded walkthrough outcome (FUN-05/FUN-06), or null. A sale keeps the Game Plan's own tags
  * (highlevel.js tool=game_plan) and a reschedule waits for the Dispatch move. The lost reason goes in an internal note. */
 export async function outcomeTagWrites({ visit, outcome, reasonCode = null, requestId, now }) {
+  if (visit?.ownerWalkthrough?.providerWrites === 'blocked') return null;
   const kind = GHL_TAG_OUTCOMES[outcome];
   if (!kind || !object(visit) || visit.type !== 'walkthrough' || !safeId(visit.id)) return null;
   const changeKey = ghlTagChangeKey('walkthrough-outcome', requestId), id = await ghlTagEntryId(visit.id, changeKey), expect = { state: 'outcome', outcomeRequestId: String(requestId).toLowerCase() };

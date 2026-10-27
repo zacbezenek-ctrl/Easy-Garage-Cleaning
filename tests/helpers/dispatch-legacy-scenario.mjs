@@ -30,7 +30,7 @@ export async function loadDispatchModules(root) {
   return { mutateDispatch: service.mutateDispatch, mutateDispatchSelfAssignment: service.mutateDispatchSelfAssignment, dispatchOverview: service.dispatchOverview, dispatchOpenings: openings.dispatchOpenings, travelEstimator: travel.travelEstimator };
 }
 
-function memoryStore() {
+export function memoryStore() {
   const rows = new Map([
     ['customers/c1', { id: 'c1', name: 'Synthetic Customer One', phone: '970-555-0101', address: FC, revision: 'c1r' }],
     ['customers/c2', { id: 'c2', name: 'Synthetic Customer Two', phone: '970-555-0102', address: LOVELAND, revision: 'c2r' }],
