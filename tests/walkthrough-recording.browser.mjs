@@ -4,7 +4,7 @@ import {pathToFileURL} from 'node:url';
 const {chromium}=await import(process.env.FIELD_PLAYWRIGHT_MODULE?pathToFileURL(process.env.FIELD_PLAYWRIGHT_MODULE).href:'playwright');
 const browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}:{})});
 const context=await browser.newContext(),page=await context.newPage({viewport:{width:1100,height:900}});
-const posts=[],errors=[];let loseResponse=false,delayPreview=null,owner=true;
+const posts=[],errors=[];let loseResponse=false,rejectChanged=false,delayPreview=null,owner=true;
 const board=()=>({ok:true,viewer:{id:'ZacB',...(owner?{canRecordWalkthrough:true}:{})},jobs:[],roster:[{id:'crew1',name:'Synthetic Estimator',role:'crew'}],crews:[],vehicles:[],availability:[],warnings:[],coverage:{complete:true}});
 page.on('pageerror',e=>errors.push(e.message));
 await page.route('https://egc.test/**',async route=>{
@@ -22,6 +22,7 @@ await page.route('https://egc.test/**',async route=>{
       return json({ok:true,providerWrites:false,fingerprint:'a'.repeat(64),snapshot:{...body.input,date:'2026-10-30',time:'15:30',endTime:'16:15',employeeName:'Synthetic Estimator',durationMinutes:45,provider}});
     }
     if(loseResponse){loseResponse=false;return route.abort('failed');}
+    if(rejectChanged){rejectChanged=false;return route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({ok:false,code:'dispatch_recording_changed',error:'Appointment changed. Review again.'})});}
     return json({ok:true,providerWrites:false,requestId:body.requestId,job:{id:'visit-1',revision:'v1'}});
   }
   return route.abort();
@@ -53,6 +54,10 @@ try{
   assert.match(await page.getByRole('dialog').innerText(),/Personal Calendar.*calendar cal-1.*appointment appt-1/);
   assert.match(await page.getByRole('dialog').innerText(),/Hub assignment is recorded separately/);
   await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
+  await page.getByRole('button',{name:'Back',exact:true}).click();
+  await open();await fill();await page.getByRole('button',{name:'Review recording',exact:true}).click();await page.getByRole('button',{name:'Confirm and save',exact:true}).waitFor();
+  rejectChanged=true;await page.getByRole('button',{name:'Confirm and save',exact:true}).click();await page.getByRole('button',{name:'Review recording',exact:true}).waitFor();
+  assert.equal(await page.locator('[name=scope]').isDisabled(),false);assert.equal(await page.evaluate(()=>sessionStorage.getItem('egc.walkthrough.recording.v1.ZacB')),null);
   await page.getByRole('button',{name:'Back',exact:true}).click();
   let release;delayPreview=new Promise(r=>release=r);await open();await fill();await page.getByRole('button',{name:'Review recording',exact:true}).click();
   await page.getByRole('button',{name:'Back',exact:true}).click();release();delayPreview=null;await page.waitForTimeout(100);

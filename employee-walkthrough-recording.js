@@ -2,6 +2,7 @@
 (function(){
 'use strict';
 const prefix='egc.walkthrough.recording.v1.';
+const rejectedWithoutSave=new Set(['dispatch_recording_changed','dispatch_recording_appointment_inactive','dispatch_recording_appointment_mismatch','dispatch_recording_calendar_mismatch','dispatch_recording_contact_mismatch','dispatch_recording_time_out_of_scope','dispatch_recording_already_imported','dispatch_job_already_exists','dispatch_employee_inactive','dispatch_revision_conflict','dispatch_conflict']);
 async function send(body){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),45000);
   try {
@@ -40,7 +41,7 @@ function open(){
   m.form.addEventListener('input',event=>{if(event.target===search){selected=null;results.replaceChildren();}if(!m.request){generation++;review=null;evidence.replaceChildren();save.textContent='Review recording';}});
   m.form.addEventListener('change',()=>{if(!m.request){generation++;review=null;evidence.replaceChildren();save.textContent='Review recording';}});
   function freeze(){for(const control of m.fields.querySelectorAll('input,select,textarea,button'))control.disabled=true;}
-  if(pending){m.request=pending;freeze();evidence.append(notice('A previous save needs verification. Retry the exact saved request before recording anything else.'));}
+  if(pending){m.request=pending;for(const [name,value]of Object.entries(pending.input||{})){const control=m.fields.querySelector('[name="'+name+'"]');if(control)control.value=value;}selected={id:pending.input?.customerId,name:pending.input?.customerId};search.value=selected.name||'';toggle();freeze();evidence.append(notice('A previous save needs verification. Retry the exact saved request before recording anything else.'));}
   let busy=false;
   m.form.addEventListener('submit',async event=>{
     event.preventDefault();if(busy)return;busy=true;save.disabled=true;
@@ -65,6 +66,13 @@ function open(){
     }catch(e){
       if(s.modal!==m)return;
       m.status.replaceChildren(notice(e.message,'error'));
+      // Only an explicit no-save rejection permits a fresh preview/request.
+      // Timeouts, authentication loss and uncertain outcomes keep the receipt.
+      if(m.request&&e.status===409&&rejectedWithoutSave.has(e.code)){
+        sessionStorage.removeItem(storageKey);m.request=null;review=null;
+        for(const control of m.fields.querySelectorAll('input,select,textarea,button'))control.disabled=false;
+        save.textContent='Review recording';m.status.append(notice('Nothing was saved by this request. Review the current details again.'));return;
+      }
       if(m.request){save.textContent='Verify saved recording';m.status.append(btn('Close and verify later',()=>{m.request=null;m.close();}));}
     }finally{busy=false;save.disabled=false;}
   });

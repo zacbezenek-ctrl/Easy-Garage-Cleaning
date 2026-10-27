@@ -29,11 +29,13 @@ test('only the signed owner can preview or save, before any reads; strict payloa
   const f=fixture();
   await assert.rejects(previewRecording(f.store,owner,{...base,syncStatus:'synced'}, {},f.deps),code('dispatch_recording_invalid'));
   await assert.rejects(mutateDispatch(f.store,owner,{action:'schedule.create',requestId:randomUUID(),kind:'walkthrough',customerId:'c1',ownerWalkthrough:{providerWrites:'blocked'},changes:{}}),code('dispatch_patch_not_allowed'));
+  await assert.rejects(mutateDispatch(f.store,{user:'manager',role:'manager',businessAccess:true},{action:'schedule.create',kind:'walkthrough'},{},{authorize:()=>{},ownerWalkthrough:{providerWrites:'blocked'}}),code('dispatch_recording_forbidden'));
 });
 
 test('Hub-only uses native locks, assignment and audit while retaining the contact and creating no outbox',async()=>{
   const f=fixture(),body=await reviewed(f),r=await saveRecording(f.store,owner,body,{},f.deps),job=f.rows.get('jobs/'+r.job.id);
   assert.equal(f.calls(),0);assert.equal(job.highlevelContactId,'contact-1');assert.equal(job.highlevelAppointmentId,undefined);
+  assert.match(job.id,/^recorded_visit_[a-f0-9]{40}$/);
   assert.equal(job.startAt,'2026-10-27T20:30:00.000Z');assert.equal(job.endAt,'2026-10-27T21:00:00.000Z');
   assert.deepEqual(job.assignedCrew,['crew1']);assert.equal(job.notify,false);assert.equal(job.syncStatus,'not_needed');assert.equal(r.providerWrites,false);
   assert.equal(job.ownerWalkthrough.recordedBy,'ZacB');assert.equal(f.rows.get('dispatchOperations/'+body.requestId).after.ownerWalkthrough.providerWrites,'blocked');
