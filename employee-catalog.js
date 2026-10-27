@@ -540,7 +540,7 @@ function invalidText(error,body){
 async function send(body){
   if(S.busy||!S.kit)return;
   const mount=S.mountId,store=pendingStore(),options={prefix:'catalog',timeout:body.action==='catalog.publish'?90000:30000,fetcher:fetcher(),validate:resultCheck(body)};
-  let reload=false;
+  let reload=false,next=null;
   S.busy=true;S.notice=null;S.conflict=null;render();
   try{
     const saved=store.get(),data=saved&&saved.requestId===body.requestId?await store.replay(options):await store.submit(API,body,options);
@@ -550,7 +550,14 @@ async function send(body){
       S.menuPick=null;S.menuErrors={};
       const answered=typeof body.goodsInstallationIncluded!=='boolean'?'':body.goodsInstallationIncluded?' Shelving and storage installation is now confirmed as included in the goods price: builder quotes no longer wait for install time the labor estimate leaves out, nor do older quotes saved before the Labor line.':' Installation is no longer confirmed: builder quotes whose man-hours leave out installing some goods, and older builder quotes with goods and no Labor line, wait again.';
       const rate=Number.isSafeInteger(body.laborRatePerManHourCents)?` The labor rate is now ${money(body.laborRatePerManHourCents)} per man-hour: new builder quotes charge it, saved quotes at the old rate are saved again before they are sent, and jobs the customer already signed keep the rate they signed.`:'';
-      const changed=body.approve.length+body.revoke.length;
+      const changed=body.approve.length+body.revoke.length,queue=S.menuQueue;
+      if(queue){
+        queue.saved+=body.approve.length;
+        // The next batch, on the revision this save returned. A newer approval saved elsewhere stops the queue.
+        if(data.approvals.current!==false&&queue.batches.length){const approve=queue.batches.shift();next={action:'menu.approve',requestId:S.kit.requestId(),expectedRevision:data.approvals.revision??null,menuVersion:queue.menuVersion,settingsVersion:queue.settingsVersion,approve,revoke:[]};}
+        if(!next){S.menuQueue=null;if(queue.batches.length){S.notice={kind:'error',text:`Approved ${queue.saved} of ${queue.total} prices. A newer approval was saved elsewhere, so the rest were not saved: tick them again and save.`};persist();reload=true;return;}}
+        else{S.notice={kind:'success',text:`Approved ${queue.saved} of ${queue.total} prices. Saving the next ${next.approve.length}…`};return;}
+      }
       S.notice={kind:'success',text:`${changed?`Approved ${body.approve.length} and revoked ${body.revoke.length} pricing-menu price${changed===1?'':'s'}.`:''}${answered}${rate}${data.approvals.current===false?' A newer approval replaced this one since; the latest is shown.':''}${changed?' Builder quotes that use them can be sent now.':''}${heldText(data.heldJobs)}`.trim()};
     }else if(body.action==='settings.update'){
       // Show the saved values at once; the reload that follows refreshes the prices they produce.
@@ -573,6 +580,8 @@ async function send(body){
     const code=String(error?.code||'');
     if(S.kit.retryable(error)){S.retry=body;S.notice={kind:'error',text:S.kit.errorText(error)};return;}
     S.retry=null;
+    const partial=body.action==='menu.approve'&&S.menuQueue?S.menuQueue:null;
+    if(partial)S.menuQueue=null;
     if(body.action==='menu.approve'&&/^catalog_(revision_conflict|version_conflict|menu_price_changed|menu_item_unknown|menu_item_approved|menu_item_not_approved|changed_since_operation)$/.test(code)){S.notice={kind:'error',text:`${error.message} Your ticks are kept where the items still apply.`};reload=true;}
     else if(body.action==='settings.update'&&code==='catalog_revision_conflict'){S.conflict='settings';S.notice={kind:'error',text:'Pricing settings changed since you opened them. Your edits are kept: load the latest settings, review the changes again and save.'};}
     else if(body.action==='catalog.publish'&&/^catalog_(version_conflict|revision_conflict|version_exists|version_not_newer)$/.test(code)){S.conflict='catalog';S.notice={kind:'error',text:'Another catalog version was published while you were editing. Your draft is kept: load the latest catalog, review the changes again and publish.'};}
@@ -580,8 +589,9 @@ async function send(body){
     else if(code==='catalog_invalid'){S.tab='draft';S.notice={kind:'error',text:invalidText(error,body)};}
     else if(code==='catalog_changed_since_operation'){S.notice={kind:'error',text:error.message};reload=true;}
     else S.notice={kind:'error',text:S.kit.errorText(error)};
+    if(partial?.saved&&S.notice?.kind==='error')S.notice.text=`Approved ${partial.saved} of ${partial.total} prices before this stopped. ${S.notice.text}`;
   }finally{
-    if(mount===S.mountId){S.busy=false;render();if(reload)void load();}
+    if(mount===S.mountId){S.busy=false;render();if(next)void send(next);else if(reload)void load();}
   }
 }
 function discardRetry(){try{pendingStore().discard();}catch{}S.retry=null;S.notice=null;render();}
@@ -757,7 +767,8 @@ function draftPanel(){
 }
 // ---- Pricing menu approvals (quote builder, EGC_QUOTE_BUILDER_ENABLED) ----
 // GET /api/quote-draft?view=builder lists every pricing-menu item with its current price and why it is a draft (read
-// only when GET /api/catalog says quoteBuilder:true). One request changes at most MENU_MAX prices. The
+// only when GET /api/catalog says quoteBuilder:true). One request changes at most MENU_MAX prices (the owner-only audit
+// entry keeps 100 per record), so a larger approval is saved as several requests, one after another (S.menuQueue). The
 // owner ticks the draft prices to approve (a service at the amount entered, a product at exactly cost × goods markup)
 // or the approvals to revoke, reviews them and saves one menu.approve request through /api/catalog, which keeps the
 // catalog's receipt and audit trail. Estimators can send a builder quote only once all its prices are approved.
@@ -834,6 +845,8 @@ const LABOR_RATE_MIN=100,LABOR_RATE_MAX=100000;
 const laborRateNow=()=>Number.isSafeInteger(S.menu?.labor?.rateCents)?S.menu.labor.rateCents:null;
 const laborRateEdit=()=>typeof menuPick().laborRate==='string'?menuPick().laborRate:null;
 const laborChange=()=>{const text=laborRateEdit();return text!==null&&centsOf(text)!==laborRateNow()?1:0;};
+// Ticks every draft row given at its draft amount, except cleaning bases, whose amount the owner types.
+function tickAll(rows){const pick=menuPick();for(const item of rows)if(!pick.approve[item.id]&&!ownerAmount(item))pick.approve[item.id]={amount:dollars(item.unitCents)};S.menuErrors={};}
 // The approval request the ticked rows describe, or {errors} for an amount that is not dollars and cents.
 function menuRequest(){
   const pick=menuPick(),approve=[],errors={};
@@ -885,34 +898,41 @@ function menuRow(item,frozen){
 function menuPanel(){
   const m=S.menu,canApprove=m.viewer?.canApprove===true,frozen=locked()||!canApprove,pick=menuPick();
   const drafts=menuDrafts(),owner=menuItems().filter(item=>item.approved&&item.source==='owner'),fixed=menuItems().filter(item=>item.source==='menu');
-  const chosen=Object.keys(pick.approve).length+Object.keys(pick.revoke).length+installationChange()+laborChange(),room=Math.max(0,MENU_MAX-chosen);
+  const chosen=Object.keys(pick.approve).length+Object.keys(pick.revoke).length+installationChange()+laborChange(),batches=Math.ceil(chosen/MENU_MAX);
   const table=(rows,head)=>h('div',{class:'cat-table-wrap'},h('table',{class:'cat-table cat-menu-table'},h('thead',{},h('tr',{},head.map(text=>h('th',{scope:'col'},text)))),h('tbody',{},rows)));
   const bySection=m.sections.map(section=>{const rows=drafts.filter(item=>item.section===section.id);return rows.length?h('section',{class:'hub-card cat-card'},h('h2',{},`${section.label}: ${rows.length} draft price${rows.length===1?'':'s'}`),
     // Ticks up to the per-request limit; cleaning bases are left for the owner to tick and price one by one.
-    h('div',{class:'hub-actions'},btn('Tick all in this step',()=>{let left=room;for(const item of rows){if(left<1)break;if(!pick.approve[item.id]&&!ownerAmount(item)){pick.approve[item.id]={amount:dollars(item.unitCents)};left--;}}render();},'',{disabled:frozen||!room})),
+    h('div',{class:'hub-actions'},btn('Tick all in this step',()=>{tickAll(rows);render();},'',{disabled:frozen})),
     table(rows.map(item=>menuRow(item,frozen)),['Approve','Item','Price'])):null;}).filter(Boolean);
   return h('div',{class:'cat-menu'},
     h('div',{class:'hub-notice'+(drafts.length?' warning':' success')},drafts.length?`${drafts.length} pricing-menu price${drafts.length===1?' is a draft':'s are drafts'}. A builder quote that uses a draft price can be saved but not sent until you approve it here. Pricing menu ${m.menuVersion} · settings ${m.settingsVersion}.`:'Every pricing-menu price is approved.'),
     !canApprove?h('div',{class:'hub-notice'},'Only the owner can approve pricing-menu prices.'):null,
+    drafts.length&&canApprove?h('div',{class:'hub-actions'},btn('Tick every draft price',()=>{tickAll(drafts);render();},'',{disabled:frozen})):null,
+    drafts.some(ownerAmount)?h('p',{class:'cat-muted'},'Cleaning bases are never ticked for you: their draft is the old full-service price, which included hauling, so type each cleaning-only amount yourself.'):null,
     heldCard(),
     laborCard(m,frozen),
     installationCard(m,frozen),
-    chosen>MENU_MAX?h('div',{class:'hub-notice warning'},`Approve or revoke at most ${MENU_MAX} prices at a time: untick ${chosen-MENU_MAX}, save, then tick the rest.`):null,
+    batches>1?h('div',{class:'hub-notice'},`${chosen} changes are saved in ${batches} batches of up to ${MENU_MAX}, one after another, each with its own audit entry.`):null,
     ...bySection,
     owner.length?h('section',{class:'hub-card cat-card'},h('h2',{},`Approved by you (${owner.length})`),table(owner.map(item=>h('tr',{'data-item':item.id},
       h('td',{},h('input',{type:'checkbox',checked:Boolean(pick.revoke[item.id]),disabled:frozen,'aria-label':`Revoke approval of ${item.name}`,onchange:event=>{if(event.target.checked)pick.revoke[item.id]=true;else delete pick.revoke[item.id];render();}})),
       h('td',{class:'cat-item-cell'},h('strong',{},item.name)),h('td',{'data-label':'Price'},money(item.unitCents)))),['Revoke','Item','Approved price'])):null,
     fixed.length?h('p',{class:'cat-muted'},`Approved in the pricing menu itself: ${fixed.map(item=>`${item.name} ${money(item.unitCents)}`).join(', ')}.`):null,
-    h('div',{class:'cat-sticky'},btn(`Review ${chosen||''} change${chosen===1?'':'s'}`.replace('  ',' '),openMenuReview,'primary',{disabled:frozen||!chosen||chosen>MENU_MAX}),btn('Clear ticks',()=>{S.menuPick=null;S.menuErrors={};render();},'',{disabled:frozen||!chosen})));
+    h('div',{class:'cat-sticky'},btn(`Review ${chosen||''} change${chosen===1?'':'s'}`.replace('  ',' '),openMenuReview,'primary',{disabled:frozen||!chosen}),btn('Clear ticks',()=>{S.menuPick=null;S.menuErrors={};render();},'',{disabled:frozen||!chosen})));
 }
 function openMenuReview(){
   if(locked()||S.menu?.viewer?.canApprove!==true)return;
   const {approve,revoke,errors,installation,laborRateCents}=menuRequest(),answer={...(typeof installation==='boolean'?{goodsInstallationIncluded:installation}:{}),...(laborRateCents!==undefined?{laborRatePerManHourCents:laborRateCents}:{})};
-  if(approve.length+revoke.length+(typeof installation==='boolean'?1:0)+(laborRateCents!==undefined?1:0)>MENU_MAX)return;
   S.menuErrors=errors;
   if(Object.keys(errors).length){S.tab='menu';render();return;}
   const byId=new Map(menuItems().map(item=>[item.id,item]));
-  const save=()=>{closeDialog();void send({action:'menu.approve',requestId:S.kit.requestId(),expectedRevision:S.menu.internal?.approvalsRevision??null,menuVersion:S.menu.menuVersion,settingsVersion:S.menu.settingsVersion,approve,revoke,...answer});};
+  const save=()=>{closeDialog();
+    // The first request carries the revokes and the answers; the approvals fill it to MENU_MAX and the rest wait in
+    // S.menuQueue, each sent once the previous one is saved, on the approvals revision that save returned.
+    const first=MENU_MAX-revoke.length-Object.keys(answer).length,rest=[];
+    for(let at=first;at<approve.length;at+=MENU_MAX)rest.push(approve.slice(at,at+MENU_MAX));
+    S.menuQueue=rest.length?{batches:rest,total:approve.length,saved:0,menuVersion:S.menu.menuVersion,settingsVersion:S.menu.settingsVersion}:null;
+    void send({action:'menu.approve',requestId:S.kit.requestId(),expectedRevision:S.menu.internal?.approvalsRevision??null,menuVersion:S.menu.menuVersion,settingsVersion:S.menu.settingsVersion,approve:approve.slice(0,first),revoke,...answer});};
   const included=value=>value?'Included in the goods price':'Not confirmed';
   openDialog({eyebrow:'Approve draft prices',title:approve.length+revoke.length?`Approve ${approve.length} and revoke ${revoke.length} pricing-menu price${approve.length+revoke.length===1?'':'s'}`:laborRateCents!==undefined&&typeof installation!=='boolean'?'Change the labor rate':'Answer the installation question',onSubmit:save,
     body:[h('div',{class:'cat-diff-table'},h('table',{},h('thead',{},h('tr',{},['Item','Now','After saving'].map(text=>h('th',{scope:'col'},text)))),h('tbody',{},

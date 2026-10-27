@@ -378,7 +378,7 @@ async function publish(store, session, input, now, actor) {
 }
 
 // One request changes at most 100 prices, so its owner-only audit entry (hub-audit.js keeps 100 keys per snapshot)
-// records every amount before and after; the Hub screen ticks at most 100 at a time.
+// records every amount before and after; the Hub screen saves a larger approval as several requests, one after another.
 export const MAX_MENU_CHANGES = 100;
 // The audit and receipt key of a labor-rate change (D12).
 export const LABOR_RATE_ID = 'labor-rate';
