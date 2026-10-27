@@ -219,6 +219,7 @@ async function repFirstName(store, run, repKey) {
  * The writer passes its store (store.ghlScheduleMirror carries the flag), the visit before and after the change, its
  * request id and, for the note, the roster and dispatch resources it already holds. */
 export async function scheduleMirrorWrites(store, { jobId, before = null, after, action, requestId, now, source = 'dispatch', roster = [], resources = [] } = {}) {
+  if (after?.ownerWalkthrough?.providerWrites === 'blocked') return [];
   if (store?.ghlScheduleMirror !== true) return [];
   const kind = scheduleMirrorEvent(before, after, action);
   if (!kind || !safeId(jobId) || typeof requestId !== 'string' || !requestId || typeof now !== 'string') return [];

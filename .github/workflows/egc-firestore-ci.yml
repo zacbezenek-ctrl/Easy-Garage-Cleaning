@@ -67,6 +67,11 @@ jobs:
         env:
           FIELD_PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
         run: node tests/team-lead-job-operations.browser.mjs
+      - name: Owner walkthrough recording and interrupted-save recovery
+        if: ${{ !cancelled() }}
+        env:
+          FIELD_PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
+        run: node tests/walkthrough-recording.browser.mjs
       - name: Canvassing rules, per-rep API access and the Larimer import on the emulator
         if: ${{ !cancelled() }}
         env:

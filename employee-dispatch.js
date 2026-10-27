@@ -245,6 +245,7 @@ function financeLink(job,label,kind,detail) {
 }
 function readyRow(job) {
   if(job.type==='blocked'||!active(job))return null;
+  if(job.ownerWalkthrough?.providerWrites==='blocked')return h('div',{class:'dp-ready'},pill(job.ownerWalkthrough.mode==='import'?'Imported snapshot · no provider updates':'Hub-only · no provider appointment','info'));
   const row=h('div',{class:'dp-ready','data-ready':''}),reminder=job.reminder,money=job.moneyReady;
   // Reminders off, but whether HighLevel already has this visit's reminder cannot be confirmed: never a plain "off".
   if(job.notify===false&&reminder?.state==='unknown')row.append(h('span',{class:'dp-pill warn dp-reminders-off','data-reminder':'unknown','data-source':reminder.source||'none'},'Reminders off · HighLevel may still remind (not confirmed)'));
@@ -483,6 +484,7 @@ function render() {
   const waiting=verified?queueCount():0,review=verified?(S.data.jobs||[]).filter(j=>queued(j)&&j.needsDispatchReview===true).length:0;
   const badge=waiting?h('button',{type:'button',class:'dp-queue-badge','data-dp-queue-badge':'',onclick:showQueue,'aria-label':waiting+' to schedule'+(review?', '+review+' need review':'')+'. Open To schedule.'},waiting+' to schedule',review?h('strong',{},' · '+review+' new'):null):null;
   S.root.replaceChildren(h('header',{class:'dp-header'},h('div',{},h('span',{class:'dp-eyebrow'},'EGC OPERATIONS'),h('div',{class:'dp-title-row'},h('h1',{},'Dispatch'),badge),h('p',{},'Schedule, assign and run the day.')),h('div',{class:'dp-header-actions'},btn('Search all jobs',openSearch,'',{disabled:!verified}),btn('Find opening',openOpenings,'',{disabled:!verified}),booker()?null:btn('Block time',()=>openBlock(),'',{disabled:!verified}),booker()?null:btn('Crews & vehicles',()=>openResources()),window.EGCRecurring&&!booker()?btn('Recurring plans',()=>window.EGCRecurring.open({onChange:()=>load({quiet:true})})):null,btn('Refresh',()=>load(),'',{disabled:S.loading}),btn('Create job',()=>openJob(),'primary',{disabled:!verified}))));
+  if(verified && S.data.viewer?.canRecordWalkthrough && window.EGCWalkthroughRecording) S.root.querySelector('.dp-header-actions').append(btn('Record walkthrough',()=>window.EGCWalkthroughRecording.open()));
   S.root.querySelector('.dp-header-actions').insertBefore(btn('Drive times',openTravel,'',{disabled:!verified}),S.root.querySelector('.dp-header-actions .primary'));
   const modes=h('div',{class:'dp-modes',role:'group','aria-label':'Calendar view'});
   for(const [id,label]of [['day','Day'],['week','Week'],['crew','Crew'],['jobs','Jobs'],...[...views].map(([id,view])=>[id,view.label])])modes.append(btn(label,()=>{S.view=id;void load();},S.view===id?'selected':'',{'aria-pressed':S.view===id?'true':'false'}));

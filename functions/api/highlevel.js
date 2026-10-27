@@ -591,6 +591,9 @@ export async function onRequestPost({ request, env, waitUntil }) {
   try { payload = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
   payload.idempotency_key ||= request.headers.get('Idempotency-Key') || '';
   if (!['game_plan','post_job','schedule','lifecycle','sales_exit'].includes(payload.tool)) return reply(400, { ok: false, error: 'Unsupported HighLevel handoff' });
+  // This namespace is server-owned (Firestore rules); even a storage outage or
+  // stale client cannot turn a recorded snapshot into a provider handoff.
+  if (/^recorded_visit_[a-f0-9]{40}$/.test(payload.job_id || '')) return reply(409,{ok:false,code:'OWNER_RECORDING_READ_ONLY',error:'This walkthrough is recorded without provider writes. Review its source in Dispatch.'});
   if (payload.tool === 'lifecycle') {
     payload.event = String(payload.event || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     if (['garage-sales-exit', 'junk-sales-exit'].includes(payload.event)) return reply(400, { ok: false, error: 'Sales exits require a verified saved job' });

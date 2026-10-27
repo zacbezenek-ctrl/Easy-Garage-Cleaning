@@ -14,6 +14,7 @@ import { commitConflict, commitFailure } from '../functions/_lib/firestore-error
 import { bridgeCommandDenial, bridgeCommandPolicy } from '../egc-platform/services/operations/src/bridge-command-policy.ts';
 import * as crewAssign from '../functions/_lib/dispatch-crew-assign.js';
 import { scheduleCrewIds } from '../functions/_lib/dispatch-conflicts.js';
+import { requireProviderWritable } from '../functions/_lib/walkthrough-recording-policy.js';
 
 // Execute the actual scheduling mutator, isolating only imported I/O and time/
 // conflict helpers. This suite proves atomic dependency guards, not live
@@ -22,6 +23,7 @@ const source = readFileSync(new URL('../functions/_lib/operations-scheduling.js'
 function load() {
   const context = vm.createContext({
     crypto: webcrypto, TextEncoder, AbortSignal,
+    requireProviderWritable,
     localInstant: (date, time) => date && time ? `${date}T${time}:00.000Z` : null,
     scheduleRowsConflict: () => false,
     scheduleLockConflict: () => false,

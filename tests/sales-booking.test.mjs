@@ -153,7 +153,7 @@ test('the dispatch board reports each booker’s walkthrough right while flag-of
   assert.equal(phone.status, 200);
   assert.deepEqual(phone.body.viewer, { id: 'Config.Phone', booker: true, canPerformWalkthrough: false });
   assert.deepEqual((await board(on, cookies['Config.Sales'])).body.viewer, { id: 'Config.Sales', booker: true, canPerformWalkthrough: true });
-  assert.deepEqual((await board(on, cookies.ZacB)).body.viewer, { id: 'ZacB', canPerformWalkthrough: true });
+  assert.deepEqual((await board(on, cookies.ZacB)).body.viewer, { id: 'ZacB', canRecordWalkthrough: true, canPerformWalkthrough: true });
   assert.deepEqual((await board(off, cookies.ZacB)).body.viewer, { id: 'ZacB' });
   assert.equal((await board(off, cookies['Config.Phone'])).status, 403);
 });

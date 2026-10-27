@@ -253,7 +253,7 @@ service cloud.firestore {
       // Operation receipts, provider/adoption proofs and encrypted employee
       // records are written only by the service account. Manager schedule
       // saves still maintain the shared _egc_schedule_lock_* capacity locks.
-      return documentId.matches('(secure_|_egc_).*') && !documentId.matches('_egc_schedule_lock_.*');
+      return documentId.matches('recorded_visit_.*') || documentId.matches('(secure_|_egc_).*') && !documentId.matches('_egc_schedule_lock_.*');
     }
 
     function serverOwnedJobData(data, documentId) {
@@ -263,7 +263,7 @@ service cloud.firestore {
       // schedule_lock, which is valid only under its _egc_schedule_lock_ id.
       // Imported Jobber visit history (jobber_history) is read-only history.
       let recordType = data.get('recordType', '');
-      return recordType in [
+      return 'ownerWalkthrough' in data || recordType in [
           'employee_hub_v2', 'employee_account_v1', 'schedule_operation',
           'schedule_provider_receipt', 'schedule_adoption', 'operational_record_receipt',
           'recurring_plan', 'quo_message_receipt', 'jobber_history'
