@@ -324,3 +324,23 @@ test('Correct time on a shift still running says so, and with a paid rest break 
   tap(page, buttonOf(main, 'forgot', 'Correct time'));
   assert.match(dialog().querySelector('.tc-summary').textContent, /never clocked out \(29\.00 h ago\)/);
 });
+
+test('Phone time (offline clock times): the flagged card says so on Time approvals and someone else marks it reviewed, which clears the flag without approving it; the viewer’s own card shows the flag with no button', async () => {
+  const phone = { approvalStatus: 'pending', deviceTime: true, needsReview: true, deviceTimeEvents: [{ action: 'clock_in', deviceCapturedAt: iso(at('2026-09-22', '06:00')), recordedAt: iso(at('2026-09-22', '06:00')), receivedAt: iso(at('2026-09-22', '06:20')) }] };
+  const timecards = [card('offline', 'Crew.One', at('2026-09-22', '06:00'), at('2026-09-22', '10:00'), phone), card('mine', 'TylerG', at('2026-09-21', '06:00'), at('2026-09-21', '10:00'), phone), card('online', 'Crew.Two', at('2026-09-22', '07:00'), at('2026-09-22', '11:00'), { approvalStatus: 'pending' })];
+  const screen = hub({ timecards, corrections: false }), { page, server } = screen, main = await show(screen, 'timesheets');
+  assert.deepEqual(buttons(main, 'offline'), ['Phone time OK', 'Approve', 'Reject']);
+  assert.match(rowOf(main, 'offline').textContent, /Phone time/);
+  assert.deepEqual(buttons(main, 'online'), ['Approve', 'Reject'], 'a card clocked online has no flag');
+  const flagged = main.querySelectorAll('.ops-time-row').filter(row => /Phone time/.test(row.textContent));
+  assert.equal(flagged.length, 2, 'the viewer’s own card shows the flag too');
+  assert.equal(main.querySelectorAll('.ops-time-row button').filter(button => button.textContent === 'Phone time OK').length, 1, 'but only someone else can review it');
+  tap(page, buttonOf(main, 'offline', 'Phone time OK'));
+  await settle();
+  assert.deepEqual([server.posts.at(-1).id, server.posts.at(-1).data.deviceTimeReviewed], ['offline', true]);
+  const saved = server.timecards.find(item => item.id === 'offline');
+  assert.deepEqual([saved.needsReview, saved.deviceTimeReviewedBy, saved.approvalStatus], [false, 'TylerG', 'pending'], 'reviewed, still waiting for its approval');
+  const board = page.main();
+  assert.deepEqual(buttons(board, 'offline'), ['Approve', 'Reject']);
+  assert.doesNotMatch(rowOf(board, 'offline').textContent, /Phone time/);
+});

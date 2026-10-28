@@ -30,6 +30,13 @@ export const LAUNCH_DEFAULTS = Object.freeze({
   // Feb 28, the amount capped by the owner's margin floor on the Job actuals cost settings; no sale applies until the
   // owner enters that floor and the cost settings; functions/_lib/winter-sale.js).
   EGC_WINTER_SALE: 'true',
+  // Owner decision 2026-10-28, crew time on phones in garages with no signal or GPS: a clock action saved offline keeps
+  // the phone's time and is flagged "Phone time" on Time approvals until another manager or the owner marks it reviewed
+  // (employee-suite.js; employee-timecards.js); a phone with no position can still clock in, flagged for a manager
+  // (the owner decision of 2026-09-29); and the job status a crew member sets moves their own shift time.
+  EGC_OFFLINE_CLOCK_ENABLED: 'true',
+  EGC_CLOCK_IN_WITHOUT_FIX: 'true',
+  EGC_JOB_STATUS_MOVES_TIME: 'true',
 });
 
 /** Fills each unset launch default into env, in place; a value already present (any value) is kept. An env that

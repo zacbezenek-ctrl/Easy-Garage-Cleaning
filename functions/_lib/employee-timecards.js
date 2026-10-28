@@ -120,6 +120,11 @@ export function serverClockTime(value, now) {
   return now;
 }
 
+// Every clock action the crew app and the Hub queue carries the phone's time (deviceCapturedAt), online taps included. One
+// within DEVICE_SKEW of the server's time was sent as it happened: it is recorded at server time and never flagged as a
+// phone time, so EGC_OFFLINE_CLOCK_ENABLED flags only what a phone really saved offline (or a phone clock that is off).
+export const deviceTimeFresh = (value, now) => { const at = instant(value), server = instant(now); return Number.isFinite(at) && Number.isFinite(server) && Math.abs(at - server) <= DEVICE_SKEW; };
+
 function deviceStamp(entry, action, value, at, now) {
   const events = Array.isArray(entry.deviceTimeEvents) ? entry.deviceTimeEvents : [];
   return { ...entry, deviceTime: true, needsReview: true, ...(entry.clockOutAt ? { approvalStatus: 'pending' } : {}),
@@ -340,7 +345,7 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
   if (incoming.jobAction) {
     if (Object.keys(incoming).some(key => key !== 'jobAction')) throw timecardError('Send job-time changes separately from other timecard edits.');
     const action = incoming.jobAction, segments = Array.isArray(existing?.jobTracking?.segments) ? existing.jobTracking.segments : [];
-    const captured = action && typeof action === 'object' && own(action, 'deviceCapturedAt');
+    const captured = action && typeof action === 'object' && own(action, 'deviceCapturedAt') && !deviceTimeFresh(action.deviceCapturedAt, now);
     // A replayed receipt stays an exact no-op even after later events move the device-time floor, as does a switch to
     // where the shift already is.
     if (!device || !captured || !existing || text(existing.employee).toLowerCase() !== text(session.user).toLowerCase() || segments.some(segment => segment?.id === action.requestId) || jobActionSatisfied(existing, action)) {
@@ -419,8 +424,8 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
     return withAudit(existing, finalized, session, now, existing ? 'manager_timecard_update' : 'manager_timecard_create');
   }
   // stamp() runs only when a new time is recorded, so lost-reply replays stay no-ops.
-  const deviceValue = own(incoming, 'deviceCapturedAt') ? incoming.deviceCapturedAt : undefined, flagged = device && deviceValue !== undefined;
-  const stamp = entry => deviceValue === undefined ? now : device ? deviceClockTime(deviceValue, now, entry) : serverClockTime(deviceValue, now);
+  const deviceValue = own(incoming, 'deviceCapturedAt') ? incoming.deviceCapturedAt : undefined, flagged = device && deviceValue !== undefined && !deviceTimeFresh(deviceValue, now);
+  const stamp = entry => deviceValue === undefined ? now : flagged ? deviceClockTime(deviceValue, now, entry) : serverClockTime(deviceValue, now);
   if (!existing) {
     if (incoming.locationTracking !== true) throw timecardError('Shift location is required to clock in.');
     const at = stamp(null), place = clockInLocation(incoming, at, now, env);

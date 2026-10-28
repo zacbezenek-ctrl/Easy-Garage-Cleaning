@@ -85,6 +85,23 @@ test('a clock-in records its one position as a single fix from the crew app or t
   }
 });
 
+// The crew app and the Hub send the phone's time with every clock action, online taps included. With the flag on (a
+// launch default since 2026-10-28) only a time a phone really saved offline is a phone time: an online tap must not
+// put every shift on the manager's Phone time review before payroll.
+test('with the flag on, an online tap (phone time within two minutes of the server) is recorded at server time and never flagged', () => {
+  const started = clockIn({ deviceCapturedAt: new Date(Date.parse(NOW) - 15000).toISOString() });
+  assert.equal(started.clockInAt, NOW); assert.equal(started.deviceTime, undefined); assert.equal(started.needsReview, undefined); assert.equal(started.deviceTimeEvents, undefined);
+  const work = authorizeTimecard({ session: crew, manager: false, id: 'shift', existing: started, incoming: { jobAction: { requestId: crypto.randomUUID(), expectedSegmentId: activeJobSegment(started).id, jobId: 'job-a', kind: 'work', deviceCapturedAt: at(19) } }, now: at(20), env: ON });
+  assert.equal(activeJobSegment(work).startedAt, at(20)); assert.equal(work.deviceTime, undefined); assert.equal(work.needsReview, undefined);
+  const onBreak = update(work, { breaks: [{ startAt: 'phone', endAt: '' }], deviceCapturedAt: at(39) }, at(40));
+  assert.deepEqual(onBreak.breaks, [{ startAt: at(40), endAt: '' }]); assert.equal(onBreak.deviceTime, undefined);
+  const closed = update(onBreak, { clockOutAt: 'phone', status: 'submitted', deviceCapturedAt: new Date(Date.parse(at(90)) + 60000).toISOString() }, at(90));
+  assert.equal(closed.clockOutAt, at(90), 'a phone a minute fast is still an online tap'); assert.equal(closed.needsReview, undefined);
+  // Past two minutes it is a phone time again: kept and flagged when older, refused when the phone is ahead.
+  assert.equal(clockIn({ deviceCapturedAt: at(-3) }).needsReview, true);
+  assert.throws(() => clockIn({ deviceCapturedAt: at(3) }), /ahead of the server/);
+});
+
 test('an accepted offline clock-in keeps the phone time, stays open for the shift, and is flagged for manager review', () => {
   const entry = clockIn({ deviceCapturedAt: at(-30), clockInAt: at(-600), approvalStatus: 'approved' });
   assert.equal(entry.clockInAt, at(-30)); assert.equal(entry.createdAt, NOW); assert.equal(entry.updatedAt, NOW);
