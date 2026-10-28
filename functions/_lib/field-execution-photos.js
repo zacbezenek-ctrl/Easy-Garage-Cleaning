@@ -1,4 +1,5 @@
 import { fieldFailure } from './field-execution.js';
+import { createFirestorePhotoClient, firestorePhotoFileId, firestorePhotosEnabled } from './field-photo-firestore.js';
 
 const FILES = 'https://www.googleapis.com/drive/v3/files';
 export const FIELD_PHOTO_MAX_BYTES = 6 * 1024 * 1024;
@@ -13,7 +14,9 @@ export function driveThumbnailUrl(link, size = 640) {
   if (url.protocol !== 'https:' || !THUMBNAIL_HOST.test(url.hostname) || url.port || url.username || url.password) return null;
   return url.search || url.hash ? url.href : url.href.replace(/=s\d{1,4}$/, `=s${size}`);
 }
-export const fieldPhotosConfigured = env => Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REFRESH_TOKEN);
+export const fieldPhotosDriveConfigured = env => Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REFRESH_TOKEN);
+// Photos can be saved when Drive is connected or, without it, in Firestore (field-photo-firestore.js).
+export const fieldPhotosConfigured = env => fieldPhotosDriveConfigured(env) || firestorePhotosEnabled(env);
 
 export function decodeFieldPhoto(dataUrl) {
   const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(typeof dataUrl === 'string' ? dataUrl : '');
@@ -64,8 +67,27 @@ async function readCapped(body, max) {
   return bytes;
 }
 
-export async function createFieldPhotoClient(env, { now = () => Date.now(), tokens = driveTokens } = {}) {
+// New photos go to Drive once it is connected, otherwise to Firestore. A photo is always read from the store
+// its id names, so photos kept in Firestore stay readable after Drive is connected, and a Firestore upload
+// started before then finishes there. Drive is only contacted for Drive ids and new Drive uploads.
+export async function createFieldPhotoClient(env, { now = () => Date.now(), tokens = driveTokens, firestore = createFirestorePhotoClient } = {}) {
   if (!fieldPhotosConfigured(env)) throw fieldFailure('Photo storage is not connected. Your photo has not been uploaded; contact operations.', 503, 'FIELD_PHOTO_STORAGE_UNAVAILABLE');
+  const database = firestorePhotosEnabled(env) ? firestore(env) : null;
+  if (!fieldPhotosDriveConfigured(env)) return database;
+  if (!database) return createDriveClient(env, now, tokens);
+  let drive = null;
+  const google = () => (drive ??= createDriveClient(env, now, tokens).catch(error => { drive = null; throw error; }));
+  const store = async fileId => firestorePhotoFileId(fileId) ? database : google();
+  return {
+    allocate: async () => (await google()).allocate(),
+    metadata: async fileId => (await store(fileId)).metadata(fileId),
+    upload: async (fileId, ...rest) => (await store(fileId)).upload(fileId, ...rest),
+    image: async fileId => (await store(fileId)).image(fileId),
+    thumbnail: async (...args) => (await google()).thumbnail(...args),
+  };
+}
+
+async function createDriveClient(env, now, tokens) {
   const token = await driveAccessToken(env, now, tokens), headers = { Authorization: `Bearer ${token}` };
   const call = async (url, init = {}) => {
     const response = await fetch(url, { ...init, headers: { ...headers, ...(init.headers || {}) }, redirect: 'error', signal: AbortSignal.timeout(45000) });
