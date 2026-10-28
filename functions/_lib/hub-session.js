@@ -255,8 +255,12 @@ function safeEqual(left, right) {
   return mismatch === 0;
 }
 
-export async function hashHubCredential(username, password) {
-  return digestHex(`${username}:${password}:egc-salt-2026`);
+// A stored credential hash for a configured account, in the current salted PBKDF2 format (SEC-2026-10 C-01: it used to
+// return the legacy single-SHA-256 form, which sign-in now refuses). The username is kept for existing callers.
+export async function hashHubCredential(_username, password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const derived = await derivePasswordHash(String(password), salt, 100000);
+  return `${PASSWORD_HASH_PREFIX}$100000$${bytesToBase64Url(salt)}$${bytesToBase64Url(derived)}`;
 }
 
 export async function createHubCredentialHash(password, env = {}) {
@@ -277,7 +281,10 @@ async function verifyPasswordHash(username, password, expected, env = {}) {
   const [prefix, iterationText, saltText, hashText, extra] = expected.split('$');
   if (prefix !== PASSWORD_HASH_PREFIX) {
     if (!/^[a-f0-9]{64}$/i.test(expected)) throw invalidHash();
-    return safeEqual(await hashHubCredential(username, password), expected.toLowerCase());
+    // SEC-2026-10 C-01: the legacy single-SHA-256 format cracks in moments offline, and hashes in it are in the public
+    // history. It never signs anyone in again, whatever password is typed (so the refusal says nothing about a guess):
+    // the account needs a new password set in the current format.
+    throw Object.assign(new Error('This sign-in needs a new password before it can be used. Ask Zac to set one; your account has not been changed.'), { code: 'HUB_AUTH_PASSWORD_RESET_REQUIRED', status: 403 });
   }
   const iterations = Number(iterationText);
   if (extra !== undefined || !/^\d+$/.test(iterationText || '') || !Number.isInteger(iterations) || iterations < 100000 || iterations > 1000000 || !/^[A-Za-z0-9_-]+$/.test(saltText || '') || !/^[A-Za-z0-9_-]+$/.test(hashText || '')) throw invalidHash();
@@ -389,6 +396,9 @@ export async function verifyHubSessionToken(env, token, now = Date.now()) {
       return profile ? verified(token, staffRoleAccess(env, { ...profile, expiresAt: session.exp })) : null;
     }
     if (session.v !== 1 || !Object.hasOwn(users(env), session.u)) return null;
+    // SEC-2026-10 C-01: an account still stored in the legacy hash format has no live session either, so a session
+    // issued before sign-in started refusing that format does not keep working or renewing.
+    if (/^[a-f0-9]{64}$/i.test(String(userRecord(env, session.u)?.passwordHash || ''))) return null;
     // STAFF-SESSION: a changed password hash ends the session; one issued before pv lasts only until its own expiry.
     if (session.pv !== undefined && !safeEqual(session.pv, await credentialVersion(secret, userRecord(env, session.u)))) return null;
     const profile = getHubUserProfile(env, session.u);

@@ -44,7 +44,7 @@ test('seeded hub users authenticate with the synthetic password through the real
  assert.equal((await authenticateHubCredential(env,'Sales.One',SYNTHETIC_PASSWORD)).role,'sales');
  assert.equal((await authenticateHubCredential(env,'Crew.One',SYNTHETIC_PASSWORD)).businessAccess,false);
  assert.equal(await authenticateHubCredential(env,'Crew.One','wrong synthetic password'),null);
- assert.ok(Object.values(users).every(user=>/^[a-f0-9]{64}$/.test(user.passwordHash)&&!JSON.stringify(user).includes(SYNTHETIC_PASSWORD)));
+ assert.ok(Object.values(users).every(user=>/^pbkdf2-sha256\$\d+\$[A-Za-z0-9_-]+\$[A-Za-z0-9_-]+$/.test(user.passwordHash)&&!JSON.stringify(user).includes(SYNTHETIC_PASSWORD)));
 });
 
 test('the test clock is fixed, copied per read and moved only by set or advance',()=>{

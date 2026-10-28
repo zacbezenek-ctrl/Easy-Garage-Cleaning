@@ -6,7 +6,7 @@ import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import vm from './helpers/vm-realm.mjs';
 import { onRequest } from '../functions/_middleware.js';
-import { createHubSessionCookie, createHubSessionToken } from '../functions/_lib/hub-session.js';
+import { createHubSessionCookie, createHubSessionToken, hashHubCredential } from '../functions/_lib/hub-session.js';
 import { privateStaffResponse, staffPageGate, staffPageGateEnabled, staffSignInLocation } from '../functions/_lib/staff-page-gate.js';
 import { STAFF_GATED_PATHS, STAFF_PUBLIC_PATHS, safeStaffNext, staffGatedPath } from '../staff-paths.js';
 import { sourceFiles } from './source-files.mjs';
@@ -18,8 +18,8 @@ const NOW = Date.parse('2026-09-28T16:00:00.000Z');
 const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
 const ORIGIN = 'https://easygaragecleaning.com';
 const USERS = {
-  'synthetic.crew': { passwordHash: 'a'.repeat(64), displayName: 'Synthetic Crew', role: 'crew' },
-  tylerg: { passwordHash: 'b'.repeat(64), displayName: 'Synthetic Manager', role: 'manager' },
+  'synthetic.crew': { passwordHash: await hashHubCredential('synthetic.crew', 'synthetic crew password'), displayName: 'Synthetic Crew', role: 'crew' },
+  tylerg: { passwordHash: await hashHubCredential('tylerg', 'synthetic manager password'), displayName: 'Synthetic Manager', role: 'manager' },
 };
 const BASE_ENV = { HUB_SESSION_SECRET: 'synthetic-staff-gate-secret-0123456789abcdef', HUB_AUTH_USERS_JSON: JSON.stringify(USERS) };
 const ON = { ...BASE_ENV, EGC_STAFF_PAGE_GATE: 'on' };

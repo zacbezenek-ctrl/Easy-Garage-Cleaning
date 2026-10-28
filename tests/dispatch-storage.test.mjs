@@ -76,7 +76,7 @@ test('changed or incomplete lineage snapshots roll back before any schedule muta
 });
 
 test('server roster exposes configured identities without password hashes, rates, or invented employees',async () => {
-  const roster=await dispatchRoster({HUB_AUTH_USERS_JSON:JSON.stringify({zacb:{passwordHash:'a'.repeat(64),displayName:'Owner',role:'owner',hourlyRate:500},'New.User':{passwordHash:'b'.repeat(64),displayName:'New Employee',role:'crew'}})});
+  const roster=await dispatchRoster({HUB_AUTH_USERS_JSON:JSON.stringify({zacb:{passwordHash:'pbkdf2-sha256$100000$c3ludGhldGlj$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',displayName:'Owner',role:'owner',hourlyRate:500},'New.User':{passwordHash:'pbkdf2-sha256$100000$c3ludGhldGlj$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',displayName:'New Employee',role:'crew'}})});
   assert.deepEqual(roster.map(person=>person.id).sort(),['new.user','zacb']);
   for (const person of roster) assert.deepEqual(Object.keys(person).sort(),['id','name','role']);
 });

@@ -245,7 +245,7 @@ test('the manifest, headers and config scope the installable app to /crew/', () 
 // STAFF-GATE: the worker against the real edge. functions/_middleware.js runs with EGC_STAFF_PAGE_GATE=on in front of the
 // repo's static files (Pages pretty URLs included); a signed-in phone sends the Hub cookie. Navigations use redirect:
 // 'manual' like a browser's, so a sign-in redirect reaches the worker as an opaqueredirect.
-const STAFF_ENV = Object.freeze({ EGC_STAFF_PAGE_GATE: 'on', HUB_SESSION_SECRET: 'synthetic-crew-sw-gate-secret-0123456789abcdef', HUB_AUTH_USERS_JSON: JSON.stringify({ 'synthetic.crew': { passwordHash: 'c'.repeat(64), displayName: 'Synthetic Crew', role: 'crew' } }) });
+const STAFF_ENV = Object.freeze({ EGC_STAFF_PAGE_GATE: 'on', HUB_SESSION_SECRET: 'synthetic-crew-sw-gate-secret-0123456789abcdef', HUB_AUTH_USERS_JSON: JSON.stringify({ 'synthetic.crew': { passwordHash: 'pbkdf2-sha256$100000$c3ludGhldGlj$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', displayName: 'Synthetic Crew', role: 'crew' } }) });
 const pages = createPagesHandler();
 function gatedSite({ env = STAFF_ENV, accept = '*/*' } = {}) {
   const phone = { cookie: '', edge: [] };
