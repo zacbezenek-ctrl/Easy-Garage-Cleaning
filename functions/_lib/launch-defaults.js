@@ -30,6 +30,13 @@ export const LAUNCH_DEFAULTS = Object.freeze({
   // Feb 28, the amount capped by the owner's margin floor on the Job actuals cost settings; no sale applies until the
   // owner enters that floor and the cost settings; functions/_lib/winter-sale.js).
   EGC_WINTER_SALE: 'true',
+  // Owner decision 2026-10-28: crew photos (job and storage-bin photos, receipts, headshots) save to the site's own
+  // Firestore while Google Drive is not connected (functions/_lib/field-photo-firestore.js), and customers see their
+  // verified before/after photos and storage map on completed jobs (functions/_lib/customer-photo-visibility.js; the
+  // owner was asked to switch this on in Cloudflare on 2026-10-12). No field photo could be saved before this, so
+  // FIELD_CUSTOMER_PHOTOS_SINCE needs no default: there are no older photos to hold back.
+  EGC_FIELD_PHOTOS_FIRESTORE: 'true',
+  FIELD_CUSTOMER_PHOTOS_ENABLED: 'true',
 });
 
 /** Fills each unset launch default into env, in place; a value already present (any value) is kept. An env that
