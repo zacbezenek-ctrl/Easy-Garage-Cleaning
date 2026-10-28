@@ -503,8 +503,8 @@ With walkthrough notes on (the launch default, [3.7](#37-walkthrough-transcripts
 | 4.7 | Timesheets and payroll | `EGC_OVERTIME_POLICY` unset |
 | 4.8 | Job costing | No switch |
 | 4.9 | Clock-in location once | No switch |
-| 4.10 | `EGC_CLOCK_IN_WITHOUT_FIX=true` (owner decision: on) | Cloudflare, plain |
-| 4.11 | `EGC_JOB_STATUS_MOVES_TIME=true` (optional) | Cloudflare, plain |
+| 4.10 | `EGC_CLOCK_IN_WITHOUT_FIX` (on by launch default, 2026-10-28) | Nothing to set; `false` turns it off |
+| 4.11 | `EGC_JOB_STATUS_MOVES_TIME` (on by launch default, 2026-10-28) | Nothing to set; `false` turns it off |
 | 4.12 | `EGC_TIMECARD_CORRECTIONS=true` (optional) | Cloudflare, plain |
 | 4.13 | `EGC_GHL_TAG_OUTBOX=true`, then `EGC_GHL_TAG_DRAIN_ENABLED=true` | Cloudflare, plain; Railway egc-worker |
 
@@ -564,7 +564,7 @@ With walkthrough notes on (the launch default, [3.7](#37-walkthrough-transcripts
   1. Open `/crew/`, sign in, add it to the home screen.
   2. Airplane mode on: open a job, tick a checklist item, take a photo. The thumbnail says "Saved on this phone".
   3. Airplane mode off: the tick and photo save once.
-- **Keep off:** `EGC_OFFLINE_CLOCK_ENABLED` ([Leave these off](#leave-these-off-for-now)). Until then, a clock-in saved offline more than 2 minutes before reconnecting is refused; the crew member discards it and clocks again, or a manager corrects it.
+- **Offline clock times (on by launch default, 2026-10-28):** `EGC_OFFLINE_CLOCK_ENABLED` keeps a clock action saved offline at the phone's time. The timecard shows **Phone time** on Time approvals and the payroll week waits until someone other than that employee checks the times and taps **Phone time OK**. Set it to `false` in Cloudflare to go back to refusing an offline clock-in more than 2 minutes old.
 - **Emergency off switch:** the file `/crew/sw-config.json` set to `{"enabled": false}` removes the offline app within about 5 minutes of the next crew-page visit. It is a code change: ask your developer.
 
 ### 4.7 Timesheets and payroll
@@ -596,7 +596,7 @@ With walkthrough notes on (the launch default, [3.7](#37-walkthrough-transcripts
 
 ### 4.10 Clock in with no GPS position (owner decision: on)
 
-- **Set:** `EGC_CLOCK_IN_WITHOUT_FIX=true`
+- **On by launch default (2026-10-28):** `EGC_CLOCK_IN_WITHOUT_FIX`. Nothing to set; `false` in Cloudflare turns it off.
 - **Where:** Cloudflare Pages, plain.
 - **Turns on:** when the phone finds no position after the retry (indoors, weak GPS), the shift starts anyway without one. The Hub card and the crew job page say "No location at clock-in", the manager's team board shows it, and the week's timesheet row carries the `no_clock_in_location` flag (also in the payroll CSV's Review flags). A denied location permission still blocks clock-in.
 - **Unset:** the crew member is told to move near a window or outside and try again; no shift starts.
@@ -605,7 +605,7 @@ With walkthrough notes on (the launch default, [3.7](#37-walkthrough-transcripts
 
 ### 4.11 Job status moves crew time (optional)
 
-- **Set:** `EGC_JOB_STATUS_MOVES_TIME=true`
+- **On by launch default (2026-10-28):** `EGC_JOB_STATUS_MOVES_TIME`. Nothing to set; `false` in Cloudflare turns it off.
 - **Where:** Cloudflare Pages, plain.
 - **Turns on:** on `/crew/job.html` the job status moves the crew member's own time: **Mark en route** starts travel on the job, **Mark arrived** and **Start work** start work on it, pause, waiting and delay keep it, and **Complete** asks "End my job time?" (OK moves to general shift time). A line under the status buttons says "Your time: working on <job>". Only someone on the job's crew has their own time moved by its status; a manager who sets the status of a job they are not on keeps their own time (and a move the server refuses as not theirs is dropped with a notice, never left blocking their clock). When the job's crew lead marks arrived or starts work, they are asked once "Move my crew-mates to work too?"; the server moves only crew assigned to that job who clocked in today, are not on approved time off today, not on break, and are on general time or travelling there (with `FIELD_MULTIDAY_VISITS`, only those on today's crew), and tells the lead who was not moved and why (a shift still open from an earlier day is "still clocked in from an earlier day"). Online, the page reads the crew member's shift before a status moves their time, so a lead's move is never undone; a move that is already where the shift is changes nothing. Offline, the status and its time move sync in order. A crew move retried after a lost reply is answered as it stands, naming who it already moved; a partly applied one finishes the rest when retried within 2 minutes. A crew move the server refuses (saved offline for more than 2 minutes with crew-mates still to move, or the job closed) names who was already moved, waits at the top of the job for Retry or Discard, and never holds the lead's own clock buttons.
 - **Needs first:** every job has the right crew and lead. Tell crews that status taps now move their time.
@@ -893,7 +893,6 @@ Invoice sending and customer portal sign-in links by text or email are in the [n
 
 | Variable | Why it stays off |
 | --- | --- |
-| `EGC_OFFLINE_CLOCK_ENABLED` | The Hub timesheet has no "phone time" review badge yet; on, crew could backdate a clock action by up to 12 hours. |
 | `EGC_RECURRING_PLANS_ENABLED` | Waits for the recurring-plan background job (RECUR-CRON). |
 | `EGC_STAFF_ROLE_PERMISSIONS` | Can hide business screens from a manager whose saved roles lack them; check every business user's roles first. `EGC_STAFF_ROLE_ACCESS` ([3.5](#35-staff-roles-grant-access-owner-decision-on)) turns it on for you, after the role checks there. |
 | `EGC_EXTRACTION_V2` (Railway egc-api) | Waits for the recording review screen (P3-09); also adds OpenAI cost per recording. |
