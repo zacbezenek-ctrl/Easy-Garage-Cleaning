@@ -90,6 +90,17 @@ try {
   await page.getByRole('button', { name: 'Mark arrived', exact: true }).click(); await settled();
   await page.getByRole('button', { name: 'Start work', exact: true }).click(); await settled();
   await page.getByRole('alert').filter({ hasText: 'Complete arrival preparation' }).waitFor();
+  // The page already said what Start work needs, and the before-start checks take one tap: the same checklist save,
+  // once per check, in order.
+  assert.match(await page.locator('#start-needs').textContent(), /^Before Start work: \d+ before-start checks · a before photo$/);
+  const tickAll = page.locator('[data-action="tick-start-checks"]'), startChecks = Number((await tickAll.textContent()).match(/\d+/)[0]);
+  const postedChecks = () => posted.filter(action => action === 'checklist').length, checksBefore = postedChecks();
+  await tickAll.click();
+  for (let wait = 0; wait < 200 && postedChecks() - checksBefore < startChecks; wait++) await page.waitForTimeout(50);
+  await settled(); await page.waitForFunction(() => !document.querySelector('input[data-check]:disabled'));
+  assert.equal(postedChecks() - checksBefore, startChecks, 'one checklist save per before-start check');
+  assert.equal(await page.locator('#start-needs').textContent(), 'Before Start work: a before photo');
+  assert.equal(await tickAll.count(), 0, 'no before-start checks are left to tick');
   const checks = page.locator('input[data-check]');
   for (let index = 0; index < await checks.count(); index++) { await checks.nth(index).check(); await settled(); }
   await page.locator('[data-material="rack"]').selectOption('loaded'); await settled();
@@ -105,6 +116,7 @@ try {
   assert.equal(await page.locator('#photo-queue li').count(), 0, 'the confirmed photo left the waiting list');
   assert.equal(store.get('jobs/browser-job').fieldExecution.photos.length, 1, 'a lost photo reply never saves the photo twice');
   assert.equal(store.calls.uploads, 1, 'the photo reached Drive once');
+  assert.equal(await page.locator('#start-needs').count(), 0, 'nothing is left before Start work');
   await page.getByRole('button', { name: 'Start work', exact: true }).click(); await settled();
   const timingJob = store.get('jobs/browser-job'), timingClock = timingJob.fieldExecution.jobTime;
   timingClock.trackingStartedAt = new Date(Date.now() - 120000).toISOString();
@@ -171,13 +183,26 @@ try {
   assert.deepEqual(posted.slice(postedBefore), ['photo', 'photo', 'checklist', 'checklist'], 'the check changes follow the photos and the discarded photo is never sent');
   assert.equal(store.get('jobs/browser-job').fieldExecution.checks[lastCheckId].completed, true);
   assert.deepEqual(store.get('jobs/browser-job').fieldExecution.photos.map(photo => photo.category), ['before', 'after', 'after']);
+  // A storage-bin photo: its tile names the bin and what is in it, the card counts the bins mapped, and the next bin's
+  // label is filled in with the item list cleared for it.
+  await page.getByLabel('Photo category').selectOption('storage');
+  await page.getByLabel('Bin label').fill('A1');
+  await page.getByLabel("What's inside (the customer sees this)").fill('Holiday lights, wreath');
+  await page.getByLabel('Choose photos from library').setInputFiles([{ name: 'bin-a1.png', mimeType: 'image/png', buffer: png }]);
+  await page.getByText('4 verified', { exact: true }).waitFor(); await settled();
+  await page.locator('.photo-tile').getByText('Bin A1 · Holiday lights, wreath', { exact: true }).waitFor();
+  await page.getByText('1 bin mapped', { exact: true }).waitFor();
+  assert.equal(await page.getByLabel('Bin label').inputValue(), 'A2', 'the next bin label is filled in');
+  assert.equal(await page.getByLabel("What's inside (the customer sees this)").inputValue(), '');
+  assert.match(await page.locator('#bin-next').textContent(), /^Bin A1 saved\. The next label is filled in/);
+  assert.deepEqual(store.get('jobs/browser-job').fieldExecution.photos.filter(photo => photo.category === 'storage').map(photo => [photo.bin, photo.items]), [['A1', 'Holiday lights, wreath']]);
   await page.getByLabel('Completion notes', { exact: true }).fill('Garage cleaned, rack installed, and customer walkthrough completed.');
   await page.getByLabel('Does anything need follow-up?').selectOption('no');
   await page.getByRole('button', { name: 'Review & complete job', exact: true }).click(); await settled();
   await page.getByText('Completed by Crew One.', { exact: true }).waitFor();
   await page.reload(); await page.getByText('Completed by Crew One.', { exact: true }).waitFor();
   assert.equal(store.get('jobs/browser-job').status, 'completed');
-  assert.equal(store.get('jobs/browser-job').fieldExecution.photos.length, 3);
+  assert.equal(store.get('jobs/browser-job').fieldExecution.photos.length, 4);
   assert.equal(store.get('jobs/browser-next').status, 'scheduled');
   await page.getByRole('button', { name: 'End my job time', exact: true }).click();
   await page.getByText('General shift time', { exact: true }).waitFor();
