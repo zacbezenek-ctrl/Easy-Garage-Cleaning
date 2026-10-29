@@ -1,7 +1,7 @@
 import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/hub-session.js';
 import { employeeAccountsConfigured, listEmployeeApplications } from '../_lib/employee-accounts.js';
 import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-account.js';
-import { createJobAssignmentAccess, ownWalkthroughRight } from '../_lib/job-assignment.js';
+import { assignmentKey, createJobAssignmentAccess, ownWalkthroughRight } from '../_lib/job-assignment.js';
 import { fieldCancelled, fieldCommand, fieldFailure, fieldFingerprint, fieldId, fieldJobProjection, fieldPhotos, fieldRequestId, fieldStage, fieldText } from '../_lib/field-execution.js';
 import { assignedDuring, assignedOn, fieldVisitCommand, fieldVisitProjection, fieldVisitsEnabled } from '../_lib/field-execution-visits.js';
 import { createFieldStore } from '../_lib/field-execution-store.js';
@@ -41,14 +41,28 @@ async function context(request, env, now) {
   if (!session) throw fieldFailure('Sign in to the Employee Hub to open your jobs.', 401, 'FIELD_AUTH_REQUIRED');
   if (!firebaseServiceAccountConfigured(env)) throw fieldFailure('Secure job storage is not connected. Contact operations.', 503, 'FIELD_STORAGE_UNAVAILABLE');
   const manager = hasBusinessAccess(session), access = createJobAssignmentAccess(env, session, { now }), store = createFieldStore(env);
-  return { session, manager, access, store, visits: fieldVisitsEnabled(env), jobOperations: can(session, 'jobs.operate', env), now };
+  return { session, manager, access, store, visits: fieldVisitsEnabled(env), jobOperations: can(session, 'jobs.operate', env), walkthroughAuthor: ownWalkthroughRight(session, env), now };
 }
 
-async function authorizedJob(ctx, id, allowOperations = true) {
+// WALKTHROUGH-PHOTOS (#301): the estimator who recorded a job's in-person signature on the walkthrough, and still runs
+// walkthroughs in their own right (an estimator, a quote author), attaches the reference photos they took there
+// (crew/gameplan-handoff.js photos) without being on the job's crew or a manager. They read only signerView and add only
+// walkthrough photos; every other field read and action stays with the crew and managers.
+const recordedSignature = (ctx, job) => ctx.walkthroughAuthor === true && job?.acceptance?.method === 'in_person_signature'
+  && Boolean(assignmentKey(ctx.session.user)) && assignmentKey(job.acceptance.recordedBy) === assignmentKey(ctx.session.user);
+// What that upload reads: the job's revision and its walkthrough photos (id and category), nothing else of the job.
+const signerView = (job, env) => ({ job: { id: job.id, expectedRevision: job.__updateTime || job.revision || '', photos: fieldPhotos(job).filter(photo => photo.category === 'walkthrough').map(photo => ({ id: photo.id, category: photo.category })) },
+  photosAvailable: fieldPhotosConfigured(env), timezone: 'America/Denver' });
+function requireSigner(ctx, job) {
+  if (!recordedSignature(ctx, job)) throw fieldFailure('Only a manager, or the estimator who recorded this job\'s signature, can attach its walkthrough reference photos.', 403, 'FIELD_REFERENCE_PHOTO_MANAGER_REQUIRED');
+}
+
+// signer: the estimator who recorded the job's signature also opens it (recordedSignature), for walkthrough photos only.
+async function authorizedJob(ctx, id, allowOperations = true, signer = false) {
   if (!fieldId(id)) throw fieldFailure('Choose a valid job.');
   const job = await ctx.store.readJob(id);
   if (!job || !['job', 'cleanout', 'reorg'].includes(job.type) || job.recordType) throw fieldFailure('This job is unavailable. Open Today for your current assignments.', 404, 'FIELD_JOB_NOT_FOUND');
-  if (!ctx.manager && !(allowOperations && ctx.jobOperations) && !await ctx.access.assigned(job)) throw fieldFailure('This job is not currently assigned to your account. Open Today for your assignments.', 403, 'FIELD_JOB_NOT_ASSIGNED');
+  if (!ctx.manager && !(allowOperations && ctx.jobOperations) && !(signer && recordedSignature(ctx, job)) && !await ctx.access.assigned(job)) throw fieldFailure('This job is not currently assigned to your account. Open Today for your assignments.', 403, 'FIELD_JOB_NOT_ASSIGNED');
   return job;
 }
 
@@ -90,7 +104,9 @@ async function displayContext(ctx, env, jobs) {
 const capabilities = (ctx, env, job) => fieldCapabilities({ session: ctx.session, manager: ctx.manager, job, env, access: ctx.access });
 
 async function detail(ctx, env, jobId, cursor = '') {
-  const job = await authorizedJob(ctx, jobId);
+  const job = await authorizedJob(ctx, jobId, true, true);
+  // Opened only as the estimator who recorded its signature: what their walkthrough photo upload reads.
+  if (!ctx.manager && !ctx.jobOperations && !await ctx.access.assigned(job)) return signerView(job, env);
   const [history, display, allowed] = await Promise.all([ctx.store.events(jobId, cursor), displayContext(ctx, env, [job]), capabilities(ctx, env, job)]);
   const view = await projection(ctx, job, history.events, { ...display(job), capabilities: allowed });
   // All-crew operations never inherits the assigned lead's payment/expense UI,
@@ -188,7 +204,9 @@ async function savePhoto(ctx, env, job, input, fingerprint, receipt) {
   const storage = input.category === 'storage' ? { bin: storageBin(input.bin), items: storageItems(input.items) } : null;
   if (storage && !storage.bin) throw fieldFailure('Storage photos need the bin label written on the bin, like A1 (letters, numbers, spaces or dashes, up to 24 characters).');
   if (storage && (typeof input.items !== 'string' || input.items.length > 500)) throw fieldFailure('List what is in the bin in 500 characters or fewer.');
-  if(input.category==='walkthrough'&&!ctx.manager)throw fieldFailure('Only a manager can attach the signed walkthrough reference photos.',403,'FIELD_REFERENCE_PHOTO_MANAGER_REQUIRED');
+  // Walkthrough reference photos: a manager, or the estimator who recorded the signature (requireSigner), never the crew.
+  const signer = input.category === 'walkthrough' && !ctx.manager;
+  if (signer) requireSigner(ctx, job);
   if (fieldCancelled(job)) throw fieldFailure(fieldStage(job) === 'cancelled' ? 'This job is cancelled. Ask operations before adding evidence.' : 'This job was marked a no-show. Ask operations before adding evidence.', 409, 'FIELD_JOB_CLOSED');
   if (fieldPhotos(job).length >= 100) throw fieldFailure('This job already has 100 field photos. Contact operations to archive photos before adding more.', 409, 'FIELD_PHOTO_LIMIT');
   const picture = decodeFieldPhoto(input.dataUrl), client = await createFieldPhotoClient(env);
@@ -205,9 +223,9 @@ async function savePhoto(ctx, env, job, input, fingerprint, receipt) {
   // Recheck assignment after the upload and fence every update against the
   // latest job revision. Concurrent checklists and other photos are preserved.
   for (let attempt = 0; attempt < 3; attempt++) {
-    const latest = await authorizedJob(ctx, job.id), currentReceipt = await ctx.store.readEvent(job.id, input.requestId);
+    const latest = await authorizedJob(ctx, job.id, true, signer), currentReceipt = await ctx.store.readEvent(job.id, input.requestId);
     if (currentReceipt?.state === 'applied') return;
-    await requireWorkday(ctx, latest);
+    if (signer) requireSigner(ctx, latest); else await requireWorkday(ctx, latest);
     if (!currentReceipt || currentReceipt.fingerprint !== fingerprint) throw fieldFailure('This upload receipt changed. Contact operations.', 409, 'FIELD_IDEMPOTENCY_CONFLICT');
     if (fieldCancelled(latest)) throw fieldFailure('The job was cancelled or marked a no-show during upload. The photo has not been added to the job.', 409, 'FIELD_JOB_CLOSED');
     const existing = fieldPhotos(latest);
@@ -226,14 +244,16 @@ async function fieldJobsPost(handlerContext, now) {
     if (!mutationOriginAllowed(request)) throw fieldFailure('This job action must come from the Employee Hub.', 403, 'FIELD_ORIGIN_FORBIDDEN');
     ctx = await context(request, env, now); input = await readInput(request);
     if (input.expectedUser !== undefined && (typeof input.expectedUser !== 'string' || input.expectedUser.toLowerCase() !== ctx.session.user.toLowerCase())) throw fieldFailure('Your signed-in account changed. Sign in again before retrying this work.', 401, 'FIELD_ACCOUNT_CHANGED');
-    const job = await authorizedJob(ctx, input.jobId, input.action === 'complete');
+    // A walkthrough reference photo is no day's work: savePhoto decides who adds one (a manager or the signer).
+    const walkthroughPhoto = input.action === 'photo' && input.category === 'walkthrough';
+    const job = await authorizedJob(ctx, input.jobId, input.action === 'complete', walkthroughPhoto);
     const allCrewOperation = ctx.jobOperations && !ctx.manager && !await ctx.access.assigned(job);
     if (allCrewOperation && (input.expectedUser !== ctx.session.user || Object.keys(input).some(key => !['action', 'jobId', 'requestId', 'expectedRevision', 'expectedUser', 'hasIssues', 'notes', 'issueNotes'].includes(key)))) throw fieldFailure('Refresh this account and use supported completion fields.', 403, 'FIELD_OPERATION_NOT_ALLOWED');
     fingerprint = await fieldFingerprint(ctx.session.user, input);
     const receipt = await ctx.store.readEvent(job.id, input.requestId);
     if (receipt && receipt.fingerprint !== fingerprint) throw fieldFailure('This action ID was already used for different information. Refresh before retrying.', 409, 'FIELD_IDEMPOTENCY_CONFLICT');
     if (receipt?.state === 'applied') return reply(200, { ok: true, alreadyApplied: true, ...await detail(ctx, env, job.id) });
-    await requireWorkday(ctx, job, input);
+    if (!walkthroughPhoto) await requireWorkday(ctx, job, input);
     if (!receipt && job.__updateTime !== input.expectedRevision) throw fieldFailure('This job changed. Refresh to review the latest assignment and details before retrying.', 409, 'FIELD_REVISION_CONFLICT');
     if (input.action === 'photo') await savePhoto(ctx, env, job, input, fingerprint, receipt);
     else if (input.action === 'retry_completion_sync') {
