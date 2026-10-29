@@ -189,7 +189,9 @@ class CustomerPhotosBrowserTests(unittest.TestCase):
         self.portal.pop('beforeAfter'); self.page.goto(self.url + '/customer-portal.html'); expect(self.page.locator('#portal')).to_be_visible()
         expect(self.page.locator('#gallery-card')).to_be_hidden(); expect(self.page.locator('.ba-thumb')).to_have_count(0)
     def test_portal_offers_camera_capture_and_library_upload(self):
-        self.open_portal()
+        # The upload box asks for what the crew should see before arrival, so the completed fixture job hides it.
+        self.open_portal(); expect(self.page.locator('#upload-card')).to_be_hidden()
+        self.portal['appointment']['status'] = 'scheduled'; self.open_portal()
         expect(self.page.locator('#photo-camera')).to_have_attribute('capture', 'environment')
         self.assertIsNone(self.page.locator('#photo-input').get_attribute('capture'))
         expect(self.page.get_by_text('Take a photo')).to_be_visible(); self.no_horizontal_scroll()

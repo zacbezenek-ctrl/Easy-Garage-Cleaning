@@ -6,6 +6,7 @@ import { readCustomerPortalContext } from '../_lib/customer-portal-access.js';
 import { denverToday } from '../_lib/dispatch-time.js';
 import { fieldActivity } from '../_lib/field-execution.js';
 import { customerPhotoPolicy, customerPhotoProjection, customerPhotosEnabled } from '../_lib/customer-photo-visibility.js';
+import { customerProjectMedia } from '../_lib/customer-project-media.js';
 import { commitDocuments, patchJob, readJob } from '../_lib/firestore-job.js';
 import { CUSTOMER_PORTAL_CONTENT, CUSTOMER_PORTAL_TERMS_VERSION, approvalTermsVersion, customerPortalDocuments } from '../_lib/customer-portal-content.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
@@ -435,6 +436,9 @@ async function handleGet({ request, env }, deps) {
   const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env), draftsRejected: rejectDrafts(env), billing: changeOrderBillingEnabled(env), now: at.toISOString(), tips, held, mode }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString(), unified: mode === 'unified', invoiceState: moneyInvoiceStateEnabled(env) }) };
   // Default off: without the flag the DTO keeps its current shape.
   if (customerPhotosEnabled(env) && result.session.permissions?.view !== false) body.beforeAfter = customerPhotoProjection(result.job, customerPhotoPolicy(env));
+  // The office's shared Drive link (projectMedia). A job without one keeps the DTO's current shape.
+  const media = result.session.permissions?.view !== false ? customerProjectMedia(result.job) : null;
+  if (media) body.projectMedia = media;
   // Default off as well. Only active crew profiles appear; a profile read failure hides the crew, never the project.
   if (crewPublicProfilesEnabled(env) && result.session.permissions?.view !== false) Object.assign(body, await customerCrew(env, result.job, { profiles: deps.crewProfiles, now: at }).catch(() => customerCrewProjection(result.job, new Map(), new Map(), at)));
   return reply(200, body);
