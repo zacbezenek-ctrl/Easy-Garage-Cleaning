@@ -81,15 +81,36 @@ export function customerMessageAlertStorage(env, fetcher = firestoreFetch) {
     async query(where, orderBy, limit) {
       const response = await call(`${BASE}:runQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ structuredQuery: {
         from: [{ collectionId: CUSTOMER_MESSAGE_ALERTS }], where: { fieldFilter: { field: { fieldPath: where[0] }, op: 'EQUAL', value: { stringValue: where[1] } } },
-        orderBy: [{ field: { fieldPath: orderBy[0] }, direction: orderBy[1] }], limit,
+        ...(orderBy ? { orderBy: [{ field: { fieldPath: orderBy[0] }, direction: orderBy[1] }] } : {}), limit,
       } }) });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null);
+        // A Pages deployment does not deploy Firestore indexes. Recognize only the
+        // provider's index precondition; permission/outage errors must still fail.
+        if (response.status === 400 && detail?.error?.status === 'FAILED_PRECONDITION'
+          && /requires an index|index.*(?:building|not ready)/i.test(String(detail.error.message || ''))) {
+          throw fail('customer_messages_index_required', 'Customer messages need a database index. Ask the owner to deploy firestore.indexes.json and wait for the index to finish building.', 503);
+        }
+        throw unavailable();
+      }
       const rows = response.ok ? await response.json().catch(() => null) : null;
       if (!Array.isArray(rows)) throw unavailable();
       return rows.filter(row => row?.document).map(row => decode(row.document));
     },
     /** Open entries, latest message first (index: status, lastMessageAt desc); complete:false when more are open. */
     async open(limit = ALERT_LIST_LIMIT) {
-      const found = await this.query(['status', 'open'], ['lastMessageAt', 'DESCENDING'], limit + 1);
+      let found;
+      try {
+        found = await this.query(['status', 'open'], ['lastMessageAt', 'DESCENDING'], limit + 1);
+      } catch (error) {
+        if (error?.code !== 'customer_messages_index_required') throw error;
+        // Single-field equality needs no composite index. Only sort locally when
+        // every open entry fits: a truncated unordered query cannot identify the
+        // newest messages. Never replace an incomplete inbox with a false zero.
+        found = await this.query(['status', 'open'], null, limit + 1);
+        if (found.length > limit) throw error;
+        found.sort((a, b) => String(b.lastMessageAt || b.createdAt || '').localeCompare(String(a.lastMessageAt || a.createdAt || '')) || a.id.localeCompare(b.id));
+      }
       return { rows: found.slice(0, limit), complete: found.length <= limit };
     },
     /** One field-masked write. revision guards a compare-and-set; without it the entry must exist. Returns the new revision, or null on a lost race. */
