@@ -1298,7 +1298,7 @@ test('professional estimate and invoice workflow tracks revisions deadlines term
 });
 
 test('customer communication center triggers HighLevel once and preserves an audit trail',()=>{
-  for(const marker of ["'communications'",'Customer messages','customerCommunicationTypes','syncCustomerCommunication','communicationLog','communicationLastEvent','automationMilestones','estimate-expiring','invoice-overdue','runCustomerCommunicationMilestones','customerAutomationEnabled','opsSetCustomerAutomation','Enable automatic reminders','HighLevel owns delivery','customer automation suppressed','Trigger in HighLevel','needs_attention'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  for(const marker of ["'communications'",'Customer automations','customerCommunicationTypes','syncCustomerCommunication','communicationLog','communicationLastEvent','automationMilestones','estimate-expiring','invoice-overdue','runCustomerCommunicationMilestones','customerAutomationEnabled','opsSetCustomerAutomation','Enable automatic reminders','HighLevel owns delivery','customer automation suppressed','Trigger in HighLevel','needs_attention'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   assert.match(suite,/candidates\.slice\(0,3\)/);
   assert.match(suite,/suppress_automation:job\.notify===false/);
   assert.match(read('functions/api/highlevel.js'),/if \(!payload\.suppress_automation\) await addTags/);
