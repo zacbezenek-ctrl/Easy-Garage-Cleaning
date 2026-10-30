@@ -2,12 +2,12 @@ import { requireDispatcher } from './dispatch-service.js';
 import { auditWrite } from './hub-audit.js';
 import { moneySupersedeWrite } from './job-funnel-events.js';
 import { denverToday, validDate } from './dispatch-time.js';
-import { MAX_TOTAL_CENTS, customerLineItem, customerMoneyTotals, depositCents, estimateTotals, invoiceFromEstimate, invoiceLineItems, invoiceNumber, invoiceStatus, invoiceTakesPayment, moneyCents, normalizeLineItems, paymentEntry } from './money-core.js';
+import { DEFAULT_DEPOSIT_PCT, MAX_TOTAL_CENTS, customerLineItem, customerMoneyTotals, depositCents, estimateTotals, invoiceFromEstimate, invoiceLineItems, invoiceNumber, invoiceStatus, invoiceTakesPayment, moneyCents, normalizeLineItems, paymentEntry } from './money-core.js';
 import { estimateChanged, estimateFingerprint, legacyLineItems } from './quote-model.js';
-import { SIGNED_25_75, publicQuotePaymentSchedule } from './quote-payment-policy.js';
+import { SIGNED_25_75, businessPaymentDate, publicQuotePaymentSchedule } from './quote-payment-policy.js';
 import { ledgerPatch, reconcileLedger } from './money-ledger.js';
 import { customerPaymentNeedsReview } from './customer-payments.js';
-import { billedChangeOrders, voidChangeOrder } from './change-orders.js';
+import { billedChangeOrders, jobFinished, voidChangeOrder } from './change-orders.js';
 import { hubRecordEligibility } from './funnel-definitions.js';
 import { JOB_LABOR_COSTS, laborCostVisible, laborOnJob, laborRecordPatch, legacyJobLabor, legacyLaborMove, validLaborCents } from './job-labor-private.js';
 import { cashPayment, funnelTimeAccepted, moneyEventWrites, paidInFullState } from './payment-events.js';
@@ -172,7 +172,9 @@ async function saveEstimate({ store, job, input, actor, now, today }) {
   if (lines.some(line => line.optional || line.group)) throw fail('options_unsupported', 'Optional and package choices are not supported here yet. Every line is included in the total.');
   const totals = estimateTotals(lines), totalCents = totals.totalCents;
   if (!totals.complete || !Number.isSafeInteger(totalCents) || totalCents <= 0) throw fail('invalid_line_items', 'The estimate total must be more than $0.00.');
-  const deposit = given(input.depositCents) ? whole(input.depositCents, 'The deposit', 0, totalCents) : depositCents(totalCents, 50);
+  // Owner decision 2026-10-30: every quote asks 25% upfront and 75% when the job is complete, so an estimate saved without
+  // a deposit takes 25% of its total (the same default customerMoneyTotals and the portal apply to a job with none saved).
+  const deposit = given(input.depositCents) ? whole(input.depositCents, 'The deposit', 0, totalCents) : depositCents(totalCents, DEFAULT_DEPOSIT_PCT);
   const scope = text(input.scope, 'The customer-facing scope', 1600, { required: true, multiline: true });
   if (!validDate(input.validUntil) || input.validUntil < today) throw fail('invalid_valid_until', 'Choose an estimate expiry date of today or later.');
   const current = plain(job.estimate) ? job.estimate : {}, before = totalsOf(store, job), approval = plain(job.customerApproval) ? job.customerApproval : null;
@@ -301,15 +303,29 @@ function signedSchedule(job) {
   if (job?.estimate?.commercialPolicy?.version !== SIGNED_25_75.version || !approved(job.estimate?.status)) return null;
   return publicQuotePaymentSchedule(job.estimate);
 }
+// The day a job's work is done, for its invoice (owner decision 2026-10-30: the 75% balance is due when the job is
+// complete): the Denver day it was completed, else its current last scheduled day (endDate, else date), so a job moved
+// later or a multi-day job counts from its appointment now, never from a saved schedule (which stays as it was); for a
+// job signed in person on the 25/75 terms with no day booked, its signed remainder day; else null.
+function jobCompleteDay(job) {
+  const completed = job?.completedAt || job?.postJobChecklist?.completedAt, last = job?.endDate || job?.date;
+  return completed ? businessPaymentDate(completed) : jobFinished(job) ? null : validDate(last) ? last : signedSchedule(job)?.remainderDueDate || null;
+}
+/** The earliest due date invoice.issue accepts: the job's completion day (jobCompleteDay), never before today, so an
+ * invoice never goes overdue, and starts overdue reminders, before the work is done. */
+export function invoiceEarliestDueDate(job, today) {
+  const day = jobCompleteDay(job);
+  return day && day > today ? day : today;
+}
 const ISSUE_MESSAGES = { money_line_items_mismatch: 'The saved lines did not add up to the quote, so the invoice shows one line for the quoted amount.', money_line_items_incomplete: 'Some saved lines could not be read, so the invoice shows one line for the quoted amount.' };
 async function issueInvoice({ store, job, input, actor, now, today }) {
   if (closed(job)) throw fail('job_closed', 'A cancelled job cannot be invoiced.', 409);
   if (!validDate(input.dueDate) || input.dueDate < today) throw fail('invalid_due_date', 'Choose a payment due date of today or later.');
-  // D-DEPOSIT: a job signed on the 25/75 terms is invoiced for its balance (the 75% remainder, or whatever is unpaid) no
-  // earlier than the signed job day: the due date is that day (or today, once it has passed) or later.
-  const signed = signedSchedule(job), earliest = signed && signed.remainderDueDate > today ? signed.remainderDueDate : today;
+  // D-DEPOSIT: a job signed on the 25/75 terms is invoiced for its balance (the 75% remainder, or whatever is unpaid). No
+  // invoice is due before the job is complete (invoiceEarliestDueDate): its current job day, or today once that passed.
+  const signed = signedSchedule(job), earliest = invoiceEarliestDueDate(job, today);
   if (job.estimate?.commercialPolicy?.version === SIGNED_25_75.version && !signed) throw fail('payment_policy_workflow_required', 'This job\'s signed 25/75 payment terms could not be verified, so it cannot be invoiced here. Review its estimate.', 409);
-  if (signed && input.dueDate < earliest) throw fail('invalid_due_date', `The homeowner signed for the 75% remainder on the job day, so this invoice is due on ${earliest} or later.`, 400, { earliestDueDate: earliest });
+  if (input.dueDate < earliest) throw fail('invalid_due_date', `${signed ? 'The homeowner signed for the 75% remainder when the job is complete' : 'The balance is due when the job is complete'}, so this invoice is due on ${earliest} or later.`, 400, { earliestDueDate: earliest });
   const customerReference = input.customerReference === undefined ? undefined : text(input.customerReference, 'The customer reference', 120);
   const previous = plain(job.invoice) ? job.invoice : {}, numbered = await reserveNumber(store, job, now);
   const { invoice, issues } = invoiceFromEstimate({ ...job, invoice: { ...previous, number: numbered.number } }, { now, dueDate: input.dueDate, customerReference, unified: unifiedTotals(store) });
@@ -487,8 +503,9 @@ export function moneyProjection(job, now, { laborRecord = null, laborHidden = fa
     totals: pick(totals, TOTAL_KEYS),
     estimate: estimate ? { number: str(estimate.number), status: str(estimate.status) || 'draft', revision: Number.isSafeInteger(estimate.revision) ? estimate.revision : null, scope: str(estimate.scope, 1600) || '', validUntil: validDate(estimate.validUntil) ? estimate.validUntil : null,
       termsVersion: str(estimate.termsVersion), sentAt: str(estimate.sentAt, 40), sentChannel: str(estimate.sentChannel, 20), acceptedAt: str(estimate.acceptedAt, 40), acceptedBy: str(estimate.acceptedBy, 120), fingerprint: estimateFingerprint(estimate),
-      // A job signed in person on the 25/75 terms: the job day its 75% remainder is due (issueInvoice's earliest due date).
-      ...(signedSchedule(job) ? { remainderDueDate: signedSchedule(job).remainderDueDate } : {}) } : null,
+      // A job signed in person on the 25/75 terms: the day its 75% remainder is due, when the job is complete (its current
+      // job day, issueInvoice's earliest due date; the saved schedule's day only while no day is booked).
+      ...(signedSchedule(job) ? { remainderDueDate: jobCompleteDay(job) || signedSchedule(job).remainderDueDate } : {}) } : null,
     lineItems: lines.lineItems.map(line => ({ ...customerLineItem(line), customerSupplied: line.customerSupplied === true, grouped: Boolean(line.group) })), linesComplete: !lines.issues.length,
     approval: pick(job.customerApproval, ['status', 'approvedAt', 'approvedBy', 'source', 'supersededAt', 'reason', 'estimateRevision']),
     invoice: { status: invoiceStatus(job, now, { unified, invoiceState }), savedStatus: str(invoice?.status), number: str(invoice?.number), amountCents: billed.amountCents, dueDate: validDate(invoice?.dueDate) ? invoice.dueDate : null,
@@ -525,7 +542,7 @@ async function execute(store, actor, input, now, fingerprint, receiptId, via, re
   }
   // The staged versioned 25/75 policy is authored through quote drafts and
   // in-person walkthrough signatures (SIGNED_25_75, walkthrough-handoff.js). The
-  // legacy editor would otherwise apply its separate 50% fallback or issue an
+  // legacy editor would otherwise apply its separate deposit default or issue an
   // invoice with unrelated due dates. Keep these paths closed until their
   // policy-aware customer terms and billing rollout are explicitly completed,
   // except the invoice for the balance of a job signed in person on the 25/75

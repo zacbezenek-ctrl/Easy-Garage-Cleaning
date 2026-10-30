@@ -97,7 +97,8 @@ async function fixture(t, { jobs = { 'job-1': crewJob }, environment = env } = {
 }
 
 test('a crew card payment through the webhook alone is one commit with its payment event, dated at the Stripe charge', async t => {
-  const f = await fixture(t), id = await f.checkout(50000, 'synthetic-deposit'), charged = '2026-09-22T17:55:00.000Z'; f.complete(id, charged);
+  // The job saves no deposit term: its 25% default ($250 of $1,000; owner decision 2026-10-30, was 50%) is paid by card.
+  const f = await fixture(t), id = await f.checkout(25000, 'synthetic-deposit'), charged = '2026-09-22T17:55:00.000Z'; f.complete(id, charged);
   const response = await f.event(f.webhookObject(id));
   assert.equal(response.status, 200); assert.deepEqual(await response.json(), { ok: true, received: true, recorded: true, duplicate: false });
   assert.ok(f.stripeCalls.some(call => call.path === `/v1/checkout/sessions/${id}` && call.expand === 'payment_intent.latest_charge'), 'the webhook reads the charge time from Stripe');
@@ -105,7 +106,7 @@ test('a crew card payment through the webhook alone is one commit with its payme
   const [event] = f.events(), job = f.job();
   assert.equal(event.id, funnelEventId('payment.received', { field: 'jobId', value: 'job-1' }, `stripeSession:${id}`));
   assert.deepEqual({ type: event.type, data: event.data, occurredAt: event.occurredAt, clockSource: event.clockSource, recordedAt: event.recordedAt, denverDate: event.denverDate, actor: event.actor, via: event.via, source: event.source, key: event.idempotencyKey, customerId: event.customerId }, {
-    type: 'payment.received', data: { amountCents: 50000, cash: true, kind: 'deposit', kindInferred: true, method: 'card' }, occurredAt: charged, clockSource: 'provider', recordedAt: NOW, denverDate: '2026-09-22',
+    type: 'payment.received', data: { amountCents: 25000, cash: true, kind: 'deposit', kindInferred: true, method: 'card' }, occurredAt: charged, clockSource: 'provider', recordedAt: NOW, denverDate: '2026-09-22',
     actor: { id: 'stripe_webhook', kind: 'integration', role: null }, via: 'stripe', source: { collection: 'jobs', id: `job-1:stripeSessions:${id}` }, key: `stripeSession:${id}`, customerId: 'c1' });
   // FUN-20's role-less Stripe webhook actor: the same id as every other Stripe webhook event, never a signable bridge principal.
   assert.deepEqual([event.isTest, event.exclusion], [true, 'stripe_test_mode'], 'a test-mode session is flagged by the shared eligibility');
@@ -115,7 +116,7 @@ test('a crew card payment through the webhook alone is one commit with its payme
   assert.deepEqual([session.purpose, session.inferredKind, 'purposeInferred' in session], [undefined, 'deposit', false]);
   assert.deepEqual(paymentLedger(job).entries.map(entry => entry.kind), ['balance']);
   for (const kind of ['receipt', 'invoice']) assert.deepEqual(moneyDocumentModel({ ...job, id: 'job-1' }, { kind, now: NOW }).payments.map(row => row.label), ['Payment · Card (Stripe)'], kind);
-  assert.deepEqual([job.payment.amount, job.invoice.balance, job.paidInFullAt, job.payment.receiptUrl], [500, 500, undefined, `https://pay.stripe.com/receipts/${id}`]);
+  assert.deepEqual([job.payment.amount, job.invoice.balance, job.paidInFullAt, job.payment.receiptUrl], [250, 750, undefined, `https://pay.stripe.com/receipts/${id}`]);
   for (const type of ['checkout.session.completed', 'checkout.session.async_payment_succeeded']) assert.equal((await (await f.event(f.webhookObject(id), { type })).json()).duplicate, true);
   assert.deepEqual([f.commits(), f.events().length], [1, 1], 'replays write nothing');
 });

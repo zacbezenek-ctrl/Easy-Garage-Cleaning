@@ -13,7 +13,15 @@ export const estimator = { user: 'sales.person', role: 'sales', businessAccess: 
 export const BASE_ENV = { HUB_SESSION_SECRET: 'synthetic-estimator-e2e-session-secret-0123456789', EGC_STAFF_ROLE_PERMISSIONS: 'true' };
 export const ON_ENV = { ...BASE_ENV, EGC_QUOTE_BUILDER_ENABLED: 'true', EGC_DISPATCH_CREW_AUTO_ASSIGN: 'true', EGC_JOB_MATERIALS: 'true', EGC_GHL_SCHEDULE_MIRROR: 'true' };
 
-export const menu = JSON.parse(readFileSync(new URL('../../functions/_data/pricing-menu.json', import.meta.url), 'utf8'));
+// The shipped menu carries the owner's approvals in code (menu.approvals; owner decision 2026-10-30, "hard code the
+// pricing": every draft price approved at its amount). The draft-price rules (saved but never sent, jobs held at signing,
+// released by the owner's Hub approval) still hold for any price the owner has not approved, such as a later import's new
+// items or a goods markup change, so these fixtures price from the same menu without those approvals (DRAFT_MENU).
+// tests/menu-approved-in-code.test.mjs covers the shipped approvals themselves.
+export const SHIPPED_MENU = JSON.parse(readFileSync(new URL('../../functions/_data/pricing-menu.json', import.meta.url), 'utf8'));
+export const withoutCodeApprovals = value => { const { approvals: _inCode, ...draft } = structuredClone(value); return draft; };
+export const DRAFT_MENU = withoutCodeApprovals(SHIPPED_MENU);
+export const menu = DRAFT_MENU;
 const settings = JSON.parse(readFileSync(new URL('../../functions/_data/pricing-settings.defaults.json', import.meta.url), 'utf8'));
 export const menuItem = name => menu.services.find(item => item.name === name) || menu.products.find(item => item.name === name);
 export const SHELF = menu.products.find(item => item.id === 'hd-100006678');

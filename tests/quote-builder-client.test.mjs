@@ -4,6 +4,7 @@ import vm from './helpers/vm-realm.mjs';
 import { readFileSync } from 'node:fs';
 import { builderMenu, priceCompositeQuote } from '../functions/_lib/composite-quote.js';
 import { walkthroughPricing, walkthroughServiceItems } from '../functions/_lib/pricing-config.js';
+import { DRAFT_MENU } from './helpers/estimator-fixture.mjs';
 
 // The walkthrough's guided builder in crew/quote-draft.js (removal, then shelving, then extra storage). The page holds
 // only the selection; prices come from GET /api/quote-draft?view=builder and every step is priced by the server.
@@ -13,7 +14,8 @@ vm.runInContext(source, context);
 const { createClient, builder: B } = context.window.EGCQuoteDraft;
 const plain = value => JSON.parse(JSON.stringify(value));
 const readJson = path => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
-const menuDoc = readJson('../functions/_data/pricing-menu.json'), settings = readJson('../functions/_data/pricing-settings.defaults.json');
+// The draft-price rules: the shipped menu's approvals in code (owner decision 2026-10-30) are left out (estimator-fixture.mjs DRAFT_MENU).
+const menuDoc = DRAFT_MENU, settings = readJson('../functions/_data/pricing-settings.defaults.json');
 const state = { menu: menuDoc, settings, walkthrough: walkthroughPricing(walkthroughServiceItems()), approvals: { items: {}, revision: null } };
 // What the server sends a sales login.
 const menu = plain({ ok: true, enabled: true, ...builderMenu(state, { internal: false }) });

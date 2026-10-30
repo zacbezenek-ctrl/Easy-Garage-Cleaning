@@ -120,6 +120,10 @@ const receipt = value => /^https:\/\/pay\.stripe\.com\/receipts\//.test(value ||
 const lineId = value => clean(value, 60).replace(/[^A-Za-z0-9_-]/g, '');
 const pipeline = job => String(job?.pipelineStatus || job?.status || '').toLowerCase();
 
+/** The deposit of a quote with none saved (owner decision 2026-10-30): 25% upfront, the 75% balance when the job is
+ * complete, on every quote. A deposit saved on a job (signed or sent terms, or one the office entered) is kept. */
+export const DEFAULT_DEPOSIT_PCT = 25;
+
 /** quote-model depositCents with money_* codes (money_invalid_amount, money_invalid_deposit_percent). */
 export function depositCents(totalCents, pct = 50) {
   try { return quoteDepositCents(totalCents, pct); }
@@ -304,7 +308,7 @@ export function paymentEntry(raw) {
  * Integer-cent money state for a job. quoteCents follows the legacy quoted
  * amount chain; totalCents adds approved change orders. The deposit term is on
  * the base quote exactly as customerDepositState computes it (saved
- * depositRequired or deposit.amount, else 50% rounded half-up). Tips paid
+ * depositRequired or deposit.amount, else DEFAULT_DEPOSIT_PCT, 25%, rounded half-up). Tips paid
  * through the ledger are excluded from what counts toward the balance. paidCents
  * is everything received, tips included; recordedCents is the saved
  * payment.amount, which never holds payment.tips[]. Never throws: out-of-range
@@ -328,8 +332,8 @@ export function customerMoneyTotals(job, { unified = false } = {}) {
   const saved = job?.estimate?.depositRequired ?? job?.deposit?.amount;
   const savedCents = saved === undefined || saved === null ? undefined : readCents(saved);
   if (savedCents === null) issues.push('money_deposit_invalid');
-  // quoteCents is capped at MAX_TOTAL_CENTS, so the 50% default cannot throw.
-  const depositRequiredCents = quoteCents === null || savedCents === null ? null : Math.min(quoteCents, savedCents === undefined ? quoteDepositCents(quoteCents, 50) : savedCents);
+  // quoteCents is capped at MAX_TOTAL_CENTS, so the 25% default cannot throw.
+  const depositRequiredCents = quoteCents === null || savedCents === null ? null : Math.min(quoteCents, savedCents === undefined ? quoteDepositCents(quoteCents, DEFAULT_DEPOSIT_PCT) : savedCents);
   const depositPaidCents = known(depositRequiredCents, appliedCents) ? Math.min(depositRequiredCents, appliedCents) : null;
   const depositDueCents = known(depositRequiredCents, appliedCents) ? Math.max(0, depositRequiredCents - appliedCents) : null;
   const finalWalkthroughDone = (Array.isArray(job?.postJobProgress?.standardItems) ? job.postJobProgress.standardItems : []).some(item => item?.key === '0_1' && item.completed === true);

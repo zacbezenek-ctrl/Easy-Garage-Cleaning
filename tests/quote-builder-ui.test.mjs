@@ -6,12 +6,14 @@ import { createDocument, storage as memoryStorage } from './helpers/hub-dom.mjs'
 import { builderMenu, compositeApproval, menuItemIdentity, priceCompositeQuote } from '../functions/_lib/composite-quote.js';
 import { walkthroughPricing, walkthroughServiceItems } from '../functions/_lib/pricing-config.js';
 import { junkOnlyGarageWork } from '../functions/_lib/quote-model.js';
+import { DRAFT_MENU } from './helpers/estimator-fixture.mjs';
 
 // The estimator's walkthrough quote dialog (crew/quote-draft.js) driven through its real DOM code against a fake Hub
 // that prices with the server's composite-quote module.
 const source = readFileSync(new URL('../crew/quote-draft.js', import.meta.url), 'utf8');
 const readJson = path => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
-const menuDoc = readJson('../functions/_data/pricing-menu.json'), settings = readJson('../functions/_data/pricing-settings.defaults.json');
+// The draft-price rules: the shipped menu's approvals in code (owner decision 2026-10-30) are left out (estimator-fixture.mjs DRAFT_MENU).
+const menuDoc = DRAFT_MENU, settings = readJson('../functions/_data/pricing-settings.defaults.json');
 const baseState = () => ({ menu: menuDoc, settings: structuredClone(settings), walkthrough: walkthroughPricing(walkthroughServiceItems()), approvals: { items: {}, revision: null } });
 const shelf = menuDoc.products.find(item => item.id === 'hd-100006678'), mattress = menuDoc.services.find(item => item.name === 'Mattress');
 const plan = () => ({ client: { name: 'Synthetic Customer', phone: '+19705550100', email: 'test@example.invalid', address: '100 Fixture Lane', highlevel_contact_id: '' },

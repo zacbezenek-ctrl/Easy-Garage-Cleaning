@@ -107,7 +107,7 @@ test('the customer portal cannot open or resume a checkout while a review is ope
   calls = fixture(t, { reviews });
   const opened = await createCustomerStripeCheckout(blocking, blocking.STRIPE_SECRET_KEY, 'job-1', origin);
   assert.match(opened.url, /^https:\/\/checkout\.stripe\.com\//);
-  assert.equal(opened.amount, 500);
+  assert.equal(opened.amount, 250, 'the 25% default deposit of the $1,000 quote (owner decision 2026-10-30; was 50%)');
   // A crew charge gets held after the link opened: the open link is not handed out again.
   reviews.push(['cs_test_late', 'open']);
   const queries = calls.queries, resumed = await createCustomerStripeCheckout(env, env.STRIPE_SECRET_KEY, 'job-1', origin);

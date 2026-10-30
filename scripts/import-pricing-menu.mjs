@@ -17,7 +17,10 @@
  * "Approved" (today, by the owner decision of 2026-10-21: the full truck $1,000 and the quarter, half and three-quarter
  * loads $250, $500 and $750; the workbook still says $750 for the truck and has the loads pending, so update its
  * EGC-023..EGC-026 rows before re-importing or the import puts the old prices back). The draft amounts of service items come from the walkthrough price
- * tables at request time (functions/_lib/pricing-config.js), never from the workbook.
+ * tables at request time (functions/_lib/pricing-config.js), never from the workbook. The prices the owner approved
+ * in code (menu.approvals: every draft price of menu 2026-10-16.2, by the owner decision of 2026-10-30) are not in the
+ * workbook: a re-import carries them over from the committed menu, and an item the re-import changes (name, unit, pack or
+ * price basis: menuItemIdentity) no longer matches its approval and is a draft again.
  *   node scripts/import-pricing-menu.mjs --from <csv folder>            report what would change; exit 1 when stale
  *   node scripts/import-pricing-menu.mjs --from <csv folder> --write    write the JSON and the module
  *   node scripts/import-pricing-menu.mjs --check                        the module matches the JSON and it validates
@@ -156,12 +159,16 @@ export function importServices(text){
   return {services,skipped};
 }
 
-export function buildPricingMenu({productsCsv,itemsCsv},{evidenceDate=EVIDENCE_DATE,menuVersion=`${evidenceDate}.1`}={}){
+export function buildPricingMenu({productsCsv,itemsCsv},{evidenceDate=EVIDENCE_DATE,menuVersion=`${evidenceDate}.1`,approvals}={}){
   const {products}=importProducts(productsCsv,{evidenceDate}),{services,skipped}=importServices(itemsCsv);
   const menu={schemaVersion:1,menuVersion,generatedOn:menuVersion.slice(0,10),currency:'USD',status:'draft',
     source:`Owner pricing workbook export (${SHEETS.products}, ${SHEETS.items}) imported by scripts/import-pricing-menu.mjs. Public product data and item identity only.`,
     priceBasis:`retailPerPackCents is The Home Depot public retail price per purchase pack checked ${evidenceDate} (no local store, or the site's default store): the goods cost basis, like garage-catalog.json retailPriceHighCents. It is not an EGC invoice, landed cost or Fort Collins price; tax, shipping, landed extras and installation are excluded. Goods sell at cost x the goodsMarkup pricing setting. Every product and every service without an owner-approved amount is a DRAFT.`,
     products,services};
+  // The owner's approvals in code, carried over for the items still on the menu (an item the menu now approves at a
+  // fixed amount keeps that amount instead).
+  const ids=new Set([...products.map(item=>item.id),...services.filter(item=>item.status!=='approved').map(item=>item.id)]);
+  if(approvals)menu.approvals={...approvals,items:Object.fromEntries(Object.entries(approvals.items||{}).filter(([id])=>ids.has(id)))};
   validatePricingMenu(menu);
   return {menu,report:{products:products.length,services:services.length,approved:services.filter(service=>service.status==='approved').map(service=>service.menuId),itemsNotImported:skipped}};
 }
@@ -188,8 +195,9 @@ function main(){
   const from=option(args,'--from');
   if(!from){console.error('Usage: node scripts/import-pricing-menu.mjs --from <csv folder> [--write] [--menu-version YYYY-MM-DD.N] [--evidence-date YYYY-MM-DD] | --check');process.exitCode=2;return;}
   const evidenceDate=option(args,'--evidence-date')||EVIDENCE_DATE,menuVersion=option(args,'--menu-version')||`${evidenceDate}.1`;
-  const {menu,report}=buildPricingMenu({productsCsv:readFileSync(join(from,SHEETS.products),'utf8'),itemsCsv:readFileSync(join(from,SHEETS.items),'utf8')},{evidenceDate,menuVersion});
-  const json=renderMenuJson(menu),module=renderMenuModule(json),jsonPath=join(REPO_ROOT,MENU_JSON),modulePath=join(REPO_ROOT,MENU_MODULE);
+  const jsonPath=join(REPO_ROOT,MENU_JSON),modulePath=join(REPO_ROOT,MENU_MODULE),approvals=existsSync(jsonPath)?JSON.parse(readFileSync(jsonPath,'utf8')).approvals:undefined;
+  const {menu,report}=buildPricingMenu({productsCsv:readFileSync(join(from,SHEETS.products),'utf8'),itemsCsv:readFileSync(join(from,SHEETS.items),'utf8')},{evidenceDate,menuVersion,approvals});
+  const json=renderMenuJson(menu),module=renderMenuModule(json);
   const current=existsSync(jsonPath)&&readFileSync(jsonPath,'utf8')===json&&existsSync(modulePath)&&readFileSync(modulePath,'utf8')===module;
   console.log(`${report.products} draft products, ${report.services} service items (approved: ${report.approved.join(', ')||'none'}); not imported: ${report.itemsNotImported.join(', ')||'none'}`);
   if(args.includes('--write')){if(!current){writeFileSync(jsonPath,json);writeFileSync(modulePath,module);}console.log(current?`${MENU_JSON} is already current`:`wrote ${MENU_JSON} and ${MENU_MODULE}`);return;}

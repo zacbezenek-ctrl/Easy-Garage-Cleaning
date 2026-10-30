@@ -126,10 +126,12 @@ and say why in the PR.
 
 Each rule is an owner decision recorded in the code. Changing one needs the owner, not an agent.
 
-- **Deposit 25% / 75%.** A quote signed on the walkthrough takes 25% on the signing day and 75% on the job day
-  (`SIGNED_25_75`); a sent quote takes 25% when the customer approves it and 75% on the job day (`SENT_25_75`).
+- **Deposit 25% / 75%.** A quote signed on the walkthrough takes 25% on the signing day and 75% when the job is
+  complete (`SIGNED_25_75`); a sent quote takes 25% when the customer approves it and 75% when the job is complete
+  (`SENT_25_75`); the saved remainder date is the job day (`remainderDueRule: 'job_day'`).
   `functions/_lib/quote-payment-policy.js` (`snapshotQuotePaymentPolicy` rejects any other split). A job keeps the
-  terms it was signed on.
+  terms it was signed on. Any other new quote or estimate, and a job with no saved deposit, asks 25% upfront too (owner
+  decision 2026-10-30; `DEFAULT_DEPOSIT_PCT` in `functions/_lib/money-core.js`).
 - **Labor line $53.00 per man-hour.** `DEFAULT_LABOR_RATE_CENTS = 5300` in `functions/_lib/composite-quote.js`. The
   owner's rate in Firestore (`pricingMenuApprovals/current` → `laborRatePerManHourCents`, set on Hub Menu prices)
   overrides it. The rate is never read from the browser; the server re-prices.
@@ -147,7 +149,9 @@ Each rule is an owner decision recorded in the code. Changing one needs the owne
   `functions/_lib/composite-quote.js`). Man-hours stay in the staff breakdown.
 - **Draft prices can be saved but never sent.** Owner-unapproved menu prices may sit on an unsent draft;
   `functions/_lib/quote-draft.js` re-checks `compositeApproval()` at send preview and send
-  (`quote_draft_composite_prices_unapproved`).
+  (`quote_draft_composite_prices_unapproved`). Every price on the current menu was approved in code by the owner on
+  2026-10-30 (`approvals` in `functions/_data/pricing-menu.json`); an amount the owner approves in the Hub overrides it.
+  New drafts (a later import's new items, a goods price a markup change moves) still follow this rule.
 - **Commission rates** (`CHANNEL_PERCENTS` in `crew/knock-money.js`): door-to-door direct sale 25%, appointment setter
   13%, estimator 7%. A walkthrough a rep runs and signs themselves at the door (Knock "Do the walkthrough now") is their
   direct sale: 25% only, never with the 13% or the 7% (owner decision 2026-10-21, `repRanWalkthrough` in

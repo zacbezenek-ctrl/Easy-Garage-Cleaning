@@ -49,9 +49,9 @@ test('the crossing is computed from the job as read and as saved: paid_in_full, 
 });
 
 test('a payment without a purpose is a deposit only before the Denver service date and within the deposit due, and is always flagged', () => {
-  const scheduled = job({ date: '2026-09-24', total: 1000 }); // 50% deposit: $500 due
-  assert.deepEqual(paymentKind(scheduled, { amountCents: 50000, occurredAt: NOW }), { kind: 'deposit', inferred: true });
-  assert.deepEqual(paymentKind(scheduled, { amountCents: 50001, occurredAt: NOW }), { kind: 'balance', inferred: true }, 'more than the deposit is a balance payment');
+  const scheduled = job({ date: '2026-09-24', total: 1000 }); // the 25% default deposit (owner decision 2026-10-30; was 50%): $250 due
+  assert.deepEqual(paymentKind(scheduled, { amountCents: 25000, occurredAt: NOW }), { kind: 'deposit', inferred: true });
+  assert.deepEqual(paymentKind(scheduled, { amountCents: 25001, occurredAt: NOW }), { kind: 'balance', inferred: true }, 'more than the deposit is a balance payment');
   assert.deepEqual(paymentKind(scheduled, { amountCents: 100, occurredAt: '2026-09-24T15:00:00.000Z' }), { kind: 'balance', inferred: true }, 'on the service date');
   // 05:30 UTC on the 24th is 11:30 pm on the 23rd in Denver: still before the service date.
   assert.equal(paymentKind(scheduled, { amountCents: 100, occurredAt: '2026-09-24T05:30:00.000Z' }).kind, 'deposit');
@@ -60,7 +60,7 @@ test('a payment without a purpose is a deposit only before the Denver service da
   assert.equal(paymentKind(job({ date: '2026-09-24', total: 1000, estimate: { amount: 1000, depositRequired: 300 } }), { amountCents: 30001, occurredAt: NOW }).kind, 'balance', 'the saved deposit term wins');
   // Once the deposit is covered, a second pre-service payment is a balance, so deposits never sum past the term.
   assert.equal(paymentKind({ ...scheduled, payment: paid(500) }, { amountCents: 20000, occurredAt: NOW }).kind, 'balance');
-  assert.equal(paymentKind({ ...scheduled, payment: paid(200) }, { amountCents: 30000, occurredAt: NOW }).kind, 'deposit');
+  assert.equal(paymentKind({ ...scheduled, payment: paid(100) }, { amountCents: 15000, occurredAt: NOW }).kind, 'deposit');
   for (const purpose of ['deposit', 'balance', 'tip']) assert.deepEqual(paymentKind(scheduled, { purpose, amountCents: 90000, occurredAt: '2026-10-01T15:00:00.000Z' }), { kind: purpose, inferred: false });
   for (const status of ['completed', 'paid', 'in_progress']) assert.equal(paymentKind({ ...scheduled, status, pipelineStatus: status, completedAt: NOW }, { amountCents: 100, occurredAt: NOW }).kind, 'deposit', `the rule never reads status (${status})`);
 });
@@ -175,10 +175,10 @@ test('a crew tip on the same charge rides on payment.received as tipCents; only 
     assert.equal('tipCents' in received.patch.data, false, String(tipCents));
   }
   // A tip rides only on a balance payment, so a tipped charge is never classed as a deposit.
-  const scheduled = job({ date: '2026-09-24', total: 1000 });
-  assert.deepEqual(paymentKind(scheduled, { amountCents: 30000, occurredAt: NOW }), { kind: 'deposit', inferred: true });
-  assert.deepEqual(paymentKind(scheduled, { amountCents: 30000, tipCents: 5000, occurredAt: NOW }), { kind: 'balance', inferred: true });
-  assert.deepEqual(paymentKind(scheduled, { amountCents: 30000, tipCents: 0, occurredAt: NOW }), { kind: 'deposit', inferred: true });
+  const scheduled = job({ date: '2026-09-24', total: 1000 }); // the 25% default deposit: $250 due
+  assert.deepEqual(paymentKind(scheduled, { amountCents: 20000, occurredAt: NOW }), { kind: 'deposit', inferred: true });
+  assert.deepEqual(paymentKind(scheduled, { amountCents: 20000, tipCents: 5000, occurredAt: NOW }), { kind: 'balance', inferred: true });
+  assert.deepEqual(paymentKind(scheduled, { amountCents: 20000, tipCents: 0, occurredAt: NOW }), { kind: 'deposit', inferred: true });
 });
 
 test('events carry the job, project, customer and contact links, and private records or unusable ids get none', async () => {

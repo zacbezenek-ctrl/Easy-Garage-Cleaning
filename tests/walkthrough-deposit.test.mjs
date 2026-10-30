@@ -43,11 +43,14 @@ function financeHarness(job,input=null){
   return{context,captured};
 }
 
-test('new finance estimates default to fifty percent while existing explicit deposit terms remain editable',async()=>{
-  for(const [extra,expected] of [[{},712.5],[{estimate:{amount:1425,depositRequired:285}},285],[{deposit:{amount:0}},0]]){
+// Owner decision 2026-10-30: a new estimate asks 25% when the customer approves and 75% when the job is complete (was 50%).
+test('new finance estimates default to twenty-five percent while existing explicit deposit terms remain editable',async()=>{
+  for(const [extra,expected] of [[{},356.25],[{estimate:{amount:1425,depositRequired:285}},285],[{deposit:{amount:0}},0]]){
     const h=financeHarness({id:'job',total:1425,...extra});
     await h.context.window.opsFinanceAction('job','estimate');
     assert.equal(h.captured.form.fields.find(field=>field.name==='deposit').value,expected);
+    assert.equal(h.captured.form.fields.find(field=>field.name==='deposit').label,'Deposit required (25% when approved; 75% when the job is complete)');
+    assert.match(h.captured.form.note,/^New estimates default to a 25% deposit when the customer approves; the 75% balance is due when the job is complete\./);
   }
 });
 

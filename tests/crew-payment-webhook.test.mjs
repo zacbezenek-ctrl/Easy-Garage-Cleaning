@@ -146,7 +146,8 @@ test('a crew card payment completed only through the webhook is recorded once', 
   assert.ok(f.stripeCalls.some(call => new URL(call.url).pathname === `/v1/checkout/sessions/${id}` && new URL(call.url).searchParams.get('expand[]') === 'payment_intent.latest_charge' && call.method === 'GET'), 'the webhook reads the expanded charge');
   assert.deepEqual(job.payment.stripeSessions, [{ sessionId: id, paymentIntentId: `pi_${id}`, amount: 500, receiptEmail: 'crew-customer@example.invalid', createdBy: 'crew1', recordedBy: 'stripe_webhook', verifiedAt: NOW }]);
   assert.deepEqual({ paid: job.invoice.paid, balance: job.invoice.balance, status: job.invoice.status, amount: job.invoice.amount }, { paid: 500, balance: 500, status: 'partial', amount: 1000 });
-  assert.deepEqual({ amount: job.deposit.amount, paidAmount: job.deposit.paidAmount, status: job.deposit.status, verified: job.deposit.verified }, { amount: 500, paidAmount: 500, status: 'paid', verified: true });
+  // The job saved no deposit term, so its deposit is the 25% default of $1,000 (owner decision 2026-10-30; was 50%).
+  assert.deepEqual({ amount: job.deposit.amount, paidAmount: job.deposit.paidAmount, status: job.deposit.status, verified: job.deposit.verified }, { amount: 250, paidAmount: 250, status: 'paid', verified: true });
   assert.equal(job.paymentSyncStatus, 'pending'); assert.equal(job.paymentSyncPayload.sessionId, id); assert.equal(job.paymentSyncPayload.balance, 500);
   assert.deepEqual(f.hooks, [], 'a job payment is never announced as a membership');
 });

@@ -264,15 +264,17 @@ test('the bundle check flags a runtime import, an unsupported-import build warni
   assert.equal(bundleProblems(bundled, '✘ [ERROR] Build failed with 1 error').length, 1);
 });
 
-test('the business hub rate card comes from the signed-in account response', () => {
+// Updated for the owner's decision of 2026-10-30: the partner rate card (10% / 15% savings, a $675 and a $99 minimum) is
+// hidden, because the pricing engine applies none of it. Before, every business account was shown it.
+test('the business hub shows no partner rate card: the pricing engine applies no partner discount yet', () => {
   const account = { id: 'a'.repeat(32), company: 'Synthetic Co', billingEmail: 'billing@example.invalid', status: 'active', members: [], requests: [], messages: [], projects: [], properties: [] };
   const member = { id: 'b'.repeat(32), name: 'Synthetic Admin', role: 'admin', status: 'active' };
   for (const view of [accountView(account, member, []), accountView(account, member, [], { staff: true, manager: true })]) {
-    assert.deepEqual(view.rates.cards.map(card => [card.value, card.title]), [['10%', 'Partner service savings'], ['15%', 'Coordinated properties']]);
-    assert.equal(view.rates.terms.length, 2);
-    assert.match(view.rates.terms[0], /^Discounts do not stack\./);
+    assert.equal(view.rates, null, 'the Business Hub then says rates are confirmed on each accepted quote');
+    assert.doesNotMatch(JSON.stringify(view), /Partner service savings|Coordinated properties|\$675 minimum|\$99 minimum|Discounts do not stack/);
   }
-  const card = businessRateCard(account); card.cards[0].value = 'changed';
-  assert.equal(businessRateCard(account).cards[0].value, '10%', 'each response gets its own copy');
+  assert.equal(businessRateCard(account), null);
   assert.equal(businessRateCard(null), null);
+  // The business hub page renders that answer as the quote-confirmed note, never a rate (business-hub.js rateCard).
+  assert.match(readFileSync(new URL('../business-hub.js', import.meta.url), 'utf8'), /if \(!cards\.length\) return `<section class="card"><h2>Your business rates<\/h2><p class="small">Your rates are confirmed on each accepted quote\./);
 });

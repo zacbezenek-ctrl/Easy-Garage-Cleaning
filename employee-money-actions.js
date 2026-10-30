@@ -97,6 +97,10 @@ async function load(){
 
 function includedLines(job){return job.lineItems.filter(line=>line.selected===true&&line.kind!=='tip');}
 // Options, packages, discounts and tips come from the walkthrough; this editor never reprices them.
+// The earliest invoice due date: the job's day while its work is still ahead (money-service.js invoiceEarliestDueDate; a
+// signed 25/75 job's remainder day follows its current job day), else today. The server refuses an earlier date and says
+// which day (a multi-day job's last day).
+const dueFloor=job=>{const day=job.estimate?.remainderDueDate||(!['completed','invoiced','paid','review_requested','closed'].includes(String(job.status||'').toLowerCase())?job.date:'');return /^\d{4}-\d{2}-\d{2}$/.test(String(day||''))&&day>today()?day:today();};
 function lockedEstimate(job){return job.lineItems.some(line=>line.optional||line.grouped||!['service','labor','product','disposal','fee'].includes(line.kind))||!job.linesComplete;}
 function freshDraft(){
   const job=S.job,t=job.totals;
@@ -107,8 +111,9 @@ function freshDraft(){
   if(S.view==='accept')return{approvedBy:job.customer||''};
   if(S.view==='deposit')return{amount:dollars(t.depositDueCents),method:'check',reference:''};
   if(S.view==='payment')return{amount:dollars(t.balanceCents),method:'check',reference:''};
-  // A job signed in person on the 25/75 terms: its balance is due on the signed job day (money-service.js issueInvoice).
-  if(S.view==='invoice'){const signed=job.estimate?.remainderDueDate&&job.estimate.remainderDueDate>today()?job.estimate.remainderDueDate:job.estimate?.remainderDueDate?today():'';return{dueDate:job.invoice.dueDate&&job.invoice.dueDate>=(signed||today())?job.invoice.dueDate:signed||addDays(today(),7),customerReference:job.invoice.customerReference||''};}
+  // No invoice is due before the job is complete (dueFloor). A job signed in person on the 25/75 terms defaults to that
+  // day, any other job to a week out or that day, whichever is later.
+  if(S.view==='invoice'){const floor=dueFloor(job),base=job.estimate?.remainderDueDate?today():addDays(today(),7),due=floor>base?floor:base;return{dueDate:job.invoice.dueDate&&job.invoice.dueDate>=floor?job.invoice.dueDate:due,customerReference:job.invoice.customerReference||''};}
   if(S.view==='sent')return{channel:'email',note:''};
   if(S.view==='void')return{reason:''};
   if(S.view==='change')return{changeOrderId:S.draft?.changeOrderId||'',reason:''};
@@ -240,7 +245,7 @@ function estimateView(){
   const d=S.draft,job=S.job,closed=['approved'].includes(job.approval?.status)||['accepted','approved'].includes(job.estimate?.status);
   if(job.estimate&&lockedEstimate(job))return[h('p',{class:'em-notice warn'},'This estimate has customer options, discounts or lines that need review. This editor changes fixed lines only, so it will not reprice it. Edit it from the walkthrough game plan.'),job.estimate&&!closed?h('button',{type:'button',class:'em-button',onclick:()=>switchView('sent')},'Record that it was sent'):null];
   const totalNode=h('output',{class:'em-total','aria-live':'polite'}),depositInput=bind('deposit',{inputMode:'decimal',autocomplete:'off',after:()=>{d.depositTouched=true;refreshTotals();}});
-  function refreshTotals(){const total=estimateTotal();if(!d.depositTouched&&total!==null){d.deposit=dollars(Math.round(total/2));depositInput.value=d.deposit;}totalNode.textContent=total===null?'Check each line price and quantity':`Estimate total ${money(total)} · deposit ${money(cents(d.deposit))}`;for(const [index,line] of d.lines.entries()){const out=list.querySelector(`[data-line-total="${index}"]`);if(out){const value=lineTotal(line);out.textContent=value!==null?money(value):cents(line.unit)!==null&&quantity(line.quantity)!==null?'Price × quantity must come to whole cents':'Enter a price and a quantity';}}}
+  function refreshTotals(){const total=estimateTotal();if(!d.depositTouched&&total!==null){d.deposit=dollars(Math.round(total*25/100));depositInput.value=d.deposit;}totalNode.textContent=total===null?'Check each line price and quantity':`Estimate total ${money(total)} · deposit ${money(cents(d.deposit))}`;for(const [index,line] of d.lines.entries()){const out=list.querySelector(`[data-line-total="${index}"]`);if(out){const value=lineTotal(line);out.textContent=value!==null?money(value):cents(line.unit)!==null&&quantity(line.quantity)!==null?'Price × quantity must come to whole cents':'Enter a price and a quantity';}}}
   const list=h('div',{class:'em-lines'});
   function lineCard(line,index){
     const input=(name,label,{tag='input',...props}={})=>field(label,h(tag,{name:`${name}-${index}`,...props,value:line[name],oninput:e=>{line[name]=e.target.value;refreshTotals();}}));
@@ -258,7 +263,7 @@ function estimateView(){
     list,
     h('button',{type:'button',class:'em-button',disabled:d.lines.length>=MAX_LINES,onclick:()=>{d.lines.push({id:newId(),kind:'service',name:'',description:'',quantity:'1',unit:''});render();S.dialog?.querySelector(`[name="name-${d.lines.length-1}"]`)?.focus();}},d.lines.length>=MAX_LINES?`Up to ${MAX_LINES} lines`:'Add line'),
     field('Customer-facing scope',bind('scope',{tag:'textarea',rows:4,maxLength:1600,required:true}),'What is included in this price. The customer sees this text.'),
-    h('div',{class:'em-pair'},field('Deposit required ($)',depositInput,'50% of the total unless you change it.'),field('Estimate valid through',bind('validUntil',{type:'date',min:today(),required:true}))),
+    h('div',{class:'em-pair'},field('Deposit required ($)',depositInput,'25% of the total, due when the customer approves; the 75% balance is due when the job is complete. Change it only for a different agreement.'),field('Estimate valid through',bind('validUntil',{type:'date',min:today(),required:true}))),
     totalNode,
     note(automation('estimate-ready')),
     job.estimate&&!closed?h('button',{type:'button',class:'em-button',onclick:()=>switchView('sent')},'Record that it was sent'):null,
@@ -293,7 +298,7 @@ function invoiceView(){
       h('p',{class:'em-muted'},`Paid ${money(t.appliedCents)} · balance ${money(t.balanceCents)}`),
       (preview.notices||[]).map(text=>h('p',{class:'em-notice warn'},text)),
     ]:h('p',{class:'em-notice warn'},'The invoice lines could not be previewed. Review the job money before issuing.'),
-    h('div',{class:'em-pair'},field('Payment due date',bind('dueDate',{type:'date',min:today(),required:true})),field('PO / customer reference',bind('customerReference',{maxLength:120,autocomplete:'off'}),'Optional')),
+    h('div',{class:'em-pair'},field('Payment due date',bind('dueDate',{type:'date',min:dueFloor(job),required:true}),dueFloor(job)>today()?`The balance is due when the job is complete: ${dueFloor(job)} or later.`:''),field('PO / customer reference',bind('customerReference',{maxLength:120,autocomplete:'off'}),'Optional')),
     note(automation('invoice-issued')+' The invoice shows in the customer portal with its balance.'),
     active&&invoice.status!=='paid'?h('button',{type:'button',class:'em-button danger',onclick:()=>switchView('void')},'Void this invoice…'):null,
     changeList(),

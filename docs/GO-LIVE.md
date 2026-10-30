@@ -669,7 +669,7 @@ Each is a dry run first; review, then run again with `--apply`. All need `FIREBA
 | # | Set | Where |
 | --- | --- | --- |
 | 5.1 | Card payments and Review queues | No switch |
-| 5.2 | `MONEY_API_ENABLED=true` | Cloudflare, plain |
+| 5.2 | `MONEY_API_ENABLED` and `CHANGE_ORDER_BILLING_ENABLED` (on by launch default, 2026-10-30) | Nothing to set |
 | 5.3 | `MONEY_DOCUMENT_ENABLED=true` | Cloudflare, plain |
 | 5.4 | `PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED=true` (optional) | Cloudflare, plain |
 | 5.5 | `GARAGE_GUARD_MEMBERSHIP_SYNC_ENABLED=true` (optional) | Cloudflare, plain |
@@ -686,9 +686,10 @@ Each is a dry run first; review, then run again with `--apply`. All need `FIREBA
 
 ### 5.2 Server money records
 
-- **Set:** `MONEY_API_ENABLED=true`
-- **Where:** Cloudflare Pages, plain.
-- **Turns on:** the Hub's estimate, approval, deposit, payment and invoice buttons save on the server with a payment ledger, invoice numbers and an audit entry, instead of from the browser.
+- **Set:** nothing. `MONEY_API_ENABLED` and `CHANGE_ORDER_BILLING_ENABLED` are on by the owner's launch default of 2026-10-30 (`functions/_lib/launch-defaults.js`). Setting either to `false` in Cloudflare turns change-order billing off; `MONEY_API_ENABLED=false` also returns the Hub to the browser finance tools.
+- **Where:** Cloudflare Pages, plain (only to turn them off).
+- **Turns on:** the Hub's estimate, approval, deposit, payment and invoice buttons save on the server with a payment ledger, invoice numbers and an audit entry, instead of from the browser. A priced crew decision the customer approves in the portal while the crew is on the job is billed as a change-order line with the balance (the deposit stays on the quote); a manager stops billing one with **Void approved change**.
+- **Approvals saved before 2026-10-30:** they were saved without a billed line. Developer runs `node scripts/backfill-change-orders.mjs` (dry run), the owner reviews the jobs it lists, then it runs with `--apply --billing-enabled`.
 - **Needs first:**
   1. Developer runs `node scripts/backfill-payment-ledger.mjs` (dry run). Review `jobs.needsReview`, `jobs.needsVerification` and `invoiceNumbers.duplicates`, then run it with `--apply`.
   2. For every job in `jobs.needsVerification`: check the money against the check, bank or Stripe record, then set `payment.verified` to true on that job in the Firebase console (and `deposit.verified` if the deposit is the evidence). Keep your own note; this edit has no audit entry. Run the backfill again.
@@ -697,7 +698,7 @@ Each is a dry run first; review, then run again with `--apply`. All need `FIREBA
 - **Check it worked (phone):**
   1. On a test job, create an estimate and record a $1 cash payment. Both save.
   2. The finance board shows the payment in the job's ledger.
-- **Roll back:** delete the variable. Open pages switch back on their next save. Do **not** re-save an itemized estimate in the old editor afterwards: it flattens it to one line. Turn the flag back on to edit those.
+- **Roll back:** set `MONEY_API_ENABLED=false` (deleting it no longer turns it off). Open pages switch back on their next save. Do **not** re-save an itemized estimate in the old editor afterwards: it flattens it to one line. Turn the flag back on to edit those. Change-order lines already saved stay billed until voided.
 
 ### 5.3 Branded estimates, invoices and receipts
 
@@ -960,7 +961,7 @@ Before moving any of these, check which HighLevel workflows and calendar notific
 | 2 | Delete `WEB_LEAD_ADS_RELAY_ENABLED`, then `WEB_LEAD_RECEIPTS_ENABLED` | Web3Forms emails for any lead in doubt |
 | 3 | Delete `EGC_WALKTHROUGH_VISIT_ENABLED`, `EGC_STAFF_ROLE_ACCESS` or `EGC_STAFF_DIRECTORY_ENABLED` | Timecards of reps with open walkthroughs; Hub → Integrations for pending Firebase sign-outs |
 | 4 | Delete the `EGC_DISPATCH_…` or `FIELD_EXPENSES_ENABLED` switch; crew app: `/crew/sw-config.json` (developer); delete `EGC_GHL_TAG_OUTBOX` only after `EGC_SCHEDULE_SYNC_WORKER` is off | Dispatch saves; crew phones reload; HighLevel booking tags |
-| 5 | Delete `MONEY_API_ENABLED`, `MONEY_DOCUMENT_ENABLED` or `PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED` | Do not re-save itemized estimates in the old editor |
+| 5 | Set `MONEY_API_ENABLED=false` (on by launch default), or delete `MONEY_DOCUMENT_ENABLED` or `PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED` | Do not re-save itemized estimates in the old editor |
 | 6 | Delete `FIELD_CUSTOMER_PHOTOS_ENABLED` | Portal shows no photos |
 | 7 | Delete `MCP_OAUTH_SHARED_LOGIN_ENABLED`, `MCP_OAUTH_HUB_IDENTITY_ENABLED` or `EGC_MCP_PUBLIC_ORIGIN` | Consent page |
 

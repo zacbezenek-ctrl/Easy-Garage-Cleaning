@@ -438,8 +438,9 @@ test('quoted amounts come from the same helpers as the portal and Stripe checkou
   assert.match(preview.body, /your \$400\.00 deposit/); assert.doesNotMatch(preview.body, /\$250\.00/);
   const capped = await setup({ kinds: ['deposit_reminder'], links, jobFields: { estimate: { ...job().estimate, depositRequired: 5000 } } });
   assert.match((await capped.service.preview(manager, { kind: 'deposit_reminder', jobId: 'job-1' })).body, /your \$1,200\.00 deposit/, 'a deposit never exceeds the quote total');
-  const half = await setup({ kinds: ['deposit_reminder'], links, jobFields: { estimate: { ...job().estimate, depositRequired: undefined }, deposit: undefined } });
-  assert.match((await half.service.preview(manager, { kind: 'deposit_reminder', jobId: 'job-1' })).body, /your \$600\.00 deposit/, 'unsigned deposits default to half the quote');
+  // Owner decision 2026-10-30 (was half): a quote with no saved deposit asks 25% upfront.
+  const quarter = await setup({ kinds: ['deposit_reminder'], links, jobFields: { estimate: { ...job().estimate, depositRequired: undefined }, deposit: undefined } });
+  assert.match((await quarter.service.preview(manager, { kind: 'deposit_reminder', jobId: 'job-1' })).body, /your \$300\.00 deposit/, 'unsigned deposits default to 25% of the quote');
   const paidPart = { estimate: { ...job().estimate, depositRequired: 400 }, payment: { amount: 150, verified: true }, deposit: { amount: 400, paidAmount: 999 } };
   assert.equal(customerDepositState(job(paidPart)).due, 250);
   const part = await setup({ kinds: ['deposit_reminder'], links, jobFields: paidPart });

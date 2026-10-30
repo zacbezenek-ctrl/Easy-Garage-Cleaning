@@ -27,6 +27,7 @@ import { walkthroughPricing, walkthroughServiceItems } from '../functions/_lib/p
 import vm from 'node:vm';
 import { CUSTOMER_PORTAL_CONTENT } from '../functions/_lib/customer-portal-content.js';
 import { portalCookie, portalHandlers, portalScript, portalStore, portalView } from './helpers/portal-fixture.mjs';
+import { DRAFT_MENU } from './helpers/estimator-fixture.mjs';
 
 test('saved authenticated capture reaches the canonical contact through a retryable internal-note intent', async () => {
   const f = fixture(), input = f.input();
@@ -1014,7 +1015,8 @@ test('the estimate-ready tag is cleared and applied again for each sent revision
 
 // ---- Guided builder quotes (EGC_QUOTE_BUILDER_ENABLED; functions/_lib/composite-quote.js) ----
 const BUILDER_ENV = { ...ENV, EGC_QUOTE_BUILDER_ENABLED: 'true' };
-const builderMenu = JSON.parse(readFileSync(new URL('../functions/_data/pricing-menu.json', import.meta.url), 'utf8'));
+// The draft-price rules: the shipped menu's approvals in code (owner decision 2026-10-30) are left out (estimator-fixture.mjs DRAFT_MENU).
+const builderMenu = DRAFT_MENU;
 const builderSettings = JSON.parse(readFileSync(new URL('../functions/_data/pricing-settings.defaults.json', import.meta.url), 'utf8'));
 const builderState = (approvals = {}, settings = {}) => ({ menu: builderMenu, settings: { ...builderSettings, ...settings }, walkthrough: walkthroughPricing(walkthroughServiceItems()), approvals: { items: approvals, revision: Object.keys(approvals).length ? 'approvals-1' : null } });
 const menuItem = name => builderMenu.services.find(item => item.name === name) || builderMenu.products.find(item => item.name === name);
