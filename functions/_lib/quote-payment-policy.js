@@ -91,9 +91,14 @@ export function scheduleSplit(schedule) {
 }
 // A deposit due on approval (SENT_25_75, publicQuotePaymentSchedule depositDueOn) is "due on approval", with the
 // approval's day once there is one.
-export function quotePaymentSummary(schedule) {
-  const split = scheduleSplit(schedule), deposit = schedule.depositDueOn === 'approval' ? `on approval${schedule.depositDueDate ? ` (${schedule.depositDueDate})` : ''}` : schedule.depositDueDate;
-  return `${split.depositPct}% deposit ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(schedule.depositCents/100)} due ${deposit}; ${split.remainderPct}% remainder ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(schedule.remainderCents/100)} due ${schedule.remainderDueDate} (${PAYMENT_TIME_ZONE}).`;
+// Owner decision 2026-10-30: the 75% remainder is due when the job is complete. Every customer surface says so, naming
+// the job's current appointment day (jobDate, the job's date) as context, never the saved schedule's remainderDueDate:
+// Dispatch can move the job after its quote was sent or signed and does not touch the schedule. The saved policy
+// (remainderDueRule 'job_day') and schedule stay exactly as sent or signed, and nothing charged changes: the balance is
+// charged only once the job is complete (customer-payments.js customerDepositState).
+export function quotePaymentSummary(schedule, jobDate) {
+  const split = scheduleSplit(schedule), deposit = schedule.depositDueOn === 'approval' ? `on approval${schedule.depositDueDate ? ` (${schedule.depositDueDate})` : ''}` : schedule.depositDueDate, day = businessPaymentDate(jobDate);
+  return `${split.depositPct}% deposit ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(schedule.depositCents/100)} due ${deposit}; ${split.remainderPct}% remainder ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(schedule.remainderCents/100)} due when the job is complete${day ? `, scheduled for ${day}` : ''}${schedule.depositDueDate || day ? ` (${PAYMENT_TIME_ZONE})` : ''}.`;
 }
 // The saved schedule a customer surface may show. It fails closed: only while it is still the estimate's own split, its
 // deposit the estimate's deposit and the two parts its total (estimate.amount and amountCents, depositRequired and
@@ -122,17 +127,17 @@ export function publicQuotePaymentSchedule(estimate) {
 export const sentQuotePaymentPolicy = (policy, { quoteDraft = false } = {}) => [FINAL_25_75.version, PROPOSED_25_75.version].includes(policy?.version) || quoteDraft && (policy === undefined || policy === null) ? SENT_25_75 : policy;
 // The 25/75 terms a quote was sent or signed on (estimate.commercialPolicy), without any amount, for a customer surface
 // that withholds the quote (quote-model.js unsentQuoteDraft: a signed job held for the owner's prices, or a sent quote's
-// unsent revision): the split (its saved schedule's, else the policy's) and, when the schedule names it, the job day the
-// remainder is due. A deposit due on approval (SENT_25_75) says so. null for a quote on any other terms: legacy jobs keep
-// their own wording.
+// unsent revision): the split (its saved schedule's, else the policy's) and the remainder due when the job is complete,
+// with the job's current appointment day (jobDate) once it is booked (quotePaymentSummary). A deposit due on approval
+// (SENT_25_75) says so. null for a quote on any other terms: legacy jobs keep their own wording.
 // signed: a job the homeowner signed in person and held for the owner's prices: it is booked, the team is confirming its
 // prices, and nothing is due until the team sends the updated total (releasing it asks for no new approval).
-export function withheldQuotePaymentSummary(estimate, { signed = false } = {}) {
+export function withheldQuotePaymentSummary(estimate, { signed = false, jobDate } = {}) {
   let policy;
   try { policy = snapshotQuotePaymentPolicy(estimate?.commercialPolicy); } catch { return null; }
-  const s = plain(estimate?.paymentSchedule) ? estimate.paymentSchedule : null, day = s && s.timeZone === PAYMENT_TIME_ZONE && validDate(s.remainderDueDate) ? s.remainderDueDate : '';
+  const s = plain(estimate?.paymentSchedule) ? estimate.paymentSchedule : null, day = businessPaymentDate(jobDate);
   const split = s && Number.isSafeInteger(s.depositCents) && Number.isSafeInteger(s.remainderCents) && s.depositCents >= 0 && s.remainderCents >= 0 && s.depositCents + s.remainderCents > 0 ? scheduleSplit(s) : policy;
-  return { version: policy.version, text: `${split.depositPct}% deposit${policy.depositDueRule === 'approval_day' ? ' due when you approve your estimate' : ''}; ${split.remainderPct}% remainder due on the job day${day ? ` ${day} (${PAYMENT_TIME_ZONE})` : ''}. ${signed ? 'Your job is booked and our team is confirming its prices: the amounts are shown when we send you the updated total' : 'The amounts are shown when your estimate is sent to you'}, and nothing is due before then.` };
+  return { version: policy.version, text: `${split.depositPct}% deposit${policy.depositDueRule === 'approval_day' ? ' due when you approve your estimate' : ''}; ${split.remainderPct}% remainder due when your job is complete${day ? `, scheduled for ${day} (${PAYMENT_TIME_ZONE})` : ''}. ${signed ? 'Your job is booked and our team is confirming its prices: the amounts are shown when we send you the updated total' : 'The amounts are shown when your estimate is sent to you'}, and nothing is due before then.` };
 }
 // A payment due date (YYYY-MM-DD, a Denver business day) as the customer reads it: "Tuesday, October 20, 2026".
 export const paymentDateLabel = date => new Intl.DateTimeFormat('en-US', { timeZone: PAYMENT_TIME_ZONE, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(new Date(`${date}T12:00:00Z`));

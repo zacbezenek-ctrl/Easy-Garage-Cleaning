@@ -155,5 +155,5 @@ test('a saved payment schedule is shown only while it is the estimate\'s own spl
   const signed = f.job(saved.job.id).estimate;
   for (const changed of [{ amountCents: 200001 }, { depositRequiredCents: 50001 }, { depositRequired: 'x' }, { paymentSchedule: { ...signed.paymentSchedule, remainderCents: -1 } }]) assert.equal(publicQuotePaymentSchedule({ ...signed, ...changed }), null, JSON.stringify(changed));
   assert.deepEqual(scheduleSplit({ depositCents: 26393, remainderCents: 79178 }), { depositPct: 25, remainderPct: 75 });
-  assert.equal(quotePaymentSummary({ depositCents: 75000, remainderCents: 75000, depositDueDate: '2026-10-17', remainderDueDate: '2026-10-19' }), '50% deposit $750.00 due 2026-10-17; 50% remainder $750.00 due 2026-10-19 (America/Denver).');
+  assert.equal(quotePaymentSummary({ depositCents: 75000, remainderCents: 75000, depositDueDate: '2026-10-17', remainderDueDate: '2026-10-19' }, '2026-10-19'), '50% deposit $750.00 due 2026-10-17; 50% remainder $750.00 due when the job is complete, scheduled for 2026-10-19 (America/Denver).');
 });

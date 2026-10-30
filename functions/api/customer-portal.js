@@ -149,7 +149,7 @@ function estimateState(job, finance, today, draftsRejected = false) {
     approvable: !approvalBlocked(job, draftsRejected),
     depositRequired: customerDepositState(job, finance).required,
     lineItems: estimateLines(job, quote),
-    terms: schedule ? 'This flat-rate estimate covers the scope shown. '+quotePaymentSummary(schedule)+' Any material scope change requires your approval before additional work or charges.' : CUSTOMER_PORTAL_CONTENT.estimateTerms,
+    terms: schedule ? 'This flat-rate estimate covers the scope shown. '+quotePaymentSummary(schedule, job.date)+' Any material scope change requires your approval before additional work or charges.' : CUSTOMER_PORTAL_CONTENT.estimateTerms,
     termsVersion: schedule ? schedule.policyVersion : CUSTOMER_PORTAL_TERMS_VERSION,
     ...(schedule?{paymentSchedule:schedule,commercialPolicy:job.estimate.commercialPolicy}:{}),
   };
@@ -169,7 +169,7 @@ function withheldEstimate(job) {
   const approvedQuote = [job.estimate?.status, job.customerApproval?.status].some(status => ['accepted', 'approved'].includes(String(status || '').toLowerCase()));
   const heldSigned = pricesPendingApproval(job) && approvedQuote;
   const quoteDraft = Boolean(job.quoteDraft && typeof job.quoteDraft === 'object') || job.estimate?.source === 'quote_draft';
-  const terms = withheldQuotePaymentSummary(approvedQuote ? job.estimate : { ...job.estimate, commercialPolicy: sentQuotePaymentPolicy(job.estimate?.commercialPolicy, { quoteDraft }) }, { signed: heldSigned });
+  const terms = withheldQuotePaymentSummary(approvedQuote ? job.estimate : { ...job.estimate, commercialPolicy: sentQuotePaymentPolicy(job.estimate?.commercialPolicy, { quoteDraft }) }, { signed: heldSigned, jobDate: job.date });
   const estimate = {
     number: safe(job.estimate?.number || job.quoteId || `EST-${String(job.id || '').slice(-6).toUpperCase()}`, 80),
     status: 'being_updated', withheld: true, amount: 0,

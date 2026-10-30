@@ -5,7 +5,7 @@ import { customerMoneyTotals, invoiceLineItems, invoiceNumber, invoiceStatus, pa
 import { LEGACY_ENTRY_ID, reconcileLedger } from './money-ledger.js';
 import { cashPayment } from './payment-events.js';
 import { customerLaborLine, customerLineItem, customerScopeText, estimateTotals, included, legacyLineItems, singleLineItem, unsentQuoteDraft } from './quote-model.js';
-import { publicQuotePaymentSchedule, quotePaymentSummary, scheduleSplit } from './quote-payment-policy.js';
+import { businessPaymentDate, publicQuotePaymentSchedule, quotePaymentSummary, scheduleSplit } from './quote-payment-policy.js';
 
 /**
  * Server-rendered, branded customer money documents (estimate, invoice,
@@ -212,11 +212,12 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   if (withheld && kind !== 'receipt') throw fail('unavailable', `Your ${kind} is being updated. Easy Garage Cleaning will send it to you for review.`, 409);
   if (withheld) return withheldReceipt(job, totals, at, contact, invoiceState ? { status: invoiceStatus(job, at, { unified, invoiceState }) } : null);
   const estimate = plain(job.estimate) ? job.estimate : {}, invoice = plain(job.invoice) ? job.invoice : {};
-  const paymentSchedule = publicQuotePaymentSchedule(estimate), split = paymentSchedule ? scheduleSplit(paymentSchedule) : null;
+  const paymentSchedule = publicQuotePaymentSchedule(estimate), split = paymentSchedule ? scheduleSplit(paymentSchedule) : null, jobDay = businessPaymentDate(job.date);
   const today = denverToday(new Date(at)), approval = approvalOf(job);
   // The 25/75 dates: a deposit due on approval (a quote sent on SENT_25_75) says so, with the approval's day once it is
-  // approved. An invoice that has no due date of its own (a payment wrote it; nothing was issued) lists them too.
-  const scheduleDates = paymentSchedule ? [[`${split.depositPct}% deposit due`, paymentSchedule.depositDueOn === 'approval' ? paymentSchedule.depositDueDate ? `On approval, ${dayLabel(paymentSchedule.depositDueDate)}` : 'When you approve this estimate' : dayLabel(paymentSchedule.depositDueDate)], [`${split.remainderPct}% remainder due`, dayLabel(paymentSchedule.remainderDueDate)], ['Business timezone', paymentSchedule.timeZone]] : [];
+  // approved. An invoice that has no due date of its own (a payment wrote it; nothing was issued) lists them too. The 75%
+  // is due when the job is complete, with the job's current day (quote-payment-policy.js quotePaymentSummary).
+  const scheduleDates = paymentSchedule ? [[`${split.depositPct}% deposit due`, paymentSchedule.depositDueOn === 'approval' ? paymentSchedule.depositDueDate ? `On approval, ${dayLabel(paymentSchedule.depositDueDate)}` : 'When you approve this estimate' : dayLabel(paymentSchedule.depositDueDate)], [`${split.remainderPct}% remainder due`, `When the job is complete${jobDay ? `, scheduled for ${dayLabel(jobDay)}` : ''}`], ['Business timezone', paymentSchedule.timeZone]] : [];
   let lines, status, statusLabel, number, dates;
   if (kind === 'estimate') {
     lines = estimateLines(job, totals, issues);
@@ -259,7 +260,7 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
     if (kind === 'estimate' && totals.approvedChangeCents > 0) rows.push({ label: 'Estimate', cents: totals.quoteCents }, { label: 'Approved changes', cents: totals.approvedChangeCents });
     rows.push({ label: 'Total', cents: totals.totalCents });
     if (kind === 'estimate') rows.push({ label: totals.depositRequiredCents === 0 ? 'No deposit required' : paymentSchedule ? `${split.depositPct}% deposit due ${paymentSchedule.depositDueOn === 'approval' ? `on approval${paymentSchedule.depositDueDate ? ` (${paymentSchedule.depositDueDate})` : ''}` : paymentSchedule.depositDueDate}` : 'Deposit due upfront', cents: totals.depositRequiredCents });
-    if (kind === 'estimate' && paymentSchedule) rows.push({label:`Scheduled ${split.remainderPct}% remainder due ${paymentSchedule.remainderDueDate}`,cents:paymentSchedule.remainderCents});
+    if (kind === 'estimate' && paymentSchedule) rows.push({label:`${split.remainderPct}% remainder due when the job is complete`,cents:paymentSchedule.remainderCents});
     rows.push({ label: 'Payments received', cents: totals.appliedCents });
   }
   if (totals.overpaidCents > 0) rows.push({ label: 'Overpayment on file', cents: totals.overpaidCents });
@@ -294,7 +295,7 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
     service, scope: scope && !lines.some(line => line.description === scope) ? scope : '',
     lines, rows, payments: ledger.rows, paymentsReconciled: ledger.reconciled,
     approval: (kind === 'estimate' || kind === 'invoice') && approval.approved ? `Estimate approved${approval.by ? ` by ${approval.by}` : ''}${approval.at ? ` on ${instantDay(approval.at)}` : ''}${approval.portal ? ' in the customer portal' : ''}` : '',
-    termsVersion: clean((kind === 'estimate' ? estimate.termsVersion : invoice.termsVersion || estimate.termsVersion) || DEFAULT_TERMS_VERSION, 40), terms: kind==='estimate'&&paymentSchedule ? 'This flat-rate estimate covers only the scope shown. '+quotePaymentSummary(paymentSchedule)+' Any material scope change requires customer approval before additional work or charges.' : TERMS[kind],
+    termsVersion: clean((kind === 'estimate' ? estimate.termsVersion : invoice.termsVersion || estimate.termsVersion) || DEFAULT_TERMS_VERSION, 40), terms: kind==='estimate'&&paymentSchedule ? 'This flat-rate estimate covers only the scope shown. '+quotePaymentSummary(paymentSchedule, job.date)+' Any material scope change requires customer approval before additional work or charges.' : TERMS[kind],
     pay, payNote, totals, issues: [...new Set(issues)],
   };
 }

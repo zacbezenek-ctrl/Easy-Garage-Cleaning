@@ -685,15 +685,15 @@ test('the Hub printed estimate shows the Labor line as one amount and the 25/75 
     return html.replace(/<style>[^]*<\/style>/, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
   };
   const schedule = { depositCents: 28190, remainderCents: 84570, depositDueDate: '2026-10-17', remainderDueDate: '2026-10-20', timeZone: 'America/Denver', policyVersion: '2026-10-deposit25' };
-  const job = { id: 'job-print', customer: 'Synthetic', total: 1127.6, status: 'scheduled', estimate: { number: 'EST-P', status: 'accepted', amount: 1127.6, amountCents: 112760, depositRequired: 281.9, depositRequiredCents: 28190, termsVersion: '2026-10-deposit25',
+  const job = { id: 'job-print', customer: 'Synthetic', total: 1127.6, status: 'scheduled', date: '2026-10-20', estimate: { number: 'EST-P', status: 'accepted', amount: 1127.6, amountCents: 112760, depositRequired: 281.9, depositRequiredCents: 28190, termsVersion: '2026-10-deposit25',
     commercialPolicy: { version: '2026-10-deposit25', depositPct: 25, remainderPct: 75, depositDueRule: 'walkthrough_day', remainderDueRule: 'job_day' }, paymentSchedule: schedule, scope: 'Removal / cleanout: Full truck load. Labor: 3.5 man-hours.',
     lineItems: [{ id: 'removal-junk-full', kind: 'service', name: 'Junk removal: full truck load', description: '', quantity: 1, amount: 750, totalCents: 75000 }, { id: 'shelving-goods', kind: 'product', name: 'Shelving', description: '', quantity: 1, amount: 237.6, totalCents: 23760 },
       { id: 'labor', kind: 'labor', name: 'Labor: 3.5 man-hours × $40.00', description: 'Crew time on site, billed per man-hour, including installing the shelving and storage.', quantity: 1, amount: 140, totalCents: 14000 }] }, deposit: { amount: 281.9, paidAmount: 0 } };
   const text = await print(job);
   assert.match(text, / Labor Includes installing the shelving and storage\. \$140\.00 /);
   assert.doesNotMatch(text, /man-hour|billed per|\$40\.00|Deposit due upfront|on completion/);
-  assert.match(text, /25% deposit due 2026-10-17 \$281\.90 75% remainder due 2026-10-20 \$845\.70 /);
-  assert.match(text, /Estimate terms · version 2026-10-deposit25 This flat-rate estimate covers only the scope shown\. 25% deposit \$281\.90 due 2026-10-17; 75% remainder \$845\.70 due 2026-10-20 \(America\/Denver\)\./);
+  assert.match(text, /25% deposit due 2026-10-17 \$281\.90 75% remainder due when the job is complete, scheduled for 2026-10-20 \$845\.70 /);
+  assert.match(text, /Estimate terms · version 2026-10-deposit25 This flat-rate estimate covers only the scope shown\. 25% deposit \$281\.90 due 2026-10-17; 75% remainder \$845\.70 due when the job is complete, scheduled for 2026-10-20 \(America\/Denver\)\./);
   // Edited in the legacy editor after signing ($1,800 with $450 down): the earlier terms, with the deposit it asks for now.
   const edited = await print({ ...job, total: 1800, estimate: { ...job.estimate, amount: 1800, depositRequired: 450, lineItems: [{ name: 'Garage transformation', description: job.estimate.scope, quantity: 1, amount: 1800 }] } });
   assert.match(edited, /Deposit due upfront \$450\.00 /);
@@ -718,19 +718,19 @@ test('the Hub printed estimate of a quote sent on SENT_25_75 says the deposit is
   };
   const policy = { version: '2026-10-19-deposit25-on-approval', depositPct: 25, remainderPct: 75, depositDueRule: 'approval_day', remainderDueRule: 'job_day' };
   const schedule = { depositCents: 37500, remainderCents: 112500, depositDueDate: null, remainderDueDate: '2026-11-10', timeZone: 'America/Denver', policyVersion: policy.version };
-  const job = { id: 'job-sent', customer: 'Synthetic', total: 1500, status: 'scheduled', estimate: { number: 'EST-S', status: 'sent', amount: 1500, amountCents: 150000, depositRequired: 375, depositRequiredCents: 37500, termsVersion: policy.version, commercialPolicy: policy, paymentSchedule: schedule, scope: 'Garage reset.', lineItems: [] }, deposit: { amount: 375, paidAmount: 0 } };
+  const job = { id: 'job-sent', customer: 'Synthetic', total: 1500, status: 'scheduled', date: '2026-11-10', estimate: { number: 'EST-S', status: 'sent', amount: 1500, amountCents: 150000, depositRequired: 375, depositRequiredCents: 37500, termsVersion: policy.version, commercialPolicy: policy, paymentSchedule: schedule, scope: 'Garage reset.', lineItems: [] }, deposit: { amount: 375, paidAmount: 0 } };
   const sent = await print(job);
-  assert.match(sent, /25% deposit due on approval \$375\.00 75% remainder due 2026-11-10 \$1,125\.00 /);
-  assert.match(sent, /25% deposit \$375\.00 due on approval; 75% remainder \$1,125\.00 due 2026-11-10 \(America\/Denver\)\./);
+  assert.match(sent, /25% deposit due on approval \$375\.00 75% remainder due when the job is complete, scheduled for 2026-11-10 \$1,125\.00 /);
+  assert.match(sent, /25% deposit \$375\.00 due on approval; 75% remainder \$1,125\.00 due when the job is complete, scheduled for 2026-11-10 \(America\/Denver\)\./);
   assert.doesNotMatch(sent, /Deposit due upfront|on completion|null/);
   // Approved in the portal at 9:30 pm in Denver (03:30 UTC the next day): the deposit is dated that Denver day.
   const approved = await print({ ...job, estimate: { ...job.estimate, status: 'approved', acceptedAt: '2026-10-21T03:30:00.000Z' } });
   assert.match(approved, /25% deposit due on approval \(2026-10-20\) \$375\.00 /);
-  assert.match(approved, /25% deposit \$375\.00 due on approval \(2026-10-20\); 75% remainder \$1,125\.00 due 2026-11-10 \(America\/Denver\)\./);
+  assert.match(approved, /25% deposit \$375\.00 due on approval \(2026-10-20\); 75% remainder \$1,125\.00 due when the job is complete, scheduled for 2026-11-10 \(America\/Denver\)\./);
   // Approved after the saved job day: dated by the approval, never by the job day.
   const late = await print({ ...job, estimate: { ...job.estimate, status: 'approved', acceptedAt: '2026-12-01T18:00:00.000Z' } });
   assert.match(late, /25% deposit due on approval \(2026-12-01\) \$375\.00 /);
-  assert.match(late, /25% deposit \$375\.00 due on approval \(2026-12-01\); 75% remainder \$1,125\.00 due 2026-11-10 \(America\/Denver\)\./);
+  assert.match(late, /25% deposit \$375\.00 due on approval \(2026-12-01\); 75% remainder \$1,125\.00 due when the job is complete, scheduled for 2026-11-10 \(America\/Denver\)\./);
   // A saved schedule that names a deposit date is not the sent-quote terms' own: the earlier wording, not a made-up date.
   assert.match(await print({ ...job, estimate: { ...job.estimate, paymentSchedule: { ...schedule, depositDueDate: '2026-10-20' } } }), /Deposit due upfront \$375\.00 /);
 });

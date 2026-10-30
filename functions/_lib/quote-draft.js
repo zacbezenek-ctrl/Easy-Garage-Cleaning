@@ -568,8 +568,9 @@ async function paymentScheduleFor(store, job, sending = job.estimate) {
   const amounts = quotePaymentSchedule(sending.amountCents,policy);
   return {...dates,timeZone:PAYMENT_TIME_ZONE,policyVersion:policy.version,depositCents:amounts.depositCents,remainderCents:amounts.remainderCents,sourceWalkthroughId:source.id,sourceRevision:source.revision};
 }
-// The send preview's words for a schedule: a deposit due on approval says so (quote-payment-policy.js quotePaymentSummary).
-const scheduleSummary = (schedule, policy) => quotePaymentSummary(policy?.depositDueRule === 'approval_day' ? { ...schedule, depositDueOn: 'approval' } : schedule);
+// The send preview's words for a schedule: a deposit due on approval says so (quote-payment-policy.js quotePaymentSummary),
+// and the 75% is due when the job is complete, scheduled for the booked day the schedule is sent with (paymentScheduleFor).
+const scheduleSummary = (schedule, policy) => quotePaymentSummary(policy?.depositDueRule === 'approval_day' ? { ...schedule, depositDueOn: 'approval' } : schedule, schedule.remainderDueDate);
 function sendable(job, now, env) {
   editable(job);
   if (plain(job.quoteDraft?.catalogPricing) && !catalogQuotesEnabled(env)) throw fail('catalog_disabled', 'Catalog quotes are turned off. Keep this saved quote for review.', 404);

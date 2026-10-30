@@ -109,7 +109,7 @@ test('a signature on the current terms takes the 25% deposit and saves its exact
  assert.deepEqual([j.estimate.amountCents,j.estimate.depositRequiredCents,j.estimate.depositPct],[140000,35000,25]);
  // Signed 11:45 Denver on 2026-09-22 for the job on 2026-09-24.
  assert.deepEqual(j.estimate.paymentSchedule,{depositCents:35000,remainderCents:105000,depositDueDate:'2026-09-22',remainderDueDate:'2026-09-24',timeZone:'America/Denver',policyVersion:'2026-10-deposit25'});
- assert.equal(quotePaymentSummary(publicQuotePaymentSchedule(j.estimate)),'25% deposit $350.00 due 2026-09-22; 75% remainder $1,050.00 due 2026-09-24 (America/Denver).');
+ assert.equal(quotePaymentSummary(publicQuotePaymentSchedule(j.estimate),j.date),'25% deposit $350.00 due 2026-09-22; 75% remainder $1,050.00 due when the job is complete, scheduled for 2026-09-24 (America/Denver).');
  // The deposit request charges the 25%; the remainder is due with the balance.
  assert.deepEqual([customerDepositState(j).required,customerDepositState(j).dueNow,customerMoneyTotals(j).depositRequiredCents],[350,350,35000]);
  assert.equal(savedHandoffPayload(j,f.input.requestId).quote.deposit,350,'the CRM sync reads the signed 25% deposit');
@@ -152,8 +152,8 @@ test('a job signed on the earlier 50% terms keeps them: its lost-response retry 
  assert.deepEqual([now.estimate.paymentSchedule.depositCents,now.estimate.paymentSchedule.remainderCents,now.estimate.depositRequiredCents],[70000,70000,70000]);
  assert.equal(savedHandoffPayload(now,resigned.requestId).quote.deposit,700,'the signed snapshot keeps the estimate\'s deposit, so the CRM sync still reads it');
  const doc=moneyDocumentModel({...now},{kind:'estimate',now:NOW});
- assert.deepEqual(doc.rows.map(row=>[row.label,row.cents]),[['Total',140000],['50% deposit due 2026-09-22',70000],['Scheduled 50% remainder due 2026-09-24',70000],['Payments received',70000],['Total unpaid',70000]]);
- assert.match(doc.terms,/50% deposit \$700\.00 due 2026-09-22; 50% remainder \$700\.00 due 2026-09-24/);
+ assert.deepEqual(doc.rows.map(row=>[row.label,row.cents]),[['Total',140000],['50% deposit due 2026-09-22',70000],['50% remainder due when the job is complete',70000],['Payments received',70000],['Total unpaid',70000]]);
+ assert.match(doc.terms,/50% deposit \$700\.00 due 2026-09-22; 50% remainder \$700\.00 due when the job is complete, scheduled for 2026-09-24/);
  // Unpaid, the same revision is 25/75.
  const unpaid=fixture(),fresh=await saveWalkthroughHandoff(unpaid.store,owner,unpaid.input,NOW),row=unpaid.rows.get('jobs/'+fresh.job.id);
  assert.deepEqual([row.estimate.depositRequired,row.estimate.paymentSchedule.depositCents,row.estimate.paymentSchedule.remainderCents],[350,35000,105000]);

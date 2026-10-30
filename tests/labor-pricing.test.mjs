@@ -282,7 +282,7 @@ test('D-JUNK, D-LABOR-TEXT and D-DEPOSIT together: a junk-only quote signs at $1
   const f = fixture(), junk = f.job((await saveWalkthroughHandoff(f.store, owner, handoff(1, signedQuote(trucks)), NOW, { env: ON_ENV, compositeState: async () => state })).job.id);
   assert.deepEqual([junk.total, junk.deposit.amount, junk.estimate.depositRequired, junk.estimate.lineItems.map(line => line.id), junk.acceptedHandoffPayload.terms_version], [2000, 500, 500, ['removal-junk-full'], '2026-10-deposit25']);
   assert.deepEqual(terms(junk), ['2026-10-deposit25', 50000, 150000, '2026-10-17', MON]);
-  assert.deepEqual(rows(junk, 'job-junk'), [['Total', 200000], ['25% deposit due 2026-10-17', 50000], [`Scheduled 75% remainder due ${MON}`, 150000]]);
+  assert.deepEqual(rows(junk, 'job-junk'), [['Total', 200000], ['25% deposit due 2026-10-17', 50000], ['75% remainder due when the job is complete', 150000]]);
   const junkPortal = await portal(junk, 'job-junk');
   assert.deepEqual([junkPortal.estimate.depositRequired, junkPortal.payment.dueNow, junkPortal.estimate.lineItems.map(line => line.name)], [500, 500, [junk.estimate.lineItems[0].name]]);
   assert.doesNotMatch(JSON.stringify(junkPortal.estimate), /Labor|man-hour/i, 'no Labor line anywhere the homeowner looks');
@@ -295,13 +295,13 @@ test('D-JUNK, D-LABOR-TEXT and D-DEPOSIT together: a junk-only quote signs at $1
   const g = fixture(), garage = g.job((await saveWalkthroughHandoff(g.store, owner, handoff(3, signedQuote(priced)), NOW, { env: ON_ENV, compositeState: async () => state })).job.id);
   assert.deepEqual([garage.total, garage.estimate.depositRequired, garage.estimate.lineItems.at(-1).name, garage.estimate.lineItems.at(-1).totalCents], [priced.totalCents / 100, deposit / 100, 'Labor', LABOR_CENTS]);
   assert.deepEqual(terms(garage), ['2026-10-deposit25', deposit, priced.totalCents - deposit, '2026-10-17', MON]);
-  assert.deepEqual(rows(garage, 'job-garage'), [['Total', priced.totalCents], ['25% deposit due 2026-10-17', deposit], [`Scheduled 75% remainder due ${MON}`, priced.totalCents - deposit]]);
+  assert.deepEqual(rows(garage, 'job-garage'), [['Total', priced.totalCents], ['25% deposit due 2026-10-17', deposit], ['75% remainder due when the job is complete', priced.totalCents - deposit]]);
   const html = renderMoneyDocument({ ...garage, id: 'job-garage' }, { kind: 'estimate', now: NOW });
   assert.match(html, /<td><strong>Labor<\/strong><small>Includes installing the shelving and storage\.<\/small><\/td><td class="amount">\$318\.00<\/td>/);
   assert.doesNotMatch(html, hourly);
   const garagePortal = await portal(garage, 'job-garage');
   assert.deepEqual([garagePortal.estimate.lineItems.at(-1), garagePortal.estimate.depositRequired, garagePortal.payment.dueNow], [{ name: 'Labor', description: 'Includes installing the shelving and storage.', quantity: 1, amount: 318 }, deposit / 100, deposit / 100]);
-  assert.match(garagePortal.estimate.terms, /25% deposit .* due 2026-10-17; 75% remainder .* due 2026-10-19/);
+  assert.match(garagePortal.estimate.terms, /25% deposit .* due 2026-10-17; 75% remainder .* due when the job is complete, scheduled for 2026-10-19/);
   assert.doesNotMatch(JSON.stringify(garagePortal.estimate), hourly);
   // The staff still see the man-hours sold.
   assert.deepEqual(walkthroughCrewBrief(garage.jobInstructions).find(row => row.label === 'Man-hours sold'), { label: 'Man-hours sold', text: '6 man-hours' });
