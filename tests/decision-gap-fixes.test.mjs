@@ -16,6 +16,7 @@ import { moneyDocumentModel } from '../functions/_lib/money-document.js';
 import { salesExitService } from '../functions/_lib/sales-followup-exit.js';
 import { signedGarageHandoff } from '../functions/_lib/knock-setters.js';
 import { accountView } from '../functions/_lib/business-hub-core.js';
+import { partnerRateCard } from '../functions/_lib/pricing-config.js';
 import { applyFirestoreCommit } from './helpers/firestore-commit.mjs';
 import { env, portalCookie, portalHandlers, portalPost, portalStore, portalView } from './helpers/portal-fixture.mjs';
 import { NOW as SIGNED_AT, ON_ENV, SHELF, TOTES, builderState, fixture, menu, menuItem, owner, signedPlan } from './helpers/estimator-fixture.mjs';
@@ -338,7 +339,10 @@ test('the public FAQ, the prep guide and the business rate card state the 25% de
   assert.match(guide, /A quote from your walkthrough takes a 25% deposit when you sign or approve it; the remaining 75% is due on the job day, and your quote shows the exact amounts and dates\./);
   for (const page of [faq, guide]) assert.doesNotMatch(page, /Quoted projects take/, 'the copy names the walkthrough quote: an office estimate keeps its own deposit');
   const account = { id: 'a'.repeat(32), company: 'Synthetic Co', billingEmail: 'billing@example.invalid', status: 'active', members: [], requests: [], messages: [], projects: [], properties: [] };
-  const terms = accountView(account, { id: 'b'.repeat(32), name: 'Synthetic Admin', role: 'admin', status: 'active' }, []).rates.terms;
+  // The partner card is hidden from every account since the owner's decision of 2026-10-30 (tests/pricing-config.test.mjs);
+  // its kept copy still states these terms for when the owner turns it on.
+  assert.equal(accountView(account, { id: 'b'.repeat(32), name: 'Synthetic Admin', role: 'admin', status: 'active' }, []).rates, null);
+  const terms = partnerRateCard().terms;
   assert.equal(terms[1], 'Full-service projects: your quote states the deposit and when each payment is due. A walkthrough quote takes a 25% deposit when it is signed or approved and the remaining 75% on the job day. Credit terms require a written agreement.');
   assert.doesNotMatch(terms.join(' '), /50%|on completion/);
   for (const copy of [faq, guide, terms.join(' ')]) assert.doesNotMatch(copy, /seven days|7 days|by the date on|on completion/i, 'no seven-day or completion deposit is promised');

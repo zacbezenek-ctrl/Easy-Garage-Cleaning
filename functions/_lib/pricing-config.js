@@ -57,7 +57,7 @@ const PHONE_QUOTE = {
   ],
 };
 
-// The standard B2B partner rate card shown to a signed-in business account. Its payment terms are the estimator quote's
+// The standard B2B partner rate card, not shown to any account today (businessRateCard below). Its payment terms are the estimator quote's
 // (D-DEPOSIT, quote-payment-policy.js): a 25% deposit when the quote is signed in person (SIGNED_25_75) or approved
 // (a sent quote, SENT_25_75) and 75% on the job day. A quote sent before 2026-10-19 keeps the dates it states, and a
 // quote the office writes in the Hub estimate editor states its own deposit.
@@ -140,8 +140,14 @@ export function walkthroughPricing(catalog) {
   return freeze({ version: WALKTHROUGH_PRICING_VERSION, ...clone(WALKTHROUGH_TABLES), services, hazards: { 'Pest waste': pestWaste }, minutes: clone(WALKTHROUGH_MINUTES) });
 }
 export const phoneQuotePricing = () => freeze(clone(PHONE_QUOTE));
-// Every business account sees the standard partner card today; the account is the hook for a negotiated one.
-export const businessRateCard = account => account && typeof account === 'object' ? clone(B2B_RATE_CARD) : null;
+// Hidden (owner decision 2026-10-30): the pricing engine applies none of the partner card's discounts or minimums, so no
+// business account is shown it, and the Business Hub says its rates are confirmed on each accepted quote. The card is
+// kept for when the owner turns partner discounts on (B2B_RATE_CARD_SHOWN, once the engine applies them); the account is
+// the hook for a negotiated one.
+const B2B_RATE_CARD_SHOWN = false;
+export const businessRateCard = account => B2B_RATE_CARD_SHOWN && account && typeof account === 'object' ? clone(B2B_RATE_CARD) : null;
+/** The kept partner card itself (its copy is checked while it is hidden), never sent to a browser. */
+export const partnerRateCard = () => clone(B2B_RATE_CARD);
 
 // The served parts and a content version: the same tables always give the same version. The owner part comes from
 // owner() (readOwnerEconomics in the API); without one it is unavailable, never a built-in number.
