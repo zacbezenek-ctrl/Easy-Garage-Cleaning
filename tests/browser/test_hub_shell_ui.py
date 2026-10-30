@@ -1,6 +1,6 @@
 """The real employee.html shell with a registered fixture screen: lazy loading, the shared action dialog,
 ?view= history, draft safety during background refreshes, and layout at phone and desktop widths."""
-import re, unittest
+import json, re, unittest
 from playwright.sync_api import expect
 from hub_shell_harness import HubShell, MANAGER, CREW, RESULTS
 
@@ -163,6 +163,28 @@ class HubShellBrowserTests(HubShell, unittest.TestCase):
         expect(page).to_have_url(re.compile(r'\?view=my_day$'))
         self.assertNotIn('finance', self.nav_views())
         self.assertIn('fixture_screen', self.nav_views())
+
+    def test_reloading_the_team_directory_keeps_it_once_access_is_confirmed(self):
+        # The Team directory is allowed only once /api/integration-status reports flags.teamDirectory, which answers after
+        # the Hub picks its first screen. A link or reload keeps it once access is confirmed; without access it falls back.
+        for profile, first, flags in ((CREW, 'My day', {'teamDirectory': True}), (MANAGER, 'Command center', {'teamDirectory': True}), (CREW, 'My day', {})):
+            with self.subTest(user=profile['user'], flags=flags):
+                page = self.open_page(390, 844, profile)
+                page.route('**/api/integration-status', lambda route: route.fulfill(status=200, content_type='application/json',
+                           body=json.dumps({'ok': True, 'status': {'firebase': True, 'employeeAccounts': True}, 'flags': {'moneyApi': False, 'lifecycleApi': False, **flags}})))
+                page.goto(f'{self.url}/employee.html?view=team_directory')
+                if flags:
+                    for _ in range(2):
+                        expect(page.locator('#ops-title')).to_have_text('Team directory')
+                        expect(page.locator('.ops-nav [data-ops-tab="team_directory"].active')).to_have_count(1)
+                        expect(page).to_have_url(re.compile(r'\?view=team_directory$'))
+                        page.reload()
+                    self.assertEqual(page.evaluate('history.length'), 2, 'about:blank and the Team directory: no entry for the wait')
+                else:
+                    expect(page).to_have_url(re.compile(r'\?view=my_day$'))
+                    expect(page.locator('#ops-title')).to_have_text(first)
+                    self.assertNotIn('team_directory', self.nav_views())
+                self.close_page()
 
 
 if __name__ == '__main__':
