@@ -6,6 +6,11 @@ import { addDays, validDate, zonedDate } from './knock-time.js';
 import { PACKAGES } from './knock-settings.js';
 
 const money = value => Math.round(Number(value || 0) * 100) / 100;
+// A rate's share of a dollar amount in whole cents, half a cent rounded up, worked in exact integers (the rate in
+// millionths) like the setter and estimator shares (functions/_lib/knock-allocations.js): 25% of $512.06 is $128.02,
+// where a floating-point product rounds it down to $128.01.
+const toCents = value => Math.round(Number(value || 0) * 100);
+const share = (cents, rate) => Math.floor((cents * Math.round(Number(rate) * 1e6) + 5e5) / 1e6) / 100;
 const ms = value => (typeof value === 'number' ? value : Date.parse(value));
 const TERM_FIELDS = ['rate', 'acceleratorEnabled', 'acceleratorThreshold', 'acceleratorRate', 'leadOverrideEnabled', 'leadOverrideRate'];
 
@@ -225,11 +230,11 @@ export function isEarned(sale, now = Date.now()) {
 /* Commission on `amount` of collected revenue when `running` was already collected this month:
    the base rate up to the accelerator threshold, the accelerator rate above it. */
 export function tieredCommission(running, amount, commission) {
-  const rate = Number(commission?.rate ?? 0.25);
-  if (commission?.acceleratorEnabled === false) return { base: money(amount * rate), accelerator: 0 };
+  const rate = Number(commission?.rate ?? 0.25), cents = toCents(amount);
+  if (commission?.acceleratorEnabled === false) return { base: share(cents, rate), accelerator: 0 };
   const threshold = Number(commission?.acceleratorThreshold ?? 8000);
-  const below = Math.max(0, Math.min(amount, threshold - running));
-  return { base: money(below * rate), accelerator: money((amount - below) * Number(commission?.acceleratorRate ?? 0.3)) };
+  const below = Math.max(0, Math.min(cents, toCents(threshold) - toCents(running)));
+  return { base: share(below, rate), accelerator: share(cents - below, Number(commission?.acceleratorRate ?? 0.3)) };
 }
 
 /* Commission per earned sale. Returns [{ saleId, repKey, month, collected, base, accelerator, total, earnedAt }]. */
@@ -272,11 +277,11 @@ export function leadOverrides(sales, commission, { now = Date.now() } = {}) {
   if (commission?.verified === false) return [];
   return unique(sales || [])
     .filter(sale => sale.leadKey && sale.leadKey !== sale.repKey && isEarned(sale, now) && saleTerms(sale, commission)?.leadOverrideEnabled)
-    .map(sale => ({ saleId: sale.id, leadKey: sale.leadKey, repKey: sale.repKey, amount: money(collectedAmount(sale) * saleTerms(sale, commission).leadOverrideRate), earnedAt: earnedAt(sale) }));
+    .map(sale => ({ saleId: sale.id, leadKey: sale.leadKey, repKey: sale.repKey, amount: share(toCents(collectedAmount(sale)), saleTerms(sale, commission).leadOverrideRate), earnedAt: earnedAt(sale) }));
 }
 
 // Commission a booked sale would pay at the base rate (for "pending").
-export const projectedCommission = (sale, commission) => commission?.verified === false || !saleTerms(sale, commission) ? null : sale?.status === 'cancelled' ? 0 : money(Number(sale?.ticket || 0) * Number(saleTerms(sale, commission).rate));
+export const projectedCommission = (sale, commission) => commission?.verified === false || !saleTerms(sale, commission) ? null : sale?.status === 'cancelled' ? 0 : share(toCents(sale?.ticket), saleTerms(sale, commission).rate);
 
 /* ---- Pay periods ---- */
 

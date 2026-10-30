@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sunsetInstant, formatClock, knockWindow, doorAllowed, zonedInstant, zonedDate } from '../crew/knock-time.js';
 import { cancellationWindow, depositAmount, depositRefundStatus, federalHolidays, isBusinessDay, jobDateAllowed } from '../crew/knock-sale-rules.js';
-import { monthlyCommission, saleCommissions, leadOverrides, payPeriodFor, periodStatement, commissionCsv, csvCell } from '../crew/knock-money.js';
+import { monthlyCommission, saleCommissions, leadOverrides, projectedCommission, tieredCommission, payPeriodFor, periodStatement, commissionCsv, csvCell } from '../crew/knock-money.js';
 import { gateStatus, shiftTiming, countKnocks, metrics, planComparison, scoreboard, daySummary, coverage } from '../crew/knock-stats.js';
 import { DEFAULT_SETTINGS, mergeSettings, validateSettings } from '../crew/knock-settings.js';
 
@@ -137,6 +137,33 @@ test('explicit historical lead override pays 3% of team collected revenue, never
     paid('c', 1000, '2026-10-22T18:00:00Z'),
   ], { ...DEFAULT_SETTINGS.commission, leadOverrideEnabled: true }, { now });
   assert.deepEqual(overrides.map(o => [o.leadKey, o.amount]), [['lead.one', 60]]);
+});
+
+// The exact share in whole cents, half a cent rounded up: how the setter and estimator shares round
+// (functions/_lib/knock-allocations.js 'nearest_cent').
+const halfUpCents = (cents, percent) => Math.floor((cents * percent + 50) / 100);
+
+test('door-sale commission rounds half a cent up on every ticket, like the setter and estimator shares', () => {
+  const now = Date.parse('2026-12-01T00:00:00Z'), flat = DEFAULT_SETTINGS.commission;
+  const accelerated = { ...flat, acceleratorEnabled: true, leadOverrideEnabled: true };
+  // $512.06 at 25% is $128.015: the rep is paid $128.02, booked, pending and earned alike.
+  const sale = paid('half', 512.06, '2026-10-20T18:00:00Z', { leadKey: 'lead.one' });
+  assert.deepEqual(tieredCommission(0, 512.06, flat), { base: 128.02, accelerator: 0 });
+  assert.equal(projectedCommission(sale, flat), 128.02);
+  assert.deepEqual(saleCommissions([sale], flat, { now }).map(r => [r.base, r.total]), [[128.02, 128.02]]);
+  assert.equal(monthlyCommission(512.06, flat), 128.02);
+  // A lead's 3% of $0.50 is $0.015, paid as $0.02.
+  assert.deepEqual(leadOverrides([paid('lead', 0.5, '2026-10-20T18:00:00Z', { leadKey: 'lead.one' })], accelerated, { now }).map(o => o.amount), [0.02]);
+  // Straddling the $8,000 line: $512.06 below it at 25% ($128.015) and $512.05 above it at 30% ($153.615).
+  assert.deepEqual(tieredCommission(7487.94, 1024.11, accelerated), { base: 128.02, accelerator: 153.62 });
+  const misses = { base: [], projected: [], accelerator: [] };
+  for (let cents = 1; cents <= 500000; cents++) {
+    const dollars = cents / 100, base = halfUpCents(cents, 25) / 100;
+    if (tieredCommission(0, dollars, flat).base !== base || monthlyCommission(dollars, flat) !== base) misses.base.push(dollars);
+    if (projectedCommission({ ticket: dollars }, flat) !== base) misses.projected.push(dollars);
+    if (tieredCommission(8000, dollars, accelerated).accelerator !== halfUpCents(cents, 30) / 100) misses.accelerator.push(dollars);
+  }
+  assert.deepEqual(Object.fromEntries(Object.entries(misses).map(([k, v]) => [k, v.slice(0, 5)])), { base: [], projected: [], accelerator: [] }, 'every ticket from $0.01 to $5,000.00');
 });
 
 test('pay periods: biweekly from the anchor Monday, semimonthly and monthly', () => {
