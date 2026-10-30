@@ -40,6 +40,7 @@ import { handOffScheduleTags, scheduleTagOwner } from '../_lib/ghl-tag-outbox.js
 import { can } from '../_lib/staff-roles.js';
 import { leadDetailsFromNotes } from '../_lib/booking-slots.js';
 import { nativeWebsiteInquiry } from '../_lib/native-website-inquiry.js';
+import { localInstant } from '../_lib/operations-portal-records.js';
 
 const DEFAULT_LEAD_RESET_AT = '2026-09-03T21:51:19.314Z';
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
@@ -623,6 +624,12 @@ export async function onRequestPost({ request, env, waitUntil }) {
   if (payload.tool === 'schedule' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Schedule changes are limited to managers' });
   c.operationsEnv=env;c.operationsSession=session;
   if(operationsEnabled(env)&&['schedule','game_plan'].includes(payload.tool)&&!payload.job_id)return reply(409,{ok:false,code:'SCHEDULE_STABLE_IDENTITY_REQUIRED',error:'Save the exact Hub visit before synchronizing its provider appointment.'});
+  // A Game Plan quote's job time without its own instant is Denver wall-clock time on the job date (MST in winter, MDT in
+  // summer). Where it books the appointment (no operations bridge), a time that date skips or repeats is refused here,
+  // before any HighLevel write or customer invitation.
+  const quoteAt = payload.tool === 'game_plan' && payload.quote?.job_date && payload.quote.start_time && payload.quote.end_time
+    ? { start: payload.quote.start_at || localInstant(payload.quote.job_date, payload.quote.start_time), end: payload.quote.end_at || localInstant(payload.quote.job_date, payload.quote.end_time) } : null;
+  if (quoteAt && !operationsEnabled(env) && !(quoteAt.start && quoteAt.end)) return reply(400, { ok: false, code: 'invalid_schedule', error: 'Choose valid Denver start and end times. Missing or repeated daylight-saving hours require another time.' });
   // This runs independently of notes/calendar writes, and validates approval and
   // recipient from storage. Repeating the handoff cannot send another invitation.
   const portalInvitation = inviteRequested ? await sendAcceptedQuotePortal(env, payload.job_id, { requireRequested: true }) : undefined;
@@ -773,8 +780,7 @@ export async function onRequestPost({ request, env, waitUntil }) {
       if (q.job_date && q.start_time && q.end_time) {
         const scheduled = await createAppointment(c, {
           job_id:payload.job_id,appointment_id: client.highlevel_job_appointment_id || '',
-          event_type: 'job', start_time: q.start_at || `${q.job_date}T${q.start_time}:00-06:00`,
-          end_time: q.end_at || `${q.job_date}T${q.end_time}:00-06:00`, title: q.title || 'EGC Garage Service',
+          event_type: 'job', start_time: quoteAt.start, end_time: quoteAt.end, title: q.title || 'EGC Garage Service',
           address: client.address, notes: appointmentInstructions(payload), notify: handoffRequestId ? payload.notify !== false : true, idempotency_key: payload.idempotency_key || '',
         }, contactId);
         const tagPlan = await scheduleTagOwner(env, savedJob), outboxTags = tagPlan.owner === 'outbox', calendarSkip = scheduled.calendarMirror?.status === 'skipped';
