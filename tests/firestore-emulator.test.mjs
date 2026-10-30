@@ -58,6 +58,7 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
         'stripe_events/evt_synthetic':{type:'invoice.paid',subscriptionId:'sub_synthetic'},
         'membership_reviews/sub_synthetic':{status:'open',reason:'ambiguous_customer'},
         'garage_guard_operations/receipt':{actorId:'zacb',action:'visits.reconcile',fingerprint:'synthetic'},
+        'guard_sale_texts/cs_test_synthetic':{sessionId:'cs_test_synthetic',jobId:'assigned',sentBy:'crew.one',status:'sent'},
         'payment_reviews/cs_test_synthetic':{status:'open',reason:'payment_exceeds_balance',jobId:'assigned',amountCents:50000},
         'moneyOperations/receipt':{actorId:'zacb',action:'payment.record_offline',jobId:'assigned',fingerprint:'synthetic'},
         'moneyInvoiceNumbers/n_INV-ASSIGN':{number:'INV-ASSIGN',jobId:'assigned'},
@@ -242,11 +243,14 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       await environment.withSecurityRulesDisabled(async context=>assert.deepEqual((await context.firestore().doc('jobs/ghl-tagged').get()).data().ghlTagEntry,pointer));
     });
     await t.test('Garage Guard memberships, Stripe event receipts and reviews are webhook-only',async()=>{
-      for(const db of [publicDb,crew,manager]) for(const path of ['memberships/sub_synthetic','stripe_events/evt_synthetic','membership_reviews/sub_synthetic','payment_reviews/cs_test_synthetic','garage_guard_operations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
+      for(const db of [publicDb,crew,manager]) for(const path of ['memberships/sub_synthetic','stripe_events/evt_synthetic','membership_reviews/sub_synthetic','payment_reviews/cs_test_synthetic','garage_guard_operations/receipt','guard_sale_texts/cs_test_synthetic']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
       await assertFails(manager.doc('memberships/sub_new').set({plan:'black',status:'active'}));
       await assertFails(manager.collection('memberships').get());
       await assertFails(manager.collection('payment_reviews').get());
       await assertFails(manager.collection('garage_guard_operations').get());
+      // GUARD-SELL: the one-text-per-sign-up claims are written only by /api/garage-guard-sell.
+      await assertFails(manager.collection('guard_sale_texts').get());
+      await assertFails(crew.doc('guard_sale_texts/cs_test_forged').set({status:'sent',jobId:'assigned'}));
       await assertFails(crew.doc('payment_reviews/cs_test_forged').set({status:'resolved',jobId:'assigned'}));
       // A held (tipped or untipped) charge is resolved only through POST /api/stripe-reviews, never from a browser SDK.
       await assertFails(manager.doc('payment_reviews/cs_test_synthetic').update({status:'resolved',resolution:'refunded'}));

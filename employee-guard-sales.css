@@ -1,0 +1,19 @@
+/* GUARD-SELL: Garage Guard sales screen (owners and managers). Scoped to .gs-screen; colours come from the Hub kit tokens.
+   The sales sheet itself is crew/guard-sell.css. */
+.gs-screen{padding-bottom:var(--hub-space-4)}
+.gs-screen h2{font-size:22px;margin:0 0 var(--hub-space-3)}
+.gs-screen .gs-muted{margin:0 0 var(--hub-space-3);color:var(--hub-muted);font-size:14px;line-height:1.45}
+.gs-screen .gs-sell .hub-btn{min-height:var(--hub-tap)}
+.gs-screen .gs-table-wrap{overflow-x:auto}
+.gs-screen .gs-table{width:100%;border-collapse:collapse;font-size:14px}
+.gs-screen .gs-table :is(th,td){padding:10px 8px;border-top:1px solid var(--hub-line);text-align:left;vertical-align:top;overflow-wrap:anywhere}
+.gs-screen .gs-table thead th{border-top:0;font:700 12px/1.3 var(--hub-font);color:var(--hub-muted);white-space:nowrap}
+.gs-screen .gs-table tbody th{position:static;font:700 14px/1.4 var(--hub-font);letter-spacing:0;text-transform:none;color:var(--hub-ink);background:none}
+@media (max-width:760px){
+  .gs-screen .gs-table-wrap{overflow:visible}
+  .gs-screen .gs-table thead{display:none}
+  .gs-screen .gs-table,.gs-screen .gs-table tbody,.gs-screen .gs-table tr{display:block}
+  .gs-screen .gs-table tr{border:1px solid var(--hub-line);border-radius:var(--hub-radius);background:#fff;padding:6px 12px;margin:0 0 var(--hub-space-3)}
+  .gs-screen .gs-table :is(th,td){display:grid;grid-template-columns:96px minmax(0,1fr);gap:8px;border-top:0;padding:6px 0}
+  .gs-screen .gs-table :is(th,td)::before{content:attr(data-label);font:700 12px/1.4 var(--hub-font);color:var(--hub-muted)}
+}

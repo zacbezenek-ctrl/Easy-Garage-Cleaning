@@ -29,7 +29,8 @@ const tabs = page => page.document.querySelectorAll('[data-ops-tab]').map(button
 // WP14c's Purchase list (employee-purchase-list.js) follows Walkthroughs in RUN THE BUSINESS.
 // Job actuals (owner report, business access) registers just before Review queues in RUN THE BUSINESS; Open quotes
 // (business access, read only) follows it.
-const SHIPPED = ['job_actuals', 'crew_performance', 'open_quotes', 'reviews', 'message_templates', 'stocked_costs', 'staff', 'invoicing', 'business_requests', 'customer_visit_requests', 'walkthroughs', 'purchase_list'];
+// GUARD-SELL: guard_sales (Garage Guard sales) is a business screen like the others.
+const SHIPPED = ['job_actuals', 'crew_performance', 'open_quotes', 'reviews', 'message_templates', 'stocked_costs', 'staff', 'invoicing', 'business_requests', 'customer_visit_requests', 'walkthroughs', 'purchase_list', 'guard_sales'];
 const OWNER_SHIPPED = ['followup_settings', 'ad_spend', 'catalog', 'dispatch_rules'];
 const CREW_SHIPPED = ['crew_alerts', 'shift_swaps'];
 const PASSWORD_SHIPPED = ['password'];

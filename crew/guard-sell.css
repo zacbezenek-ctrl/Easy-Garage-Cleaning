@@ -1,0 +1,53 @@
+/* GUARD-SELL: the Garage Guard sales sheet (crew/guard-sell.js). Phone first: one column, 44px+ controls, 16px inputs
+   (no iOS zoom), no horizontal scroll at 320px; on an iPad or laptop it is a centered card. */
+html.egs-open{overflow:hidden}
+.egs-backdrop{position:fixed;inset:0;z-index:9990;background:rgba(8,14,26,.72);display:flex;align-items:flex-end;justify-content:center;
+  padding:max(env(safe-area-inset-top),12px) 0 0;font-family:'Inter',system-ui,-apple-system,sans-serif;color:#13203a}
+.egs-sheet{box-sizing:border-box;width:100%;max-width:560px;max-height:100%;overflow-y:auto;overscroll-behavior:contain;background:#faf5ec;
+  border-radius:18px 18px 0 0;padding:16px 16px max(env(safe-area-inset-bottom),18px);box-shadow:0 -12px 40px rgba(0,0,0,.35);outline:none}
+.egs-sheet *{box-sizing:border-box}
+@media(min-width:700px){.egs-backdrop{align-items:center;padding:24px}.egs-sheet{border-radius:18px;max-height:calc(100vh - 48px)}}
+.egs-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px}
+.egs-eyebrow{display:block;font-family:'Oswald',system-ui,sans-serif;font-weight:600;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#c4470f}
+.egs-head h2{margin:2px 0 0;font-family:'Oswald',system-ui,sans-serif;font-size:26px;line-height:1.1;text-transform:uppercase;color:#13203a}
+.egs-x{flex:none;width:48px;height:48px;border:0;border-radius:12px;background:#13203a;color:#fff;font-size:28px;line-height:1;cursor:pointer}
+.egs-body{display:grid;gap:12px;min-width:0}
+.egs-body p{margin:0;line-height:1.45}
+.egs-for{font-size:16px}
+.egs-muted{color:#5f584b;font-size:14px}
+.egs-small{font-size:13px}
+.egs-error{color:#9b1c1c;background:#fde8e8;border:1px solid #f5b5b5;border-radius:10px;padding:10px 12px;font-size:14.5px}
+.egs-plans{display:grid;gap:10px}
+.egs-plan{display:block;width:100%;min-height:64px;text-align:left;font:inherit;color:#13203a;background:#fff;border:2px solid #d9cdb8;border-radius:14px;padding:13px 14px;cursor:pointer}
+.egs-plan.is-on{border-color:#e8581c;background:#fff4ee;box-shadow:0 0 0 2px rgba(232,88,28,.25)}
+.egs-plan:focus-visible,.egs-btn:focus-visible,.egs-x:focus-visible,.egs-link:focus-visible{outline:3px solid #e8581c;outline-offset:2px}
+.egs-plan-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.egs-plan-head strong{font-family:'Oswald',system-ui,sans-serif;font-size:20px;text-transform:uppercase;letter-spacing:.02em}
+.egs-price{font-weight:800;font-size:18px;white-space:nowrap}
+.egs-price small{font-weight:600;font-size:13px;color:#5f584b}
+.egs-includes{display:grid;gap:3px;margin-top:6px}
+.egs-inc{display:block;font-size:14.5px;line-height:1.35;padding-left:16px;position:relative}
+.egs-inc::before{content:"";position:absolute;left:3px;top:.55em;width:6px;height:6px;border-radius:50%;background:#e8581c}
+.egs-fields{border:1.5px solid #d9cdb8;border-radius:14px;padding:10px 14px 14px;margin:0;display:grid;gap:6px;min-width:0}
+.egs-fields legend{font-family:'Oswald',system-ui,sans-serif;font-weight:600;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#8a8170;padding:0 6px}
+.egs-fields label{font-weight:700;font-size:14px;margin-top:4px}
+.egs-fields input{width:100%;min-height:48px;font:inherit;font-size:16px;color:#13203a;background:#fff;border:1.5px solid #d9cdb8;border-radius:10px;padding:11px 12px}
+.egs-fields input:focus{outline:none;border-color:#e8581c}
+.egs-actions{display:flex;flex-wrap:wrap;gap:10px}
+.egs-btn{flex:1 1 auto;min-height:50px;min-width:44px;border:2px solid #13203a;border-radius:12px;background:#fff;color:#13203a;font-family:'Oswald',system-ui,sans-serif;font-weight:600;
+  font-size:15px;letter-spacing:.05em;text-transform:uppercase;padding:10px 16px;cursor:pointer}
+.egs-btn.egs-primary{background:#e8581c;border-color:#e8581c;color:#fff}
+.egs-btn:disabled{opacity:.55;cursor:not-allowed}
+.egs-actions-quiet .egs-btn{min-height:46px;font-size:14px}
+.egs-plan-line{font-size:17px;text-align:center}
+.egs-plan-line strong{font-family:'Oswald',system-ui,sans-serif;text-transform:uppercase}
+.egs-qr{background:#fff;border-radius:14px;padding:10px;margin:0 auto;width:min(100%,360px)}
+.egs-qr svg{display:block;width:100%;height:auto}
+.egs-hint{text-align:center;font-weight:600}
+.egs-link{display:block;min-height:44px;padding:11px 12px;border-radius:10px;background:#fff;border:1.5px dashed #d9cdb8;color:#13203a;font-family:'JetBrains Mono',ui-monospace,monospace;
+  font-size:12.5px;line-height:1.4;overflow-wrap:anywhere;word-break:break-all;text-decoration:none}
+.egs-status{text-align:center;font-weight:600;background:#eef0f4;border-radius:12px;padding:12px}
+.egs-status.is-member{background:#e3f3e8;color:#1f5e37;font-size:17px}
+.egs-status.is-expired{background:#fdf1e0;color:#7a4a00}
+.egs-launch{min-height:48px;border:0;border-radius:11px;background:#e8581c;color:#fff;font-family:'Oswald',system-ui,sans-serif;font-weight:600;font-size:14px;letter-spacing:.05em;
+  text-transform:uppercase;padding:12px 16px;cursor:pointer}
