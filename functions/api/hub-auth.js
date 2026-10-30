@@ -6,7 +6,7 @@ import {
   hubAuthConfigured,
   isHubOwner,
 } from '../_lib/hub-session.js';
-import { capabilityMode, staffCapabilities, staffPasswordResetEnabled, staffRoleAccessEnabled } from '../_lib/staff-roles.js';
+import { capabilityMode, officeRole, staffCapabilities, staffPasswordResetEnabled, staffRoleAccessEnabled } from '../_lib/staff-roles.js';
 import { consumeStaffSignIn, staffSignInLimitStore } from '../_lib/staff-sign-in-limit.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
@@ -19,8 +19,9 @@ function reply(status, body, extraHeaders = {}) {
 }
 
 // The capabilities every API decides with (staff-roles.js can()); with EGC_STAFF_ROLE_ACCESS on,
-// roleAccess:true tells pages to gate on them alone (crew/hub-auth.js). Flag off: the body is unchanged.
-const access = (profile, env) => ({ owner: isHubOwner(profile), capabilities: staffCapabilities(profile, env), capabilityMode: capabilityMode(profile, env), ...(staffRoleAccessEnabled(env) ? { roleAccess: true } : {}) });
+// roleAccess:true tells pages to gate on them alone (crew/hub-auth.js). Flag off: the body is unchanged, except for an
+// office-role session (staff-roles.js officeRole), whose booking needs no flag: it gates on its capabilities alone too.
+const access = (profile, env) => ({ owner: isHubOwner(profile), capabilities: staffCapabilities(profile, env), capabilityMode: capabilityMode(profile, env), ...(staffRoleAccessEnabled(env) || officeRole(profile, env) ? { roleAccess: true } : {}) });
 
 function allowed(request) {
   const fetchSite = request.headers.get('Sec-Fetch-Site');

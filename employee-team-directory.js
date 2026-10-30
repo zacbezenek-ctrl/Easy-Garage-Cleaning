@@ -8,7 +8,7 @@
 'use strict';
 if(window.EGCTeamDirectory)return;
 const PATH='/api/staff-directory',SCREEN='team_directory',SIZES=['XS','S','M','L','XL','2XL','3XL','4XL'],SOON_DAYS=30,SOON_MAX=8;
-const ROLE_LABEL={owner:'Owner',manager:'Manager',team_lead:'Team lead',crew_lead:'Crew lead',crew:'Crew',sales:'Sales',phone:'Phone'};
+const ROLE_LABEL={owner:'Owner',manager:'Manager',team_lead:'Team lead',crew_lead:'Crew lead',crew:'Crew',sales:'Sales',phone:'Phone',office:'Office'};
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const ERRORS={staff_directory_not_enabled:'The team directory is not turned on for this Hub yet.',
   staff_directory_revision_conflict:'This card changed while you were editing. The latest details are shown; check them and save again.',

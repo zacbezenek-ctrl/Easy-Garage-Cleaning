@@ -196,7 +196,7 @@ function validateInput(input) {
 function staffRolesChange(person, input, session) {
   if (person.source !== 'employee_account') throw fail('configured_account', 'Configured Hub users keep the roles and pay set in the Hub user configuration.', 409);
   const roles = input.staffRoles;
-  if (!Array.isArray(roles) || !roles.length || roles.length > STAFF_ROLES.length || roles.some(role => typeof role !== 'string' || !STAFF_ROLES.includes(role)) || new Set(roles).size !== roles.length) throw fail('invalid_roles', 'Choose one or more staff roles: manager, crew_lead, crew, sales or phone.');
+  if (!Array.isArray(roles) || !roles.length || roles.length > STAFF_ROLES.length || roles.some(role => typeof role !== 'string' || !STAFF_ROLES.includes(role)) || new Set(roles).size !== roles.length) throw fail('invalid_roles', 'Choose one or more staff roles: manager, team_lead, crew_lead, crew, sales, phone or office.');
   if (roles.includes('owner')) throw fail('owner_role_reserved', 'The owner role belongs only to the configured owner account.', 403);
   const next = STAFF_ROLES.filter(role => roles.includes(role));
   // A manager the owner lets approve accounts (STAFF-ACCESS) sets roles, but never gives or removes the manager role and

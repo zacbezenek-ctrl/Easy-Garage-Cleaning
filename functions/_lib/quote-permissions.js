@@ -24,9 +24,23 @@ const signed = session => Boolean(session) && typeof session === 'object' && typ
 
 export const isDispatcher = session => signed(session) && hasBusinessAccess(session) && ['owner', 'manager'].includes(session.role);
 
+// OFFICE (owner request 2026-10-30): an office-role session (quotes.removal, and not already a quote author) authors
+// removal-only photo quotes through /api/quote-draft and nowhere else. That handler hands the quote-draft library the
+// session officeQuoteSession returns, marked with a Symbol a browser cannot send, and checks that every quote the
+// session prices, saves, revises, reads or sends is removal-only and has no walkthrough (office-quotes.js). The marked
+// session is a quote author that is never a dispatcher (removalOnly:true); the role itself is not a quote author, so the
+// walkthrough, its signed handoff, the gameplan and every other quote-author check refuse it as before.
+const OFFICE_QUOTE = Symbol('egc.officeQuote');
+export const officeQuoteActor = session => signed(session) && session[OFFICE_QUOTE] === true;
+export function officeQuoteSession(session, env = {}) {
+  if (!signed(session) || officeQuoteActor(session) || quoteAuthorAccess(session, env).author || !can(session, 'quotes.removal', env)) return session;
+  return { ...session, [OFFICE_QUOTE]: true };
+}
+
 // REP-WALKTHROUGH: a Knock rep's session for their own self-run walkthrough (knock-self-walkthrough.js, given only to a
 // request naming that visit or the job saved from it) authors that one walkthrough and is never a dispatcher.
 export function quoteAuthorAccess(session, env = {}) {
+  if (officeQuoteActor(session)) return { dispatcher: false, author: true, removalOnly: true };
   if (signed(session) && selfWalkthroughVisitId(session)) return { dispatcher: false, author: true };
   if (staffRoleAccessEnabled(env)) {
     const dispatcher = signed(session) && can(session, 'dispatch.write', env);
@@ -44,11 +58,12 @@ export function requireQuoteAuthor(session, env = {}) {
   return access;
 }
 
-// /api/customer-resolve: a quote author, or with EGC_STAFF_ROLE_ACCESS a booker
-// (schedule.book: the phone role) finding or adding the customer of a booking.
+// /api/customer-resolve: a quote author, or a booker (schedule.book: with EGC_STAFF_ROLE_ACCESS the phone role, and
+// OFFICE the office role in every mode) finding or adding the customer of a booking or a photo quote.
 // Anyone but a dispatcher gets the masked customer (customer-resolution.js).
 export function requireCustomerResolver(session, env = {}) {
-  if (!staffRoleAccessEnabled(env) || !signed(session) || quoteAuthorAccess(session, env).author) return requireQuoteAuthor(session, env);
-  if (!can(session, 'schedule.book', env)) throw fail('quote_forbidden', 'Customer lookups need the Sales or Phone role. Ask the owner.', 403);
-  return { dispatcher: false, author: false };
+  if (!signed(session) || quoteAuthorAccess(session, env).author) return requireQuoteAuthor(session, env);
+  if (can(session, 'schedule.book', env)) return { dispatcher: false, author: false };
+  if (!staffRoleAccessEnabled(env)) return requireQuoteAuthor(session, env);
+  throw fail('quote_forbidden', 'Customer lookups need the Sales or Phone role. Ask the owner.', 403);
 }
