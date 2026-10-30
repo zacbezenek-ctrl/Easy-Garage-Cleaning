@@ -13,7 +13,7 @@ Each finding below was reproduced by a script run against the real modules, with
 | S-01 | High | Anyone could guess staff passwords, including the owner's, with no limit on attempts. | Fixed |
 | S-02 | High | A customer address, phone or email containing code ran that code in the owner's Hub, which could take over the owner session. | Fixed |
 | M-01 | Medium | The public lead form can be scripted to text any phone, flood team alerts, and overwrite an existing customer's name and email in HighLevel. | Partly fixed (rate limits; missing-origin counted); contact-overwrite part waits for Cesar |
-| M-02 | Medium | Later visits on a company-managed project can still get a full owner portal link, which skips the company's member roles. | Open |
+| M-02 | Medium | Later visits on a company-managed project can still get a full owner portal link, which skips the company's member roles. | Fixed (later PR, branch `claude/portal-business-root-links`) |
 | M-03 | Medium | Anonymous sign-ins (unknown usernames) and staff signups each read every employee account, which could burn the Firestore quota and take sign-in down. | Partly fixed (S-01 limits sign-in); signup open |
 | L-01 | Low | Signing out of the Hub doesn't kill a session that was already copied; it stays valid for up to 12 hours. | Open (pending sessions branch) |
 | L-02 | Low | Co-Pilot believes whatever name the browser sends, and any staff login can spend the OpenAI key without limit. | Open |
@@ -190,7 +190,7 @@ Sales or Phone role staff can do the same through `POST /api/customer-resolve`. 
 3. On `/contacts/upsert`, don't overwrite `name` and `email` on a contact that already exists. Add a note instead.
 4. Add a Cloudflare rate-limit rule for `/api/web-lead`.
 
-### M-02: owner portal links on later visits of a company-managed project
+### M-02: owner portal links on later visits of a company-managed project (Fixed)
 
 **Where:** "business-managed" is decided two ways.
 - `message-links.js:25-29` and `customer-account-access.js:43` treat a job as company-managed when the job *or its account root* has `businessAccountId`.
@@ -204,6 +204,13 @@ Sales or Phone role staff can do the same through `POST /api/customer-resolve`. 
 **Proof:** a test mints an owner link, sends an invitation SMS containing it, and opens a session with `viewer.owner = true`. With that session it creates a collaborator link. `message-links` refuses the same job, which shows the inconsistency.
 
 **Recommended fix:** in the three places, also refuse when the resolved account root is business-linked. Use `businessAccountJob(account)`, as `message-links.js:28` does.
+
+**Status:** fixed after this review, on branch `claude/portal-business-root-links`. The root-aware check is now one shared predicate, `businessManaged(job, root)` in `functions/_lib/portal-invitation.js`, which `customer-account-access.js` also uses.
+- **Copy customer portal** (`functions/api/customer-portal-link.js`) answers 409 when the account root is linked, with the same wording as a linked job.
+- The accepted-quote invitation (`functions/_lib/portal-invitation.js`) resolves the account root before any HighLevel call and records `suppressed` / `business_account_job`. It checks again after the contact lookup and after the delivery claim. A root that cannot be verified never sends.
+- The portal (`functions/_lib/customer-portal-access.js` gives `businessManaged`; `functions/api/customer-portal.js` uses it) hides **Copy invite** (`invitesAvailable: false`), and `create_collaborator_invite` answers 403 `CUSTOMER_PORTAL_BUSINESS_PROJECT`.
+- Regression tests: the `M-02:` tests in `tests/business-hub-portal-safety.test.mjs`.
+- Unchanged: as for a linked job, owner links shared before the company link keep working until staff revoke them.
 
 ### M-03: anonymous requests read and decrypt every employee account
 

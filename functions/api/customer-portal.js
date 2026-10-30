@@ -289,7 +289,7 @@ function decisionView(item, context) {
   };
 }
 
-function customerExperience(job, owner = true, { billing = false, now = '' } = {}) {
+function customerExperience(job, owner = true, { billing = false, now = '', business = businessAccountJob(job) } = {}) {
   const memory = job.customerMemory || {};
   const rules = job.jobDayRules || {};
   const collaborators = Array.isArray(job.customerCollaborators) ? job.customerCollaborators : [];
@@ -318,7 +318,8 @@ function customerExperience(job, owner = true, { billing = false, now = '' } = {
     })),
     // A company project's people are managed in its business account, and the
     // server refuses invitations for it (CUSTOMER_PORTAL_BUSINESS_PROJECT).
-    invitesAvailable: owner && !businessAccountJob(job),
+    // business: the job or its account root is linked (context.businessManaged).
+    invitesAvailable: owner && !business,
     decisions: decisions.slice(-20).map(item => decisionView(item, shown)).sort((a, b) => String(b.promptedAt).localeCompare(String(a.promptedAt))),
     rebooking: requests.slice(-10).map(request => ({
       id: id(request.id, 'rebook'), kind: ['repeat', 'touch_up', 'garage_guard'].includes(request.kind) ? request.kind : 'repeat',
@@ -362,11 +363,11 @@ const portalJobKey = jobId => bytesToHex(sha256(new TextEncoder().encode(`egc-po
 // binds keep today's figures in every mode; in mode 'unified' the payment block serves money-core's unified totals, lists
 // each billed change (changes) and says when the amounts need the team's review (moneyReview: nothing is due online). A job
 // with no quote saved yet is shown as today, with nothing due and no review (unpriced).
-function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false, billing = false, now = '', tips = false, held = false, mode = 'off' }) {
+function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false, billing = false, now = '', tips = false, held = false, mode = 'off', business }) {
   const quoted = moneyState(job), finance = mode === 'unified' ? moneyState(job, mode) : quoted, withheld = unsentQuoteDraft(job);
   const estimate = withheld ? withheldEstimate(job) : estimateState(job, quoted, today, draftsRejected);
   const state = portalStatus(job), review = reviewReady(job, mode), { unknown = false, unpriced = false, ...deposit } = customerDepositState(job, finance, mode), moneyReview = unknown && !unpriced;
-  const owner = !session.actorId, experience = customerExperience(job, owner, { billing, now }), actor = experience.collaborators.find(person => person.id === session.actorId);
+  const owner = !session.actorId, experience = customerExperience(job, owner, { billing, now, business }), actor = experience.collaborators.find(person => person.id === session.actorId);
   return {
     ok: true,
     viewer: { owner, actorId: safe(session.actorId, 100), name: actor?.name || '', permissions: session.permissions || { view: true, decide: true, pay: true, rebook: true }, jobKey: portalJobKey(job.id) },
@@ -432,7 +433,7 @@ async function handleGet({ request, env }, deps) {
   // Only with tips on, so the tips-off read is unchanged: held means Pay would be refused now (a held tipped charge,
   // or with PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED any open review), derived from the reviews themselves.
   const held = tips ? await portalPaymentHeld(env, result.session.jobId, result.job, at.toISOString()).catch(() => null) : false;
-  const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env), draftsRejected: rejectDrafts(env), billing: changeOrderBillingEnabled(env), now: at.toISOString(), tips, held, mode }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString(), unified: mode === 'unified', invoiceState: moneyInvoiceStateEnabled(env) }) };
+  const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env), draftsRejected: rejectDrafts(env), billing: changeOrderBillingEnabled(env), now: at.toISOString(), tips, held, mode, business: result.businessManaged }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString(), unified: mode === 'unified', invoiceState: moneyInvoiceStateEnabled(env) }) };
   // Default off: without the flag the DTO keeps its current shape.
   if (customerPhotosEnabled(env) && result.session.permissions?.view !== false) body.beforeAfter = customerPhotoProjection(result.job, customerPhotoPolicy(env));
   // Default off as well. Only active crew profiles appear; a profile read failure hides the crew, never the project.
@@ -689,8 +690,9 @@ async function handlePost({ request, env, waitUntil }, { clock, read, alerts, li
 
   if (body.action === 'create_collaborator_invite') {
     // A company project's people are managed in its business account. An owner
-    // link that predates the business link can never mint more access to it.
-    if (businessAccountJob(result.job)) return reply(403, { ok: false, code: 'CUSTOMER_PORTAL_BUSINESS_PROJECT', error: 'This project is managed through a business account, so invitations are not available here. Contact Easy Garage Cleaning to add someone.' });
+    // link that predates the business link can never mint more access to it, nor
+    // can one for a later visit under that project's account root (M-02).
+    if (result.businessManaged || businessAccountJob(result.job)) return reply(403, { ok: false, code: 'CUSTOMER_PORTAL_BUSINESS_PROJECT', error: 'This project is managed through a business account, so invitations are not available here. Contact Easy Garage Cleaning to add someone.' });
     const personId = id(body.person_id, 'person');
     const people = Array.isArray(result.job.customerCollaborators) ? result.job.customerCollaborators : [];
     const person = people.find(item => item.id === personId && item.status !== 'removed' && !personId.startsWith('biz_'));
