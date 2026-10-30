@@ -237,17 +237,23 @@ Platform unit tests set and restore the feature flags they exercise (`OPENAI_API
 
 ## Container recipe (Claude Code agents)
 
-- Chromium is preinstalled at `/opt/pw-browsers`. Never run `playwright install`. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE=/opt/pw-browsers/chromium-1194/chrome-linux/chrome`.
-- Playwright 1.63 looks for build 1243 when a script ignores `executablePath`. Point `PLAYWRIGHT_BROWSERS_PATH` at a directory that symlinks 1243 to the installed 1194:
+- Chromium is preinstalled at `/opt/pw-browsers` (`chromium-1243` and `chromium_headless_shell-1243` only), and the
+  container sets `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`. Never run `playwright install`.
+- Node Playwright 1.63 uses build 1243, so `chromium.launch()` works with no options and no symlinks (the e2e specs and
+  every `*.browser.mjs` test).
+- For Python, create a venv and run `pip install playwright==1.57.0`. It looks for build 1200, so set
+  `PLAYWRIGHT_CHROMIUM_EXECUTABLE=/opt/pw-browsers/chromium-1243/chrome-linux64/chrome`.
+  `tests/browser/test_catalog_quote_ui.py` ignores that variable; run it with a scratch browsers directory that links
+  build 1200 to 1243:
   ```sh
-  B=$TMPDIR/pwb
-  mkdir -p $B/chromium-1243/chrome-linux64 $B/chromium_headless_shell-1243/chrome-headless-shell-linux64
-  ln -sf /opt/pw-browsers/chromium-1194/chrome-linux/chrome $B/chromium-1243/chrome-linux64/chrome
-  ln -sf /opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell $B/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell
-  touch $B/chromium-1243/INSTALLATION_COMPLETE $B/chromium_headless_shell-1243/{INSTALLATION_COMPLETE,DEPENDENCIES_VALIDATED}
-  export PLAYWRIGHT_BROWSERS_PATH=$B
+  B=$TMPDIR/pwb1200
+  mkdir -p $B/chromium-1200/chrome-linux64 $B/chromium_headless_shell-1200/chrome-headless-shell-linux64
+  ln -sf /opt/pw-browsers/chromium-1243/chrome-linux64/chrome $B/chromium-1200/chrome-linux64/chrome
+  ln -sf /opt/pw-browsers/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell $B/chromium_headless_shell-1200/chrome-headless-shell-linux64/chrome-headless-shell
+  touch $B/chromium-1200/INSTALLATION_COMPLETE $B/chromium_headless_shell-1200/{INSTALLATION_COMPLETE,DEPENDENCIES_VALIDATED}
+  PLAYWRIGHT_BROWSERS_PATH=$B python3 tests/browser/test_catalog_quote_ui.py
   ```
-- For Python, create a venv and run `pip install playwright==1.57.0`. That version uses build 1194 directly.
+  `tests/browser/test_touch_zoom_ui.py` needs WebKit, which the container does not have; CI runs it.
 - Install emulator and Playwright tooling with `npm install --no-save --ignore-scripts …` in a single command. A later `--no-save` install prunes packages that an earlier one added. Delete the generated `package-lock.json`; the root lockfile is not committed.
 - Firestore emulator: always go through `scripts/emulator-exec.mjs`, so concurrent agents never share 8089/8090 or the hub/logging ports.
 - Postgres: give each agent its own cluster instead of sharing `egc_operations_test` (its tables are truncated per test):
@@ -258,4 +264,4 @@ Platform unit tests set and restore the feature flags they exercise (`OPENAI_API
   export DATABASE_URL=postgres://egc_test:isolated_ci_only@localhost:$P/egc_operations_test EGC_OPERATIONS_TEST=isolated
   # afterwards: pg_ctlcluster 16 agent$P stop && pg_dropcluster 16 agent$P
   ```
-- Platform checks: work in a scratch copy with `pnpm install --no-frozen-lockfile && pnpm build:packages && pnpm typecheck && pnpm test && pnpm build`, or restore `egc-platform/apps/portal/next-env.d.ts` afterwards.
+- Platform checks (in `egc-platform/`): `pnpm install --frozen-lockfile && pnpm build:packages && pnpm typecheck && pnpm test && pnpm build`; the frozen install works in the container. Restore `egc-platform/apps/portal/next-env.d.ts` afterwards if the build rewrote it.
