@@ -35,7 +35,7 @@ test('the public-copy scan reads only this checkout, never agent worktrees or QA
   assert.ok(publicHtml().some(file => path.relative(root, file) === 'book.html'), 'the real scan still reaches the public pages');
 });
 
-test('public marketing pages do not promise prices from photos', () => {
+test('public marketing pages promise photo pricing only for removal-only jobs', () => {
   const prohibited = [
     /photo[- ]quotes?/i,
     /flat[- ]rate from (?:your )?photos/i,
@@ -54,7 +54,10 @@ test('public marketing pages do not promise prices from photos', () => {
   assert.deepEqual(failures, []);
   const book = fs.readFileSync(path.join(root, 'book.html'), 'utf8');
   assert.match(book, /Schedule a free on-site garage walkthrough/i);
-  assert.match(book, /We do not price the job from photos/i);
+  // Owner decision 2026-10-30: removal-only jobs (junk and single items) can be priced from photos; garage cleanouts
+  // and organization still start with a free walkthrough. The prohibited phrases above still apply to all copy.
+  assert.match(book, /For junk and single-item pickups, we can price the job from your photos\. Garage cleanouts and organization start with a free walkthrough\./);
+  assert.doesNotMatch(book, /We do not price the job from photos/i);
 });
 
 test('sitemap excludes retired duplicates and private conversion pages', () => {

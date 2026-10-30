@@ -109,7 +109,10 @@ test('changing any portal copy requires a new terms version', () => {
   // Approvals record CUSTOMER_PORTAL_TERMS_VERSION as the copy the customer saw.
   // If this fails, bump the version in customer-portal-content.js, then re-pin.
   const digest = createHash('sha256').update(JSON.stringify(CUSTOMER_PORTAL_CONTENT)).digest('hex');
-  assert.deepEqual({ version: CUSTOMER_PORTAL_TERMS_VERSION, digest }, { version: '2026-10-portal', digest: '6fb0bb490f212da145b4098ba07829b908309c818adedc2a602272c5a939897e' });
+  // 2026-10-30-portal: the owner's 2026-10-30 terms (75% due when the job is complete, the 48-hour deposit line,
+  // removal-only jobs priced from photos). A page still showing 2026-10-portal must reload before approving.
+  assert.deepEqual({ version: CUSTOMER_PORTAL_TERMS_VERSION, digest }, { version: '2026-10-30-portal', digest: 'c073f06a209334b5b75500660e38288ea1abb6583f2984144d6744d56c6e31bb' });
+  assert.equal(approvalTermsVersion('2026-10-portal'), '', 'the previous terms version is stale');
   const dto = customerPortalDocuments();
   assert.equal(dto.termsVersion, CUSTOMER_PORTAL_TERMS_VERSION);
   assert.doesNotMatch(JSON.stringify(dto), /"source"/, 'source notes stay server-side');

@@ -188,40 +188,42 @@ test('quotes already sent keep their saved prices; an unsent pickup saved before
   assert.equal(approved.status, 200, JSON.stringify(approved.body));
 });
 
-test('the public curbside copy says $139 applies when the truck is in the area, and the minimum pickup is $250 otherwise', () => {
+// Owner decision 2026-10-30: the $139 curbside price is retired. Curbside pickup, like every junk or item pickup,
+// starts from $250, the $250 minimum to come out; garage cleanouts keep "from $675".
+test('the public curbside copy starts from $250, the $250 minimum to come out, and names no $139 price', () => {
   const page = readFileSync(new URL('../flat-rate-junk-removal-fort-collins-co.html', import.meta.url), 'utf8'), home = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const text = html => html.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-  assert.match(text(page), /one flat \$139 for up to 4 cubic yards when our truck is already in your area that day; otherwise the minimum pickup is \$250 ?\./);
-  assert.match(text(page), /Published flat price \$139 for up to 4 cubic yards staged at the curb, driveway, or open garage\. No walkthrough needed\. \$139 applies when our truck is already in your area that day; otherwise the minimum pickup is \$250\./);
-  assert.match(text(page), /as long as items are at the curb or driveway and our truck is already in your area that day\. Otherwise the minimum pickup is \$250\./);
-  assert.match(text(home), /flat \$139 for up to 4 cubic yards when our truck is already in your area \(\$250 minimum pickup otherwise\)/);
+  assert.match(text(page), /Curbside pickup starts from \$250 , our \$250 minimum to come out, and we can price it from your photos\./);
+  assert.match(text(page), /Published starting price From \$250 for items staged at the curb, driveway, or open garage, our \$250 minimum to come out\. No walkthrough needed: we can price it from your photos\./);
+  assert.match(text(page), /Curbside pickup starts from \$250, our \$250 minimum to come out, as long as items are at the curb or driveway\./);
+  assert.match(text(home), /Set a small load at the curb and we haul it — from \$250, our \$250 minimum to come out\./);
+  assert.match(text(home), /Garage cleanouts and turnarounds start from \$675/);
   // Plain and honest: no "was" price and no urgency.
   for (const html of [page, home]) assert.doesNotMatch(text(html), /\bwas \$|limited time|act now|hurry/i);
   // The generator's own copy (every service page), regenerated from it.
   const generator = readFileSync(new URL('../_generate_site.py', import.meta.url), 'utf8');
-  assert.match(generator, /Curbside pickup is \$139 flat for up to 4 cubic yards when our truck is already in your area \(\$250 minimum pickup otherwise\)/);
+  assert.match(generator, /Junk removal and item pickups start from \$250, our \$250 minimum to come out, whether you set items at the curb or our crew carries them out\./);
+  assert.doesNotMatch(generator, /CURBSIDE_OR_CARRY_OUT|"price": "139"/);
 });
 
-// Every public page (the site root, blog/ and projects/) that states the $139 curbside price states its condition in
-// the same passage: a paragraph, list item, table row, FAQ answer (schema too) or meta description of more than a
-// label's length that names $139 also names the $250 minimum pickup. Short labels (titles, buttons, badges) are exempt.
-export function unconditionedCurbside(html) {
-  const passages = [], strip = text => text.replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ').trim();
-  for (const [, content] of html.matchAll(/<meta\b[^>]*\bcontent="([^"]*)"/g)) passages.push(content);
-  for (const [, text] of html.matchAll(/"text": "((?:[^"\\]|\\.)*)"/g)) passages.push(text);
-  const body = html.replace(/<script[\s\S]*?<\/script>/g, ' ').replace(/<style[\s\S]*?<\/style>/g, ' ');
-  for (const [, inner] of body.matchAll(/<(?:p|li|tr|summary|figcaption|blockquote)\b[^>]*>([\s\S]*?)<\/(?:p|li|tr|summary|figcaption|blockquote)>/g)) passages.push(strip(inner));
-  return passages.map(strip).filter(text => text.includes('$139') && text.length > 60 && !/\$250/.test(text));
+// Every public page (the site root, blog/ and projects/) is free of the retired $139 price: visible text, links,
+// meta tags and structured data. Hidden form routing labels (subject/source) are internal lead labels, not offers.
+export function retiredCurbsidePrice(html) {
+  const visible = html.replace(/<input\b[^>]*\btype="hidden"[^>]*>/g, ' ').replace(/<style[\s\S]*?<\/style>/g, ' ');
+  return [...visible.matchAll(/.{0,60}(?:\$139\b|%24139|"price": "139").{0,60}/g)].map(match => match[0].replace(/\s+/g, ' ').trim());
 }
-test('every public page that names the $139 curbside price names the $250 minimum pickup with it', async () => {
+test('no public page names the retired $139 curbside price', async () => {
   const { sourceFiles } = await import('./source-files.mjs');
   const { join, relative } = await import('node:path');
   const root = new URL('..', import.meta.url).pathname, pages = sourceFiles(root).map(entry => join(entry.parentPath, entry.name))
     .filter(path => path.endsWith('.html') && ['', 'blog', 'projects'].includes(relative(root, path).split('/').slice(0, -1).join('/')));
   assert.ok(pages.length > 40, String(pages.length));
-  const found = pages.flatMap(path => unconditionedCurbside(readFileSync(path, 'utf8')).map(text => `${relative(root, path)}: ${text.slice(0, 160)}`));
+  const found = pages.flatMap(path => retiredCurbsidePrice(readFileSync(path, 'utf8')).map(text => `${relative(root, path)}: ${text}`));
   assert.deepEqual(found, []);
-  assert.deepEqual(unconditionedCurbside('<p>Set it at the curb for a flat $139 for up to 4 cubic yards, no walkthrough needed.</p>').length, 1, 'the check finds an unconditioned price');
+  for (const file of ['llms.txt', 'ai.txt']) assert.doesNotMatch(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), /\$139\b/, file);
+  assert.equal(retiredCurbsidePrice('<p>Set it at the curb for a flat $139.</p>').length, 1, 'the check finds a visible price');
+  assert.equal(retiredCurbsidePrice('<script type="application/ld+json">{"price": "139"}</script>').length, 1, 'the check finds a schema price');
+  assert.equal(retiredCurbsidePrice('<input type="hidden" name="source" value="Website — Curbside $139">').length, 0, 'hidden routing labels are not offers');
 });
 
 test('a sale draft saved before the minimum is checked against it at send (no floor key: still a pickup)', async () => {

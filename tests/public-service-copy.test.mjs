@@ -17,12 +17,12 @@ test('curbside primary actions request pickup or a quote without promising a boo
   assert.equal(quoteLinks.length, 4, 'nav, drawer, footer and mobile quote actions');
   assert.ok(quoteLinks.every(link => link.href === '#quote'));
   assert.ok(links.filter(link => link.href === '/book').every(link => /walkthrough/i.test(link.label)));
-  assert.ok(links.some(link => link.href === '#quote' && link.label === 'Request My $139 Pickup'));
+  assert.ok(links.some(link => link.href === '#quote' && link.label === 'Request My Curbside Pickup'));
   const primary = links.filter(link => link.href === '#quote' || nav.includes(link));
   assert.doesNotMatch(primary.map(link => link.label).join(' '), /\b(?:book|schedule|walkthrough)\b/i);
   assert.match(html, /<h3>Request pickup<\/h3>/);
   assert.match(html, /We will contact you to confirm load size and availability\./);
-  assert.doesNotMatch(html, /fastest confirmation|Book My \$139 Pickup|Book your slot/);
+  assert.doesNotMatch(html, /fastest confirmation|Book My \$139 Pickup|Request My \$139 Pickup|Book your slot/);
   assert.equal((html.match(/\bid="quote"/g) || []).length, 1);
   assert.match(html, /<section\b[^>]*id="quote"[^>]*tabindex="-1"[^>]*aria-labelledby="cta-heading"/);
 });
@@ -37,13 +37,13 @@ test('curbside retains its two existing forms, field contracts and SMS request d
     assert.equal(attr(attributes, 'method'), 'POST');
     assert.deepEqual([...body.matchAll(/<(?:input|select|textarea)\b([^>]*)>/g)].map(([, attributes]) => attr(attributes, 'name')).sort(), fields);
     assert.match(body, /name="redirect" value="https:\/\/easygaragecleaning\.com\/thank-you"/);
-    assert.match(body, /<button\b[^>]*type="submit"[^>]*>Request My (?:Curbside Quote|\$139 Pickup) &rarr;<\/button>/);
+    assert.match(body, /<button\b[^>]*type="submit"[^>]*>Request My (?:Curbside Quote|Curbside Pickup) &rarr;<\/button>/);
   }
   const sms = anchors(html).filter(link => link.href?.includes('?body='));
   assert.ok(sms.length >= 2);
   for (const link of sms) {
     assert.equal(link.href.split('?')[0], 'sms:+19709991818');
-    assert.equal(new URLSearchParams(link.href.split('?')[1]).get('body'), 'Hi! I would like to request the $139 curbside pickup for up to 4 cubic yards.');
+    assert.equal(new URLSearchParams(link.href.split('?')[1]).get('body'), 'Hi! I would like to request a curbside pickup.');
   }
 });
 
@@ -51,11 +51,14 @@ test('curbside and full-service pricing and walkthrough requirements remain dist
   const curbside = page('flat-rate-junk-removal-fort-collins-co');
   const comparison = curbside.match(/<section class="pricing" id="pricing"[\s\S]*?<\/section>/)?.[0];
   assert.ok(comparison);
-  assert.match(text(comparison), /\$139 curbside pickup.*up to 4 cubic yards.*No walkthrough needed/);
-  assert.match(text(comparison), /Full service from \$675.*carry items out.*free on-site walkthrough/);
+  // Owner decision 2026-10-30: curbside and carry-out junk both start from $250 (removal-only jobs can be priced
+  // from photos); garage cleanouts keep from $675 and a free on-site walkthrough.
+  assert.match(text(comparison), /Curbside pickup from \$250.*No walkthrough needed: we can price it from your photos.*\$250 minimum to come out/);
+  assert.match(text(comparison), /Full service.*carry items out.*Carry-out junk removal also starts from \$250.*Garage cleanouts start from \$675.*free on-site walkthrough/);
+  assert.doesNotMatch(text(comparison), /\$139|4 cubic yards/);
   assert.ok(anchors(comparison).some(link => link.href === '/book' && link.label.startsWith('Request a free walkthrough')));
   assert.match(text(curbside), /No on-site estimate, no hourly clock/);
-  assert.match(text(page('junk-removal-fort-collins-co')), /Curbside pickup is \$139 flat.*crew carries items out.*from \$675/);
+  assert.match(text(page('junk-removal-fort-collins-co')), /Junk removal starts from \$250, our \$250 minimum to come out, whether you set items at the curb or our crew carries them out/);
   for (const name of ['index', 'junk-removal-fort-collins-co']) {
     const nav = anchors(page(name)).filter(link => /(?:^|\s)(?:nav-cta|drawer-cta)(?:\s|$)/.test(link.className));
     assert.ok(nav.length > 0 && nav.every(link => link.href === '/book'), `${name} keeps its garage walkthrough navigation`);

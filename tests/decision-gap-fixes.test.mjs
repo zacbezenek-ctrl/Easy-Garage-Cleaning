@@ -323,19 +323,22 @@ test('a builder quote whose shelving and storage lines are both at the 600-chara
 });
 
 // Owner decision of 2026-10-18 evening: a quote signed in person takes its 25% deposit the day it is signed, and a quote
-// sent from 2026-10-19 on (SENT_25_75) when it is approved, so the copy says "when you sign or approve it". It names the
-// walkthrough quote (an office estimate states its own deposit) and leaves each quote's dates to the quote, as quotes
-// sent earlier on FINAL_25_75 keep theirs.
-test('the public FAQ, the prep guide and the business rate card state the 25% deposit at signing or approval and the job-day remainder', () => {
+// sent from 2026-10-19 on (SENT_25_75) when it is approved. Owner wording of 2026-10-30 for the public FAQ and prep guide:
+// "25% deposit when you approve or sign; the remaining 75% is due when the job is complete", with the 48-hour deposit
+// cancellation line. The copy leaves each quote's dates to the quote, as quotes sent earlier on FINAL_25_75 keep theirs.
+// The business rate card (Business Hub, not the public site) keeps its job-day wording.
+test('the public FAQ, the prep guide and the business rate card state the 25% deposit at signing or approval and when the remainder is due', () => {
   const faq = read('faq.html'), guide = read('blog/how-to-prepare-for-garage-cleanout.html');
   for (const page of [faq, guide]) assert.doesNotMatch(page, /Payment is (?:due|collected) at job completion/);
   assert.deepEqual(quotePaymentDates(SENT_25_75, { walkthroughDate: '2026-10-19', jobDate: '2026-11-10', approvalDate: '2026-10-21T15:00:00Z' }), { depositDueDate: '2026-10-21', remainderDueDate: '2026-11-10' }, 'a sent quote: due when approved');
   assert.deepEqual(quotePaymentDates(FINAL_25_75, { walkthroughDate: '2026-10-19', jobDate: '2026-11-10' }), { depositDueDate: '2026-11-03', remainderDueDate: '2026-11-10' }, 'a quote sent earlier keeps its dates');
-  const answer = 'We accept cash, credit or debit card, Venmo, and Zelle. A quote from your walkthrough takes a 25% deposit when you sign or approve it, and the remaining 75% is due on the job day. Your quote shows the exact amounts and dates.';
+  const cancel = 'If you cancel or reschedule at least 48 hours before your job, your deposit is refunded or moved to the new date; inside 48 hours it covers the crew we reserved.';
+  const answer = `We accept cash, credit or debit card, Venmo, and Zelle. Your quote takes a 25% deposit when you approve or sign it, and the remaining 75% is due when the job is complete. Your quote shows the exact amounts and dates. ${cancel}`;
   const schema = JSON.parse(faq.match(/<script type="application\/ld\+json">(\{"@context": "https:\/\/schema\.org", "@type": "FAQPage".*?)<\/script>/s)[1]);
   assert.equal(schema.mainEntity.find(entry => entry.name === 'What payment methods do you accept?').acceptedAnswer.text, answer);
   assert.ok(faq.includes(`<p>${answer}</p>`), 'the visible answer is the structured one');
-  assert.match(guide, /A quote from your walkthrough takes a 25% deposit when you sign or approve it; the remaining 75% is due on the job day, and your quote shows the exact amounts and dates\./);
+  assert.ok(guide.includes(`Your quote takes a 25% deposit when you approve or sign it; the remaining 75% is due when the job is complete, and your quote shows the exact amounts and dates. ${cancel}`));
+  for (const page of [faq, guide]) assert.doesNotMatch(page, /75% is due on the job day/, 'the public copy uses the owner\'s completion wording');
   for (const page of [faq, guide]) assert.doesNotMatch(page, /Quoted projects take/, 'the copy names the walkthrough quote: an office estimate keeps its own deposit');
   const account = { id: 'a'.repeat(32), company: 'Synthetic Co', billingEmail: 'billing@example.invalid', status: 'active', members: [], requests: [], messages: [], projects: [], properties: [] };
   const terms = accountView(account, { id: 'b'.repeat(32), name: 'Synthetic Admin', role: 'admin', status: 'active' }, []).rates.terms;
