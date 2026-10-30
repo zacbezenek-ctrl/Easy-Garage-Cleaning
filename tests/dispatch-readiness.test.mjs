@@ -133,6 +133,7 @@ test('an imported Jobber job: its first booking turns reminders on only with EGC
 });
 
 test('money readiness: no approved price, a deposit due within 2 Denver days, a paid deposit and a walkthrough', async () => {
+  // These quotes save no deposit, so the 25% default is due (owner decision 2026-10-30; was 50%).
   const f = fixture();
   f.put('unpriced', { date: '2026-09-23' });
   f.put('draft', { date: '2026-09-23', estimate: { amount: 800, status: 'draft' } });
@@ -151,17 +152,17 @@ test('money readiness: no approved price, a deposit due within 2 Denver days, a 
   assert.deepEqual(ready('unpriced'), { checked: true, hasApprovedPrice: false, priceStatus: 'missing', depositRequiredCents: null, depositPaidCents: null, depositDueCents: null, depositVerified: null });
   assert.deepEqual(codes(board, 'unpriced'), ['no_price']);
   assert.equal(board.warnings.find(warning => warning.jobId === 'unpriced' && warning.code === 'no_price').message, 'No approved price: price it before the job');
-  assert.deepEqual([ready('draft').hasApprovedPrice, ready('draft').priceStatus, ready('draft').depositRequiredCents], [false, 'not_approved', 40000]);
+  assert.deepEqual([ready('draft').hasApprovedPrice, ready('draft').priceStatus, ready('draft').depositRequiredCents], [false, 'not_approved', 20000]);
   assert.deepEqual(codes(board, 'draft'), ['deposit_unpaid', 'no_price'], 'a drafted price is not approved');
   assert.deepEqual([ready('superseded').hasApprovedPrice, ready('mismatch').hasApprovedPrice], [false, false], 'an old or different approval is not this price');
 
-  assert.deepEqual(ready('due-soon'), { checked: true, hasApprovedPrice: true, priceStatus: 'approved', depositRequiredCents: 50000, depositPaidCents: 0, depositDueCents: 50000, depositVerified: null });
+  assert.deepEqual(ready('due-soon'), { checked: true, hasApprovedPrice: true, priceStatus: 'approved', depositRequiredCents: 25000, depositPaidCents: 0, depositDueCents: 25000, depositVerified: null });
   assert.deepEqual(codes(board, 'due-soon'), ['deposit_unpaid']);
   const warning = board.warnings.find(row => row.jobId === 'due-soon' && row.code === 'deposit_unpaid');
-  assert.deepEqual([warning.depositDueCents, warning.message], [50000, 'Deposit unpaid: $500.00 is still due before this job.']);
-  assert.deepEqual([ready('due-later').depositDueCents, codes(board, 'due-later')], [50000, []], 'three days out: shown on the card, not yet a warning');
+  assert.deepEqual([warning.depositDueCents, warning.message], [25000, 'Deposit unpaid: $250.00 is still due before this job.']);
+  assert.deepEqual([ready('due-later').depositDueCents, codes(board, 'due-later')], [25000, []], 'three days out: shown on the card, not yet a warning');
 
-  assert.deepEqual([ready('paid').depositPaidCents, ready('paid').depositDueCents, ready('paid').depositVerified, codes(board, 'paid')], [50000, 0, true, []]);
+  assert.deepEqual([ready('paid').depositPaidCents, ready('paid').depositDueCents, ready('paid').depositVerified, codes(board, 'paid')], [25000, 0, true, []]);
   assert.deepEqual([ready('unverified').depositDueCents, ready('unverified').depositVerified], [0, false], 'money awaiting verification is never a paid deposit');
   assert.deepEqual([ready('no-deposit').depositRequiredCents, codes(board, 'no-deposit')], [0, []]);
 
@@ -170,10 +171,10 @@ test('money readiness: no approved price, a deposit due within 2 Denver days, a 
   assert.deepEqual(codes(board, 'done'), [], 'a finished job is not warned');
   // The job view carries the same readiness.
   const view = await dispatchOverview(f.store, owner, { view: 'job', jobId: 'due-soon' }, new Date(NOW), { readiness: true });
-  assert.deepEqual([view.job.moneyReady.depositDueCents, view.warnings.filter(row => row.code === 'deposit_unpaid').length], [50000, 1]);
+  assert.deepEqual([view.job.moneyReady.depositDueCents, view.warnings.filter(row => row.code === 'deposit_unpaid').length], [25000, 1]);
   // Without the option (the signed hub.dispatch.overview bridge, operations-hub-commands.js) the board is as before: no money, no readiness.
   for (const read of [await f.board(owner, NOW, {}), await dispatchOverview(f.store, owner, { view: 'job', jobId: 'due-soon' }, new Date(NOW))]) {
-    assert.doesNotMatch(JSON.stringify(read), /moneyReady|"reminder"|no_price|deposit_unpaid|50000/);
+    assert.doesNotMatch(JSON.stringify(read), /moneyReady|"reminder"|no_price|deposit_unpaid|25000/);
   }
 });
 
@@ -205,9 +206,10 @@ test('an unreconciled refund or conflicting receipts never read as a verified de
   assert.deepEqual(['refund-list', 'refund-on-payment', 'refund-amount', 'conflict'].map(id => paymentLedger(f.job(id)).issues),
     [['money_refunds_unreconciled'], ['money_refunds_unreconciled'], ['money_refunds_unreconciled'], ['money_payment_conflict']], 'the money-core issue each case raises');
   const board = await f.board(), ready = id => find(board, id).moneyReady;
-  assert.deepEqual([ready('settled').depositPaidCents, ready('settled').depositVerified], [50000, true], 'a settled, verified deposit is paid');
+  // The 25% default deposit (owner decision 2026-10-30; was 50%) of the $1,000 quote, covered by the $500 recorded.
+  assert.deepEqual([ready('settled').depositPaidCents, ready('settled').depositVerified], [25000, true], 'a settled, verified deposit is paid');
   for (const id of ['refund-list', 'refund-on-payment', 'refund-amount', 'conflict']) {
-    assert.deepEqual([ready(id).depositRequiredCents, ready(id).depositPaidCents, ready(id).depositDueCents, ready(id).depositVerified], [50000, 50000, 0, false], `${id}: "Deposit not verified", never "Deposit paid"`);
+    assert.deepEqual([ready(id).depositRequiredCents, ready(id).depositPaidCents, ready(id).depositDueCents, ready(id).depositVerified], [25000, 25000, 0, false], `${id}: "Deposit not verified", never "Deposit paid"`);
     assert.equal(moneyReadiness({ ...f.job(id), id }).depositVerified, false, id);
     assert.deepEqual(codes(board, id), [], 'no deposit is shown due: the chip says not verified');
   }
@@ -288,7 +290,7 @@ test('the production money read masks the job to the money fields: never signatu
   };
   const store = dispatchStorage(env, fetcher), raw = { id: 'priced', type: 'job', status: 'scheduled', date: '2026-09-23', time: '09:00', endTime: '11:00' };
   const result = await withDispatchReadiness(store, owner, [raw], [projectDispatchJob(raw, [], NOW)], new Date(NOW));
-  assert.deepEqual([result.jobs[0].moneyReady.hasApprovedPrice, result.jobs[0].moneyReady.depositPaidCents], [true, 50000]);
+  assert.deepEqual([result.jobs[0].moneyReady.hasApprovedPrice, result.jobs[0].moneyReady.depositPaidCents], [true, 25000], 'the 25% default deposit of $1,000, paid');
   const batch = calls.find(call => call.url.endsWith(':batchGet'));
   assert.deepEqual(batch.body.mask.fieldPaths, [...MONEY_READY_FIELDS]);
   for (const field of batch.body.mask.fieldPaths) assert.doesNotMatch(field, /^(estimate|customerApproval|invoice|deposit)$|signature|internalNotes|photo|acceptance|costs/i, field);

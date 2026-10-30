@@ -77,10 +77,13 @@ async function fixture(t, initial = {}) {
   return { docs, sessions, stripePosts, expired, calls, job, edit, post, pay, get, complete, event, loseResponse: () => { lostResponse = true; }, failJobWrites: value => { failJobWrites = value; } };
 }
 
-test('deposit defaults to half in cents, subtracts previous receipts, and preserves signed legacy terms', () => {
-  const half = customerDepositState({ total: 1000.01 });
-  assert.equal(half.required, 500.01); assert.equal(half.remainder, 500);
-  assert.equal(customerDepositState({ total: 1000, payment: { amount: 125 } }).dueNow, 375);
+// Owner decision 2026-10-30: a quote with no saved deposit asks 25% upfront (was half) and the 75% balance when the job is
+// complete; a saved deposit term is kept.
+test('deposit defaults to 25% in cents, subtracts previous receipts, and preserves signed legacy terms', () => {
+  const quarter = customerDepositState({ total: 1000.01 });
+  assert.equal(quarter.required, 250); assert.equal(quarter.remainder, 750.01);
+  assert.equal(customerDepositState({ total: 1000.02 }).required, 250.01, 'rounded half up to the cent');
+  assert.equal(customerDepositState({ total: 1000, payment: { amount: 125 } }).dueNow, 125);
   assert.equal(customerDepositState({ total: 1000, estimate: { depositRequired: 200 } }).required, 200);
   assert.equal(customerDepositState({ total: 1000, estimate: { depositRequired: 0 } }).required, 0);
   assert.equal(customerDepositState({ total: 1000, payment: { amount: 500 }, startedAt: '2026-09-08', status: 'in_progress', invoice: { amount: 1000, status: 'issued' } }).dueNow, 0, 'starting work or issuing invoice does not accelerate final balance');
@@ -88,19 +91,19 @@ test('deposit defaults to half in cents, subtracts previous receipts, and preser
   assert.equal(customerMoneyState({ total: 1200, invoice: { amount: 1000, status: 'superseded' }, payment: { amount: 500 } }).balance, 700);
 });
 
-test('accepting a quote saves its 50% term, then server ignores caller-supplied charge amounts', async t => {
+test('accepting a quote saves its 25% term, then server ignores caller-supplied charge amounts', async t => {
   const f = await fixture(t, { estimate: { status: 'draft', amount: 1000 }, deposit: null });
   assert.equal((await f.pay()).status, 409); assert.equal(f.sessions.size, 0);
   // Approvals name the revision and total the page displayed (portal approval binding, M14).
   const shown = (await f.get()).estimate;
   const approval = await f.post({ action: 'approve_estimate', signed_name: 'Test Customer', confirmed: true, terms_version: shown.termsVersion, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint });
-  assert.equal(approval.status, 200); assert.equal(f.job().estimate.depositRequired, 500);
+  assert.equal(approval.status, 200); assert.equal(f.job().estimate.depositRequired, 250);
   const response = await f.pay({ amount_cents: 100000, deposit_percent: 100, job_id: 'another-job' });
   assert.equal(response.status, 200); const checkout = [...f.sessions.values()][0];
-  assert.equal(checkout.amount_total, 50000); assert.equal(checkout.client_reference_id, 'job-1');
+  assert.equal(checkout.amount_total, 25000); assert.equal(checkout.client_reference_id, 'job-1');
   assert.equal(checkout.metadata.payment_purpose, 'deposit');
   assert.equal(f.stripePosts[0].params.get('payment_method_types[0]'), 'card');
-  const view = await f.get(); assert.equal(view.payment.dueNow, 500); assert.equal(view.payment.balance, 1000);
+  const view = await f.get(); assert.equal(view.payment.dueNow, 250); assert.equal(view.payment.balance, 1000);
 });
 
 test('cancel, repeat clicks, and separate browser requests reuse one Checkout session', async t => {

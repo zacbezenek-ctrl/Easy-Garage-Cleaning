@@ -81,10 +81,11 @@ test('an unpaid deposit is not raised by a change: the change is due with the ba
   const closing = { ...saved, status: 'completed', completedAt: NOW };
   assert.deepEqual([customerDepositState(closing).dueNow, customerDepositState(closing).purpose], [1150, 'balance']);
   assert.equal(customerMoneyTotals(closing).dueNowCents, 115000);
-  // Without a saved deposit term the 50% default is taken on the quote, not on the quote plus changes.
+  // Without a saved deposit term the 25% default (owner decision 2026-10-30; was 50%) is taken on the quote, not on the
+  // quote plus changes.
   const { depositRequired, ...terms } = saved.estimate, defaulted = { ...saved, estimate: terms, deposit: undefined };
-  assert.equal(customerDepositState(defaulted).required, 500);
-  assert.equal(customerMoneyTotals(defaulted).depositRequiredCents, 50000);
+  assert.equal(customerDepositState(defaulted).required, 250);
+  assert.equal(customerMoneyTotals(defaulted).depositRequiredCents, 25000);
 });
 
 test('an older page without a request id replays by the same answer and name only', () => {

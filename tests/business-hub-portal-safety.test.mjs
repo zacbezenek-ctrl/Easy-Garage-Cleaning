@@ -102,7 +102,8 @@ test('a company member approval is attributed to that member for accounts payabl
   assert.deepEqual(result.body.approval, publicApproval, 'the response never returns member ids');
   const saved = f.job('job-1');
   assert.deepEqual(savedApproval(saved), { ...publicApproval, ...attribution });
-  assert.deepEqual(saved.estimate, { number: 'EST-1', status: 'approved', amount: 800, sentAt: '2026-09-20T12:00:00.000Z', revision: 1, acceptedAt: NOW, acceptedBy: 'Synthetic Signer', depositRequired: 400, acceptedTermsVersion: CUSTOMER_PORTAL_TERMS_VERSION, ...attribution }, 'the current signer replaces an earlier approver');
+  // The approval saves the deposit term of a quote without one: 25% of $800 (owner decision 2026-10-30; was 50%).
+  assert.deepEqual(saved.estimate, { number: 'EST-1', status: 'approved', amount: 800, sentAt: '2026-09-20T12:00:00.000Z', revision: 1, acceptedAt: NOW, acceptedBy: 'Synthetic Signer', depositRequired: 200, acceptedTermsVersion: CUSTOMER_PORTAL_TERMS_VERSION, ...attribution }, 'the current signer replaces an earlier approver');
   assert.equal(saved.quoteStatus, 'approved');
   // FUN-03: the sale is recorded in the same commit and names the company member, not a person's name.
   assert.deepEqual(f.events.map(event => [event.type, event.actor, event.businessAccountId, event.data.amountCents, event.idempotencyKey]), [['deal.sold', { id: actor, kind: 'customer', role: 'business' }, ACCOUNT, 80000, `portalRequest:${saved.customerApproval.requestId}`]]);
@@ -280,7 +281,7 @@ test('a material estimate revision drops the company approver while an unchanged
   assert.deepEqual([revised.estimate.status, revised.customerApproval.status], ['draft', 'superseded']);
   unattributed(revised.estimate, 'revised estimate');
   assert.equal(revised.customerApproval.approvedByBusinessMemberId, ADMIN.id, 'the superseded record still shows who approved the earlier version');
-  const unchanged = await staffFinance(saved, 'estimate', { amount: '800', scope: 'Synthetic garage reset', deposit: '400', validUntil: '2026-10-09' });
+  const unchanged = await staffFinance(saved, 'estimate', { amount: '800', scope: 'Synthetic garage reset', deposit: '200', validUntil: '2026-10-09' });
   assert.equal(unchanged.estimate.status, 'approved');
   assert.equal(unchanged.customerApproval, undefined);
   assert.deepEqual(ACTOR_FIELDS.map(key => unchanged.estimate[key]), ACTOR_FIELDS.map(key => saved.estimate[key]), 'an unchanged approved estimate keeps its signer');

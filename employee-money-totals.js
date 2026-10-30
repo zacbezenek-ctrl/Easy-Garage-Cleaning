@@ -107,7 +107,7 @@ function totals(job){
   const balanceCents=known(totalCents,appliedCents)?Math.max(0,totalCents-appliedCents):null;
   const savedDeposit=job?.estimate?.depositRequired??job?.deposit?.amount,depositSaved=savedDeposit===undefined||savedDeposit===null?undefined:cents(savedDeposit);
   if(depositSaved===null)issues.push('money_deposit_invalid');
-  const depositRequiredCents=quoteCents===null||depositSaved===null?null:Math.min(quoteCents,depositSaved===undefined?Math.round(quoteCents*5000/10000):depositSaved);
+  const depositRequiredCents=quoteCents===null||depositSaved===null?null:Math.min(quoteCents,depositSaved===undefined?Math.round(quoteCents*2500/10000):depositSaved);
   const depositPaidCents=known(depositRequiredCents,appliedCents)?Math.min(depositRequiredCents,appliedCents):null,depositDueCents=known(depositRequiredCents,appliedCents)?Math.max(0,depositRequiredCents-appliedCents):null;
   const stage=String(job?.pipelineStatus||job?.status||'').toLowerCase(),walked=(Array.isArray(job?.postJobProgress?.standardItems)?job.postJobProgress.standardItems:[]).some(item=>item?.key==='0_1'&&item.completed===true);
   const closing=['completed','paid'].includes(stage)||Boolean(job?.completedAt||job?.postJobChecklist?.completedAt||walked),dueNowCents=closing?balanceCents:depositDueCents;

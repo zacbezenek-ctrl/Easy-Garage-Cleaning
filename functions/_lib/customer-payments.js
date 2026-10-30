@@ -1,6 +1,6 @@
 import { firestoreFetch } from './firebase-service-account.js';
 import { readJob, patchJob, encodeFirestoreFields, decodeFirestoreFields } from './firestore-job.js';
-import { customerMoneyTotals, invoiceTakesPayment, moneyInvoiceStateEnabled, moneyTotalsMode, moneyUnpriced, paymentLedger, refundsRecorded, reportTotalsMismatch } from './money-core.js';
+import { DEFAULT_DEPOSIT_PCT, customerMoneyTotals, invoiceTakesPayment, moneyInvoiceStateEnabled, moneyTotalsMode, moneyUnpriced, paymentLedger, refundsRecorded, reportTotalsMismatch } from './money-core.js';
 import { manualEntryIds } from './money-ledger.js';
 import { billedChangeCents } from './change-orders.js';
 import { unsentQuoteDraft } from './quote-model.js';
@@ -170,10 +170,11 @@ export function customerDepositState(job, finance = customerMoneyState(job), mod
     const legacy = customerDepositState(job);
     return { ...legacy, dueNow: 0, remainder: customerMoneyState(job).balance, ...unknownMoney(job) };
   }
-  // Honor an existing signed deposit term; every new quote defaults to 50%.
-  // The term is on the quote: billed change orders are due with the balance.
+  // Honor an existing signed deposit term; a quote with none saved takes 25% (owner decision 2026-10-30: 25% upfront,
+  // 75% when the job is complete; money-core DEFAULT_DEPOSIT_PCT). The term is on the quote: billed change orders are due
+  // with the balance.
   const saved = job.estimate?.depositRequired ?? job.deposit?.amount, quote = Math.max(0, cents(finance.total) - billedChangeCents(job));
-  const requiredCents = Math.min(quote, saved == null ? Math.round(quote / 2) : cents(saved));
+  const requiredCents = Math.min(quote, saved == null ? Math.round(quote * DEFAULT_DEPOSIT_PCT / 100) : cents(saved));
   const dueCents = Math.max(0, requiredCents - cents(finance.paid));
   const rawStatus = String(job.pipelineStatus || job.status || '').toLowerCase();
   const finalWalkthroughDone = (job.postJobProgress?.standardItems || []).some(item => item.key === '0_1' && item.completed === true);

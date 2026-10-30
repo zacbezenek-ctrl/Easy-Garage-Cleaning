@@ -149,14 +149,16 @@ class MoneyActionsBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.evaluate('toasts.at(-1)'), 'Saved · customer automation suppressed')
         self.assertEqual([(call['event'], call['notify']) for call in self.lifecycle], [('estimate-ready', False)])
 
-    def test_new_estimate_defaults_follow_denver_today_and_a_fifty_percent_deposit(self):
+    def test_new_estimate_defaults_follow_denver_today_and_a_twenty_five_percent_deposit(self):
+        # Owner decision 2026-10-30: 25% when the customer approves, 75% when the job is complete (was 50% upfront).
         self.open('job-new')
         expect(self.label('Estimate valid through')).to_have_value('2026-10-06'); expect(self.label('Estimate valid through')).to_have_attribute('min', '2026-09-22')
-        expect(self.label('Deposit required ($)')).to_have_value('400.00')
-        self.page.locator('[name="unit-0"]').fill('1000'); expect(self.label('Deposit required ($)')).to_have_value('500.00')
+        expect(self.label('Deposit required ($)')).to_have_value('200.00')
+        expect(self.page.locator('#em-deposit-help')).to_have_text('25% of the total, due when the customer approves; the 75% balance is due when the job is complete. Change it only for a different agreement.')
+        self.page.locator('[name="unit-0"]').fill('1000'); expect(self.label('Deposit required ($)')).to_have_value('250.00')
         self.primary().click(); expect(self.page.get_by_role('alert')).to_contain_text('scope'); self.assertEqual(self.posts, [])
         self.label('Customer-facing scope').fill('Synthetic scope'); self.primary().click(); expect(self.page.get_by_role('dialog')).to_have_count(0)
-        self.assertEqual(self.posts[-1]['depositCents'], 50000); self.assertEqual(self.posts[-1]['lineItems'][0]['unitCents'], 100000)
+        self.assertEqual(self.posts[-1]['depositCents'], 25000); self.assertEqual(self.posts[-1]['lineItems'][0]['unitCents'], 100000)
 
     def test_estimates_with_options_are_never_repriced_here(self):
         self.open('job-options')

@@ -78,12 +78,14 @@ function fixture(job = {}, rows = []) {
 const estimate = (f, fields = {}, actor = owner) => f.run('estimate.save', { lineItems: LINES, scope: 'Clear and reset the two-car garage.', validUntil: '2026-10-06', ...fields }, actor);
 const audits = f => [...f.docs].filter(([key]) => key.startsWith('hub_audit/')).map(([, row]) => row);
 
-test('estimate.save stores itemized integer-cent lines, a 50% deposit, a receipt and an audit entry in one commit', async () => {
+// Owner decision 2026-10-30: an estimate saved without a deposit takes 25% (was 50%); the 75% balance is due when the job
+// is complete.
+test('estimate.save stores itemized integer-cent lines, a 25% deposit, a receipt and an audit entry in one commit', async () => {
   const f = fixture(), result = await estimate(f), job = f.job();
   assert.equal(result.ok, true); assert.equal(result.replayed, false); assert.equal(result.action, 'estimate.save');
   assert.equal(job.estimate.number, 'EST-ABC123'); assert.equal(job.estimate.status, 'draft'); assert.equal(job.estimate.revision, 1);
   assert.equal(job.estimate.amountCents, 140000); assert.equal(job.estimate.amount, 1400); assert.equal(job.total, 1400); assert.equal(job.priceQuoted, 1400);
-  assert.equal(job.estimate.depositRequiredCents, 70000); assert.equal(job.deposit.amount, 700); assert.equal(job.deposit.status, 'required');
+  assert.equal(job.estimate.depositRequiredCents, 35000); assert.equal(job.deposit.amount, 350); assert.equal(job.deposit.status, 'required');
   assert.deepEqual(job.estimate.lineItems.map(item => [item.id, item.quantity, item.unitCents, item.totalCents, item.amount]), [['line-1', 1, 90000, 90000, 900], ['line-2', 2, 25000, 50000, 500]]);
   assert.equal(job.moneyRequestId, result.requestId); assert.equal(job.customerAutomationEnabled, undefined, 'saving never enables customer automations');
   assert.equal(f.commits.length, 1);
@@ -251,14 +253,15 @@ test('offline payments append ledger entries that reconcile Stripe evidence and 
 test('a deposit is recorded against the deposit terms; an unverified earlier payment blocks new money', async () => {
   const f = fixture();
   await estimate(f);
-  await f.run('deposit.record_offline', { amountCents: 50000, method: 'bank_transfer', reference: 'ACH-77' });
+  // The estimate's 25% deposit: $350 of $1,400.
+  await f.run('deposit.record_offline', { amountCents: 20000, method: 'bank_transfer', reference: 'ACH-77' });
   let job = f.job();
-  assert.deepEqual([job.deposit.amount, job.deposit.paidAmount, job.deposit.status, job.deposit.reference, job.deposit.verified], [700, 500, 'partial', 'ACH-77', true]);
-  assert.equal(job.payment.amount, 500); assert.equal(job.payment.method, 'deposit'); assert.equal(job.invoice, undefined);
+  assert.deepEqual([job.deposit.amount, job.deposit.paidAmount, job.deposit.status, job.deposit.reference, job.deposit.verified], [350, 200, 'partial', 'ACH-77', true]);
+  assert.equal(job.payment.amount, 200); assert.equal(job.payment.method, 'deposit'); assert.equal(job.invoice, undefined);
   assert.equal(job.paymentLedger[0].kind, 'deposit');
   const result = await f.run('deposit.record_offline', { amountCents: 30000, method: 'cash', reference: 'Receipt 3' });
   job = f.job();
-  assert.equal(job.deposit.status, 'paid'); assert.equal(job.deposit.paidAmount, 800); assert.deepEqual(result.warnings.map(warning => warning.code), ['deposit_exceeds_due']);
+  assert.equal(job.deposit.status, 'paid'); assert.equal(job.deposit.paidAmount, 500); assert.deepEqual(result.warnings.map(warning => warning.code), ['deposit_exceeds_due']);
   const g = fixture({ total: 1400, payment: { amount: 200, verified: false, reference: 'crew-entered' } });
   await assert.rejects(g.run('payment.record_offline', { amountCents: 100, method: 'cash', reference: 'Receipt 4' }), error => error.code === 'money_payment_needs_review');
 });

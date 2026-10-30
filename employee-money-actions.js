@@ -240,7 +240,7 @@ function estimateView(){
   const d=S.draft,job=S.job,closed=['approved'].includes(job.approval?.status)||['accepted','approved'].includes(job.estimate?.status);
   if(job.estimate&&lockedEstimate(job))return[h('p',{class:'em-notice warn'},'This estimate has customer options, discounts or lines that need review. This editor changes fixed lines only, so it will not reprice it. Edit it from the walkthrough game plan.'),job.estimate&&!closed?h('button',{type:'button',class:'em-button',onclick:()=>switchView('sent')},'Record that it was sent'):null];
   const totalNode=h('output',{class:'em-total','aria-live':'polite'}),depositInput=bind('deposit',{inputMode:'decimal',autocomplete:'off',after:()=>{d.depositTouched=true;refreshTotals();}});
-  function refreshTotals(){const total=estimateTotal();if(!d.depositTouched&&total!==null){d.deposit=dollars(Math.round(total/2));depositInput.value=d.deposit;}totalNode.textContent=total===null?'Check each line price and quantity':`Estimate total ${money(total)} · deposit ${money(cents(d.deposit))}`;for(const [index,line] of d.lines.entries()){const out=list.querySelector(`[data-line-total="${index}"]`);if(out){const value=lineTotal(line);out.textContent=value!==null?money(value):cents(line.unit)!==null&&quantity(line.quantity)!==null?'Price × quantity must come to whole cents':'Enter a price and a quantity';}}}
+  function refreshTotals(){const total=estimateTotal();if(!d.depositTouched&&total!==null){d.deposit=dollars(Math.round(total*25/100));depositInput.value=d.deposit;}totalNode.textContent=total===null?'Check each line price and quantity':`Estimate total ${money(total)} · deposit ${money(cents(d.deposit))}`;for(const [index,line] of d.lines.entries()){const out=list.querySelector(`[data-line-total="${index}"]`);if(out){const value=lineTotal(line);out.textContent=value!==null?money(value):cents(line.unit)!==null&&quantity(line.quantity)!==null?'Price × quantity must come to whole cents':'Enter a price and a quantity';}}}
   const list=h('div',{class:'em-lines'});
   function lineCard(line,index){
     const input=(name,label,{tag='input',...props}={})=>field(label,h(tag,{name:`${name}-${index}`,...props,value:line[name],oninput:e=>{line[name]=e.target.value;refreshTotals();}}));
@@ -258,7 +258,7 @@ function estimateView(){
     list,
     h('button',{type:'button',class:'em-button',disabled:d.lines.length>=MAX_LINES,onclick:()=>{d.lines.push({id:newId(),kind:'service',name:'',description:'',quantity:'1',unit:''});render();S.dialog?.querySelector(`[name="name-${d.lines.length-1}"]`)?.focus();}},d.lines.length>=MAX_LINES?`Up to ${MAX_LINES} lines`:'Add line'),
     field('Customer-facing scope',bind('scope',{tag:'textarea',rows:4,maxLength:1600,required:true}),'What is included in this price. The customer sees this text.'),
-    h('div',{class:'em-pair'},field('Deposit required ($)',depositInput,'50% of the total unless you change it.'),field('Estimate valid through',bind('validUntil',{type:'date',min:today(),required:true}))),
+    h('div',{class:'em-pair'},field('Deposit required ($)',depositInput,'25% of the total, due when the customer approves; the 75% balance is due when the job is complete. Change it only for a different agreement.'),field('Estimate valid through',bind('validUntil',{type:'date',min:today(),required:true}))),
     totalNode,
     note(automation('estimate-ready')),
     job.estimate&&!closed?h('button',{type:'button',class:'em-button',onclick:()=>switchView('sent')},'Record that it was sent'):null,

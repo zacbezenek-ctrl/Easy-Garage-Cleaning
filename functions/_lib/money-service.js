@@ -2,7 +2,7 @@ import { requireDispatcher } from './dispatch-service.js';
 import { auditWrite } from './hub-audit.js';
 import { moneySupersedeWrite } from './job-funnel-events.js';
 import { denverToday, validDate } from './dispatch-time.js';
-import { MAX_TOTAL_CENTS, customerLineItem, customerMoneyTotals, depositCents, estimateTotals, invoiceFromEstimate, invoiceLineItems, invoiceNumber, invoiceStatus, invoiceTakesPayment, moneyCents, normalizeLineItems, paymentEntry } from './money-core.js';
+import { DEFAULT_DEPOSIT_PCT, MAX_TOTAL_CENTS, customerLineItem, customerMoneyTotals, depositCents, estimateTotals, invoiceFromEstimate, invoiceLineItems, invoiceNumber, invoiceStatus, invoiceTakesPayment, moneyCents, normalizeLineItems, paymentEntry } from './money-core.js';
 import { estimateChanged, estimateFingerprint, legacyLineItems } from './quote-model.js';
 import { SIGNED_25_75, publicQuotePaymentSchedule } from './quote-payment-policy.js';
 import { ledgerPatch, reconcileLedger } from './money-ledger.js';
@@ -172,7 +172,9 @@ async function saveEstimate({ store, job, input, actor, now, today }) {
   if (lines.some(line => line.optional || line.group)) throw fail('options_unsupported', 'Optional and package choices are not supported here yet. Every line is included in the total.');
   const totals = estimateTotals(lines), totalCents = totals.totalCents;
   if (!totals.complete || !Number.isSafeInteger(totalCents) || totalCents <= 0) throw fail('invalid_line_items', 'The estimate total must be more than $0.00.');
-  const deposit = given(input.depositCents) ? whole(input.depositCents, 'The deposit', 0, totalCents) : depositCents(totalCents, 50);
+  // Owner decision 2026-10-30: every quote asks 25% upfront and 75% when the job is complete, so an estimate saved without
+  // a deposit takes 25% of its total (the same default customerMoneyTotals and the portal apply to a job with none saved).
+  const deposit = given(input.depositCents) ? whole(input.depositCents, 'The deposit', 0, totalCents) : depositCents(totalCents, DEFAULT_DEPOSIT_PCT);
   const scope = text(input.scope, 'The customer-facing scope', 1600, { required: true, multiline: true });
   if (!validDate(input.validUntil) || input.validUntil < today) throw fail('invalid_valid_until', 'Choose an estimate expiry date of today or later.');
   const current = plain(job.estimate) ? job.estimate : {}, before = totalsOf(store, job), approval = plain(job.customerApproval) ? job.customerApproval : null;
@@ -525,7 +527,7 @@ async function execute(store, actor, input, now, fingerprint, receiptId, via, re
   }
   // The staged versioned 25/75 policy is authored through quote drafts and
   // in-person walkthrough signatures (SIGNED_25_75, walkthrough-handoff.js). The
-  // legacy editor would otherwise apply its separate 50% fallback or issue an
+  // legacy editor would otherwise apply its separate deposit default or issue an
   // invoice with unrelated due dates. Keep these paths closed until their
   // policy-aware customer terms and billing rollout are explicitly completed,
   // except the invoice for the balance of a job signed in person on the 25/75
