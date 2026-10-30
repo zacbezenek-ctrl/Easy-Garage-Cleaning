@@ -16,7 +16,7 @@
 import { getHubSession, isHubOwner } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { createKnockStore } from '../_lib/knock-store.js';
-import { directSalesFor, repRanWalkthrough } from '../_lib/knock-setters.js';
+import { approvedGarageQuote, approvedWalkthroughQuote, directSalesFor, paidWalkthroughJob, repRanWalkthrough, setterBatchReaderFor, signedGarageHandoff } from '../_lib/knock-setters.js';
 import { MONEY_JOB_FIELDS } from '../_lib/money-storage.js';
 import { hubEligibilityFields } from '../_lib/funnel-definitions.js';
 import { denverWorkDate, overtimePolicy } from '../_lib/timesheet-week.js';
@@ -31,6 +31,8 @@ import { WINTER_SALE_SETTINGS_ACTION, mutateWinterSaleSettings, readWinterSaleSe
 const LIMIT = 8000;
 const ID = /^[A-Za-z0-9_-]{1,180}$/;
 export const JOB_ACTUALS_FIELDS = Object.freeze([...new Set([...MONEY_JOB_FIELDS, ...hubEligibilityFields(), 'sourceWalkthroughId', 'acceptance.recordedBy', 'acceptance.firstRecordedBy', 'jobInstructions.laborManHours',
+  // Which walkthrough jobs the commission ledgers pay (knock-setters.js paidWalkthroughJob, signedGarageHandoff).
+  'handoffVersion', 'handoffRequestId', 'scope.finish', 'quoteDraft.sourceWalkthroughId',
   'compositeQuote.breakdown.labor.manHours', 'compositeQuote.breakdown.lines', 'quoteDraft.breakdown.source', 'quoteDraft.breakdown.labor.manHours', 'quoteDraft.breakdown.lines', 'fieldExecution.completion.crewOnSite', 'fieldExecution.completion.truckLoads', ...ESTIMATOR_FIELDS])]);
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 function sameOrigin(request) {
@@ -59,8 +61,18 @@ export function jobActualsHandlers({ session = getHubSession, dispatch = dispatc
         catch { timecardSource = 'unavailable'; }
         const kstore = knock(env), walkthroughs = [...new Set(jobs.map(job => job.sourceWalkthroughId).filter(id => ID.test(String(id || ''))))];
         const [setters, sales] = await Promise.all([walkthroughs.length ? kstore.getMany('knock_setters', walkthroughs) : new Map(), directSalesFor(kstore, jobs.map(job => job.id))]);
+        // The commission the ledgers will pay, no more (job-actuals.js channelOf): a quote approved online is paid by its
+        // walkthrough's date and estimator (one masked read of those walkthroughs), and the office's junk-removal
+        // classification of a direct walkthrough sale pays nothing.
+        const online = jobs.filter(job => ID.test(String(job.sourceWalkthroughId || '')) && approvedWalkthroughQuote(job));
+        const visits = online.length ? await setterBatchReaderFor(dispatch(env))(online.map(job => job.sourceWalkthroughId)) : new Map();
+        const unclassified = jobs.filter(job => ID.test(String(job.sourceWalkthroughId || '')) && !setters.get(job.sourceWalkthroughId) && !signedGarageHandoff(job) && !approvedGarageQuote(job)).map(job => job.id);
+        const offices = unclassified.length ? await kstore.getMany('knock_estimator_jobs', unclassified) : new Map();
+        const unpaidJobs = new Set(jobs.filter(job => ID.test(String(job.sourceWalkthroughId || '')) && (!paidWalkthroughJob(job, visits.get(job.sourceWalkthroughId))
+          || (setters.get(job.sourceWalkthroughId) || offices.get(job.id))?.serviceClassification === 'junk_removal')).map(job => job.id));
         const report = buildJobActuals({ jobs, labor, settings, setterWalkthroughs: new Set([...setters.keys()].filter(id => setters.get(id))), doorSaleJobs: new Set(sales.map(sale => sale?.handoff?.job?.ref).filter(Boolean)),
-          repWalkthroughJobs: new Set(jobs.filter(job => repRanWalkthrough(setters.get(job.sourceWalkthroughId), job)).map(job => job.id)), timecardsAvailable: timecardSource === 'ok', today: window.today, asOf });
+          repWalkthroughJobs: new Set(jobs.filter(job => !unpaidJobs.has(job.id) && repRanWalkthrough(setters.get(job.sourceWalkthroughId), job, visits.get(job.sourceWalkthroughId) || null)).map(job => job.id)),
+          unpaidJobs, timecardsAvailable: timecardSource === 'ok', today: window.today, asOf });
         // EGC_WINTER_SALE: the owner's sale settings (amount, dates, margin floor) beside the cost settings.
         // The margin floor is the owner's alone: a manager sees the sale's terms without it.
         const saleView = settings => { if (isHubOwner(actor)) return settings; const { marginFloorBp, ...rest } = settings; return rest; };

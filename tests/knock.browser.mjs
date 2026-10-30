@@ -210,7 +210,9 @@ try {
   await page.goto(`${server.base}/crew/knock.html#money`);
   const moneyText = await (await page.waitForFunction(() => {
     const text = document.querySelector('#knock-main')?.textContent || '';
-    return /How commission works/.test(text) && /Not approved yet: nothing is earned[^]*?held for review\./.test(text) ? text : false;
+    // The planned rule is the knock-completed-v4 one (owner decision 2026-10-30): it ends with the refund rule, where the
+    // knock-collected-v3 sentence ended "held for review.".
+    return /How commission works/.test(text) && /Not approved yet: nothing is earned[^]*?next pay period's statement\./.test(text) ? text : false;
   })).jsonValue();
   await page.goto(`${server.base}/crew/knock.html#more`);
   await page.setViewportSize({ width: 320, height: 720 });
@@ -221,7 +223,7 @@ try {
   // On a 320px phone the two long rules read as paragraphs under their labels, not a bold right-hand column.
   assert.deepEqual(await help.locator('.kv > p').evaluateAll(rules => rules.map(rule => [getComputedStyle(rule).textAlign, rule.getBoundingClientRect().width > 200])),
     [['start', true], ['start', true]]);
-  const rule = /Not approved yet: nothing is earned or payable until the owner approves the terms[^]*?held for review\./.exec(helpText)?.[0];
+  const rule = /Not approved yet: nothing is earned or payable until the owner approves the terms[^]*?next pay period's statement\./.exec(helpText)?.[0];
   assert.ok(rule && moneyText.includes(rule), 'Help and My money state one commission rule');
   assert.match(helpText, /a deposit alone does not count/);
   assert.doesNotMatch(helpText, /cancellation deadline/);

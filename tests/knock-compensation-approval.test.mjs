@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_SETTINGS, PACKAGES } from '../crew/knock-settings.js';
-import { COLLECTED_V3_POLICY, D2D_GARAGE_SCOPE, snapshotCommissionTerms } from '../crew/knock-money.js';
+import { COMPLETED_V4_POLICY, D2D_GARAGE_SCOPE, DOOR_CONTRACT, snapshotCommissionTerms } from '../crew/knock-money.js';
 import { loadSettings } from '../functions/_lib/knock-access.js';
 import { approveCompensation } from '../functions/_lib/knock-admin.js';
 import { decodeFirestoreFields } from '../functions/_lib/firestore-job.js';
@@ -44,9 +44,11 @@ function setup(doc = savedUnapproved(), clock = () => now) {
   return { world, handlers };
 }
 
+// The owner approves knock-completed-v4 now (owner decision 2026-10-30: earned at job completion, a refunded or cancelled
+// share taken back); these requests were knock-collected-v3, whose approvals already made keep verifying.
 const request = (settings = DEFAULT_SETTINGS, patch = {}) => ({
-  action: 'compensation.approve', requestId: uuid(), contract: 'knock-collected-v3', reference: 'synthetic-signed-plan-001', payrollAnchorConfirmed: true,
-  collectionPolicy: { ...COLLECTED_V3_POLICY },
+  action: 'compensation.approve', requestId: uuid(), contract: DOOR_CONTRACT, reference: 'synthetic-signed-plan-001', payrollAnchorConfirmed: true,
+  collectionPolicy: { ...COMPLETED_V4_POLICY },
   scope: { ...D2D_GARAGE_SCOPE, garageOnlyPackages: ['Garage Transformation', 'The Works'], junkRemovalPackages: ['Quick Clear'] },
   commission: structuredClone(settings.commission), payroll: structuredClone(settings.payroll), ...patch,
 });
@@ -61,7 +63,7 @@ test('compensation stays unapproved by default and only the owner may approve it
   for (const user of ['ZacB', 'TylerG']) views[user] = (await call(handlers.get, get('/api/knock-admin?view=settings', await cookieFor(env, user)), env)).body.compensation;
   assert.deepEqual([views.ZacB.verified, views.ZacB.approval, views.ZacB.canApprove, views.ZacB.settingsSaved], [false, null, true, true]);
   assert.equal(views.TylerG.canApprove, false);
-  assert.deepEqual(views.ZacB.terms, { contract: 'knock-collected-v3', rate: 0.25, collectionPolicy: COLLECTED_V3_POLICY, scope: D2D_GARAGE_SCOPE, packages: [...PACKAGES] });
+  assert.deepEqual(views.ZacB.terms, { contract: DOOR_CONTRACT, rate: 0.25, collectionPolicy: COMPLETED_V4_POLICY, scope: D2D_GARAGE_SCOPE, packages: [...PACKAGES] });
   const manager = await approve(handlers, request(), 'TylerG');
   assert.deepEqual([manager.status, manager.body.code], [403, 'knock_owner_required']);
   const rep = await approve(handlers, request(), 'Rep.One');
@@ -82,8 +84,8 @@ test('the owner approval records exactly the fields loadSettings verifies, bound
   assert.deepEqual([result.body.compensation.verified, result.body.compensation.approvedAt], [true, now]);
   const doc = stored(world);
   assert.deepEqual(doc.compensationApproval, {
-    contract: 'knock-collected-v3', reference: 'synthetic-signed-plan-001', reviewedBy: 'ZacB', reviewedAt: now, payrollAnchorConfirmed: true,
-    collectionPolicy: { ...COLLECTED_V3_POLICY },
+    contract: DOOR_CONTRACT, reference: 'synthetic-signed-plan-001', reviewedBy: 'ZacB', reviewedAt: now, payrollAnchorConfirmed: true,
+    collectionPolicy: { ...COMPLETED_V4_POLICY },
     // Stored in package order, whatever order the request used.
     scope: { ...D2D_GARAGE_SCOPE, garageOnlyPackages: ['The Works', 'Garage Transformation'], junkRemovalPackages: ['Quick Clear'] },
     commission: DEFAULT_SETTINGS.commission, payroll: DEFAULT_SETTINGS.payroll,
@@ -126,12 +128,13 @@ test('approval input is validated and nothing is written on a refusal', async ()
   const cases = [
     [{ requestId: 'not-a-uuid' }, 400, 'knock_invalid_request'],
     [{ contract: 'knock-v1' }, 400, 'knock_approval_contract'],
+    [{ contract: 'knock-collected-v3' }, 400, 'knock_approval_contract'],
     [{ reference: ' x ' }, 400, 'knock_approval_reference'],
     [{ reference: 'r'.repeat(121) }, 400, 'knock_approval_reference'],
     [{ reference: 'line\nbreak' }, 400, 'knock_approval_reference'],
     [{ payrollAnchorConfirmed: 'yes' }, 400, 'knock_approval_anchor'],
-    [{ collectionPolicy: { ...COLLECTED_V3_POLICY, partialCollections: 'pro_rata' } }, 400, 'knock_approval_policy'],
-    [{ collectionPolicy: { ...COLLECTED_V3_POLICY, bonus: 'none' } }, 400, 'knock_approval_policy'],
+    [{ collectionPolicy: { ...COMPLETED_V4_POLICY, partialCollections: 'pro_rata' } }, 400, 'knock_approval_policy'],
+    [{ collectionPolicy: { ...COMPLETED_V4_POLICY, bonus: 'none' } }, 400, 'knock_approval_policy'],
     [{ collectionPolicy: null }, 400, 'knock_approval_policy'],
     [{ scope: { ...D2D_GARAGE_SCOPE, garageOnlyPackages: [], junkRemovalPackages: [] } }, 400, 'knock_approval_scope'],
     [{ scope: { ...D2D_GARAGE_SCOPE, garageOnlyPackages: ['The Works'], junkRemovalPackages: ['The Works'] } }, 400, 'knock_approval_scope'],

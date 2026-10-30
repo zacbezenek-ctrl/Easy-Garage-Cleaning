@@ -19,7 +19,9 @@ const line = (id, kind, quantity, unitCents, extra = {}) => ({ id, kind, name: i
 // A two-car garage job sold with 8 man-hours of Labor at $53.00, two full junk loads and a partial, and $300 of shelving at retail.
 const LINES = [line('removal-base', 'service', 1, 150000), line('removal-junk-full', 'service', 2, 75000), line('removal-junk-partial', 'service', 1, 40000),
   line('shelving-goods', 'product', 1, 39000, { split: { productCents: 30000, markupCents: 9000, laborCents: 0, laborMinutes: 0, disposalCents: 0 } }), line('labor', 'labor', 1, 42400)];
-const garageJob = (extra = {}) => ({ id: 'job-two-car', type: 'job', date: '2026-10-10', customer: 'Synthetic Two-Car Garage', status: 'completed', completedAt: '2026-10-10T22:00:00.000Z',
+// Signed at the walkthrough (walkthrough-handoff.js handoffVersion 1): the commission ledgers pay it (channelOf deducts
+// only what they pay; before 2026-10-30 any job with a walkthrough was costed with its estimator's share).
+const garageJob = (extra = {}) => ({ id: 'job-two-car', type: 'job', date: '2026-10-10', customer: 'Synthetic Two-Car Garage', status: 'completed', completedAt: '2026-10-10T22:00:00.000Z', handoffVersion: 1, handoffRequestId: 'req-two-car',
   estimate: { status: 'accepted', amount: 4214, lineItems: LINES }, jobInstructions: { laborManHours: 8 }, sourceWalkthroughId: 'walk-1', serviceType: 'Garage transformation', ...extra });
 
 test('division rounds half up in exact integers, negatives toward +infinity at the half', () => {

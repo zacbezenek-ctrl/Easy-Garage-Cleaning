@@ -5,7 +5,7 @@ import { COMMISSION_FIELDS, isOwner, loadSettings, publicRep, repKeyFor, repPatc
 import { assignmentId, loadNeighborhoods, requireNeighborhood } from './knock-territory.js';
 import { seedNeighborhoodDocs } from './knock-seed.js';
 import { DEFAULT_SETTINGS, mergeSettings, overlaySettings, PACKAGES, validateSettings } from '../../crew/knock-settings.js';
-import { COLLECTED_V3_POLICY, D2D_GARAGE_SCOPE, SETTER_CONTRACT, SETTER_TERMS, validCollectionPolicy, validCommissionScope, validSetterTerms } from '../../crew/knock-money.js';
+import { COMPLETED_V4_POLICY, D2D_GARAGE_SCOPE, DOOR_CONTRACT, SETTER_CONTRACT, SETTER_CONTRACT_V1, SETTER_TERMS, validCollectionPolicy, validCommissionScope, validSetterTerms } from '../../crew/knock-money.js';
 import { matchNoKnockList } from '../../crew/knock-doors.js';
 import { validDate } from '../../crew/knock-time.js';
 import { coverage } from '../../crew/knock-stats.js';
@@ -76,7 +76,8 @@ export function compensationView(doc, settings, viewer) {
       payrollAnchorConfirmed: approval.payrollAnchorConfirmed === true, scope: approval.scope ?? null, collectionPolicy: approval.collectionPolicy ?? null,
       matchesSavedSettings: Boolean(saved) && sameSettings(approval.commission, saved.commission) && sameSettings(approval.payroll, saved.payroll),
     },
-    terms: { contract: 'knock-collected-v3', rate: 0.25, collectionPolicy: COLLECTED_V3_POLICY, scope: D2D_GARAGE_SCOPE, packages: PACKAGES },
+    // The contract an approval records now (knock-completed-v4); an earlier knock-collected-v3 approval keeps verifying.
+    terms: { contract: DOOR_CONTRACT, rate: 0.25, collectionPolicy: COMPLETED_V4_POLICY, scope: D2D_GARAGE_SCOPE, packages: PACKAGES },
   };
 }
 
@@ -84,7 +85,9 @@ export function compensationView(doc, settings, viewer) {
    only the owner may act on it, and only once the door-to-door commission terms are approved. */
 export function setterTermsView(doc, settings, viewer) {
   const approval = doc?.setterApproval && typeof doc.setterApproval === 'object' ? doc.setterApproval : null, state = setterTermsState(doc, settings);
-  return { verified: state.verified, approvedAt: state.approvedAt, canApprove: isOwner(viewer), compensationVerified: settings.commission.verified === true,
+  // earlierTerms: the knock-setter-v1 terms are approved and still paid by their own rules until the owner approves these.
+  return { verified: state.verified, approvedAt: state.approvedAt, contract: state.contract, earlierTerms: state.verified && state.contract === SETTER_CONTRACT_V1,
+    canApprove: isOwner(viewer), compensationVerified: settings.commission.verified === true,
     approval: approval && { contract: approval.contract ?? null, reference: approval.reference ?? null, reviewedBy: approval.reviewedBy ?? null, reviewedAt: approval.reviewedAt ?? null,
       termsMatch: approval.contract === SETTER_CONTRACT && validSetterTerms(approval.terms) },
     terms: { contract: SETTER_CONTRACT, ...SETTER_TERMS } };
@@ -144,8 +147,8 @@ const sameTerms = (a, b) => sameApproval({ ...a, reference: null }, { ...b, refe
    with the exact fields knock-access.js loadSettings verifies. The request repeats what
    the owner saw; if the saved settings changed since, nothing is written. Nothing is
    approved by default and no other path writes this field.
-   Body: { requestId, contract: 'knock-collected-v3', reference, payrollAnchorConfirmed: true,
-     collectionPolicy: COLLECTED_V3_POLICY, scope: { ...D2D_GARAGE_SCOPE, garageOnlyPackages, junkRemovalPackages },
+   Body: { requestId, contract: DOOR_CONTRACT (knock-completed-v4), reference, payrollAnchorConfirmed: true,
+     collectionPolicy: COMPLETED_V4_POLICY, scope: { ...D2D_GARAGE_SCOPE, garageOnlyPackages, junkRemovalPackages },
      commission, payroll }. Retrying the same request, or approving identical terms again,
    changes nothing (reviewedAt is kept, so sales already snapshotted keep their terms).
    Correcting only the reference of terms that already verify keeps reviewedBy/reviewedAt:
@@ -155,11 +158,11 @@ export async function approveCompensation(store, owner, body, nowIso) {
   requireOwner(owner);
   const { requestId, contract, payrollAnchorConfirmed, collectionPolicy, scope } = body || {};
   if (!UUID.test(String(requestId || ''))) throw knockFailure('Missing request id. Reload and retry.', 400, 'knock_invalid_request');
-  if (contract !== 'knock-collected-v3') throw knockFailure('Only the knock-collected-v3 contract can be approved.', 400, 'knock_approval_contract');
+  if (contract !== DOOR_CONTRACT) throw knockFailure(`Only the ${DOOR_CONTRACT} contract can be approved.`, 400, 'knock_approval_contract');
   const reference = typeof body.reference === 'string' ? body.reference.trim() : '';
   if (reference.length < 3 || reference.length > 120 || UNSAFE_TEXT.test(reference)) throw knockFailure('Give the approval a reference of 3 to 120 characters (the signed plan or decision record; no customer details).', 400, 'knock_approval_reference');
   if (payrollAnchorConfirmed !== true) throw knockFailure('Confirm the first day of the two-week pay cycle.', 400, 'knock_approval_anchor');
-  if (!exactKeys(collectionPolicy, Object.keys(COLLECTED_V3_POLICY)) || !validCollectionPolicy(collectionPolicy)) throw knockFailure('The collection policy must be exactly the knock-collected-v3 terms.', 400, 'knock_approval_policy');
+  if (!exactKeys(collectionPolicy, Object.keys(COMPLETED_V4_POLICY)) || !validCollectionPolicy(collectionPolicy, DOOR_CONTRACT)) throw knockFailure(`The collection policy must be exactly the ${DOOR_CONTRACT} terms.`, 400, 'knock_approval_policy');
   const scopeKeys = [...Object.keys(D2D_GARAGE_SCOPE), 'garageOnlyPackages', 'junkRemovalPackages'];
   if (!exactKeys(scope, scopeKeys) || !validCommissionScope(scope)) throw knockFailure('Classify at least one package as garage-only work, each package at most once.', 400, 'knock_approval_scope');
   const doc = await store.get('knock_settings', 'current');
@@ -171,7 +174,7 @@ export async function approveCompensation(store, owner, body, nowIso) {
   if (!sameSettings(body.commission, saved.commission) || !sameSettings(body.payroll, saved.payroll))
     throw knockFailure('The saved commission or pay-period settings changed since you opened them. Reload and review them again.', 409, 'knock_settings_changed');
   const approval = { contract, reference, reviewedBy: owner.user, reviewedAt: nowIso, payrollAnchorConfirmed: true,
-    collectionPolicy: { ...COLLECTED_V3_POLICY }, scope: { ...D2D_GARAGE_SCOPE, garageOnlyPackages: PACKAGES.filter(name => scope.garageOnlyPackages.includes(name)), junkRemovalPackages: PACKAGES.filter(name => scope.junkRemovalPackages.includes(name)) },
+    collectionPolicy: { ...COMPLETED_V4_POLICY }, scope: { ...D2D_GARAGE_SCOPE, garageOnlyPackages: PACKAGES.filter(name => scope.garageOnlyPackages.includes(name)), junkRemovalPackages: PACKAGES.filter(name => scope.junkRemovalPackages.includes(name)) },
     commission: structuredClone(saved.commission), payroll: structuredClone(saved.payroll) };
   const receiptId = `compensation_${requestId.toLowerCase()}`;
   const replay = async () => {
@@ -211,7 +214,9 @@ export async function approveCompensation(store, owner, body, nowIso) {
    the owner saw. It needs the door-to-door commission approval first (its pay cycle pays these shares). Nothing is
    approved by default and no other path writes this field; until it verifies every setter and estimator share stays
    held for review. Retrying the same request, or approving again, changes nothing; a new reference on terms that
-   already verify keeps reviewedBy/reviewedAt (a share earned since the approval keeps its earned time).
+   already verify keeps reviewedBy/reviewedAt (a share earned since the approval keeps its earned time). Approving
+   knock-setter-v2 over a knock-setter-v1 approval keeps that one as `earlier` (who and when): a share earned under v1
+   before now keeps its time (knock-setters.js underEarlierTerms); everything else follows v2 from now on.
    Body: { requestId, contract: SETTER_CONTRACT, reference, terms: SETTER_TERMS }. */
 export async function approveSetterTerms(store, owner, body, nowIso) {
   requireOwner(owner);
@@ -237,9 +242,13 @@ export async function approveSetterTerms(store, owner, body, nowIso) {
   };
   const prior = await replay();
   if (prior) return prior;
-  const state = setterTermsState(doc, settings);
+  const state = setterTermsState(doc, settings), old = doc?.setterApproval;
   if (state.verified && same(doc.setterApproval, approval)) return { duplicate: true, referenceOnly: false, setter: setterTermsView(doc, settings, owner) };
-  const referenceOnly = state.verified;
+  const referenceOnly = state.verified && state.contract === SETTER_CONTRACT;
+  const earlier = old?.contract === SETTER_CONTRACT_V1 && validSetterTerms(old.terms, SETTER_CONTRACT_V1) && Number.isFinite(Date.parse(old.reviewedAt))
+    ? { contract: SETTER_CONTRACT_V1, reference: old.reference ?? null, reviewedBy: old.reviewedBy ?? null, reviewedAt: old.reviewedAt }
+    : old?.contract === SETTER_CONTRACT && old.earlier?.contract === SETTER_CONTRACT_V1 ? old.earlier : null;
+  if (earlier) approval.earlier = earlier;
   if (referenceOnly) Object.assign(approval, { reviewedBy: doc.setterApproval.reviewedBy, reviewedAt: doc.setterApproval.reviewedAt });
   const next = { ...doc, setterApproval: approval };
   const previous = doc.setterApproval ? { reference: doc.setterApproval.reference ?? null, reviewedBy: doc.setterApproval.reviewedBy ?? null, reviewedAt: doc.setterApproval.reviewedAt ?? null } : null;

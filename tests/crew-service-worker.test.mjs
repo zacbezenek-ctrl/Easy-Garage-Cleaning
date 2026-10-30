@@ -15,7 +15,7 @@ const basic = response => Object.defineProperty(response, 'type', { value: 'basi
 // Inside a worker, relative request URLs resolve against the worker's origin.
 class WorkerRequest extends Request { constructor(input, init) { super(typeof input === 'string' ? new URL(input, ORIGIN).href : input, init); } }
 const NOW = Date.parse('2026-09-22T15:00:00.000Z');
-const SHELL_CACHE = 'egc-crew-shell-20261026repwalk2';
+const SHELL_CACHE = 'egc-crew-shell-20261030commission';
 // CREW-SCHEDULE: the crew schedule page and its script join the shell (the schedule itself is /api data, never stored).
 const SCHEDULE_ASSETS = ['/crew/schedule.html', '/crew/schedule.js?v=20261023jobops', '/crew/job-operations.html', '/crew/job-operations.js?v=20261023jobops'];
 // LANE catalog: the read-only "What we sell" page and its script join the shell (the menu itself is /api data, never stored).

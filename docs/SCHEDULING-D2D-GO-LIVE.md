@@ -234,14 +234,19 @@ Each has a recommendation. Until you decide, the Hub keeps doing what the item s
   packages that are entirely garage work as Garage only, and anything mixed as Needs review.
 - **Setter commission (13% + 7%) and the estimator's 7%.** Tracked and held until you approve them: approve the
   direct-sale terms first, then "Approve walkthrough-setting and estimator terms" in Knock → Admin → Settings.
-  After that, jobs paid in full pay the setter's 13% and the estimator's 7% (7% on an estimator's own walkthrough
-  sales) in the Money statement. *Recommended:* approve once the direct-sale terms are approved. Until then the Knock
+  After that, jobs completed and paid in full pay the setter's 13% and the estimator's 7% (7% on an estimator's own
+  walkthrough sales) in the Money statement, a quote approved online within 30 days of its walkthrough pays the same,
+  and a refund or cancellation after a share was earned comes off the next statement (decision 2026-10-30: the terms
+  `knock-setter-v2` and the door contract `knock-completed-v4` need your approval once more; until then the earlier
+  approvals keep their rules). *Recommended:* approve once the direct-sale terms are approved. Until then the Knock
   reports show which rep set each walkthrough, so nothing is lost. Also update your pricing workbook's door-to-door
   split row to 13% and 7% so it matches the app. Record every payout in Money: a share that changes after it was
   paid (a later price change, refund or cancellation, or a different estimator) then holds the statement for you
-  instead of being paid twice, and nothing is clawed back automatically. A junk-only quote, and a walkthrough signed
+  instead of being paid twice; only the 2026-10-30 terms take a share back, by their own rule. A junk-only quote, and a walkthrough signed
   by someone other than the estimator the door booking named, wait until the office classifies them.
-- **Short payments, overpayments, refunds and rounding.** No rule exists, so these hold commission for review.
+- **Short payments, overpayments, refunds and rounding.** No rule exists, so these hold commission for review (under
+  the 2026-10-30 terms a refund after a share was earned is taken back instead, and a completed job's unpaid balance
+  just waits).
   *Recommended:* keep holding them until you write the rule.
 - **Team directory privacy.** Teammates see shirt size and birthday month and day by default; each person can hide
   their birthday. *Recommended: keep.* The youngest allowed birth date is 14 years ago. *Recommended:* keep 14 unless

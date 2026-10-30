@@ -1,5 +1,7 @@
 /* Commission, pay periods and payroll rows for canvassing reps.
-   Current terms earn on collection. Older signed terms retain their original timing.
+   Each sale keeps the terms it was booked under. Current terms (knock-completed-v4, owner decision 2026-10-30) earn
+   when the job is completed and paid in full, and take a refunded or cancelled share back on the next pay period's
+   statement; knock-collected-v3 sales earn on full collection; older signed terms retain their original timing.
    The accelerator applies to the part of a rep's collected revenue above the monthly threshold,
    counted in the order payments were collected (calendar month in the company time zone). */
 import { addDays, validDate, zonedDate } from './knock-time.js';
@@ -19,10 +21,17 @@ export const CHANNEL_PERCENTS = Object.freeze({ directSale: 25, setter: 13, esti
 // that period's start; the statement reads no older sources (functions/_lib/estimator-commission.js), so an older one
 // is held for review wherever it shows (periodStatement, the estimator's own view).
 export const CHANNEL_LOOKBACK_DAYS = 365;
+// Owner decision 2026-10-30: a quote saved from a walkthrough and approved (online, or as the office recorded it) within
+// this many days of the walkthrough pays exactly as if it had been signed there; approved later, it pays no commission.
+export const ONLINE_APPROVAL_DAYS = 30;
 
 const percentText = rate => `${Math.round(Number(rate) * 1000) / 10}%`;
-// The only base rate the knock-collected-v3 contract can approve (knock-admin.js approveCompensation).
+// The only base rate the door-to-door contracts can approve (knock-admin.js approveCompensation).
 const CONTRACT_RATE = 0.25;
+// The door-to-door contract the owner approves now (DOOR_CONTRACT, owner decision 2026-10-30: earned at job completion,
+// refunds and cancellations after that taken back), and the one before it, which approvals and sales already made keep.
+export const DOOR_CONTRACT_V3 = 'knock-collected-v3', DOOR_CONTRACT = 'knock-completed-v4';
+const COLLECTED_CONTRACTS = [DOOR_CONTRACT_V3, DOOR_CONTRACT];
 
 /* The one statement of the current direct-sale earning rule that reps read, on the Help
    sheet and on My money. Unapproved terms are never presented as a pay promise, and a
@@ -30,48 +39,71 @@ const CONTRACT_RATE = 0.25;
 export function commissionRuleText(commission) {
   const rate = commission?.rate ?? CONTRACT_RATE;
   const share = rate === CONTRACT_RATE ? `${percentText(rate)} of each eligible garage sale` : 'Commission on each eligible garage sale at the approved rate';
-  const rule = `${share}, earned once the customer has paid the full price (a deposit alone does not count), with payouts every two weeks. A final payment that comes up short, a refund or a cancellation is held for review.`;
+  // The approved contract's rule (knock-collected-v3 approvals keep theirs); before an approval, the current contract's.
+  const rule = commission?.verified === true && commission.contract !== DOOR_CONTRACT
+    ? `${share}, earned once the customer has paid the full price (a deposit alone does not count), with payouts every two weeks. A final payment that comes up short, a refund or a cancellation is held for review.`
+    : `${share}, earned on the day the job is completed once the customer has paid the full price (a deposit alone does not count), with payouts every two weeks. A final payment that comes up short is held for review; a refund or cancellation after that takes its share back (all of it when cancelled) on the next pay period's statement.`;
   if (commission?.verified !== true) return `Not approved yet: nothing is earned or payable until the owner approves the terms, and the saved rate is not a pay promise. Planned once approved: ${rule}`;
   return `${rule} Sales booked under older terms keep their own rules.`;
 }
 
-export const SETTER_RULE_TEXT = `${CHANNEL_PERCENTS.setter}% to you when a walkthrough you set closes and the customer pays in full; the estimator gets ${CHANNEL_PERCENTS.estimator}% (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total). Booking or a no-show earns nothing, and amounts stay on hold until finance confirms the recipients, base and pay cycle. It is never added to the ${CHANNEL_PERCENTS.directSale}% direct-sale rate.`;
+export const SETTER_RULE_TEXT = `${CHANNEL_PERCENTS.setter}% to you when a walkthrough you set closes (signed there, or its quote approved within ${ONLINE_APPROVAL_DAYS} days) and the job is done and paid in full; the estimator gets ${CHANNEL_PERCENTS.estimator}% (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total). Booking or a no-show earns nothing, and amounts stay on hold until finance confirms the recipients, base and pay cycle. It is never added to the ${CHANNEL_PERCENTS.directSale}% direct-sale rate.`;
 
-/* The appointment-setter and estimator terms (owner decision D6b, 2026-10-17) the owner approves as one contract
-   (knock-admin.js approveSetterTerms): fixed values, never settings. A walkthrough a door-to-door rep set pays 13% to
-   the rep and 7% to its estimator, a walkthrough an estimator sells directly 7%, of the job's whole collected price
-   including goods, rounded to the nearest cent, earned once the job is closed and paid in full (or at the approval,
-   when that is later) and paid every two weeks with the door-to-door commission, whose approval it needs. Under them
-   a signed walkthrough handoff for a garage transformation is garage work and its signer is the estimator, unless
-   the office recorded otherwise. Junk removal earns nothing; a short or excess payment, a refund or a cancellation
-   is held for review; channels never stack. */
-export const SETTER_CONTRACT = 'knock-setter-v1';
-export const SETTER_TERMS = Object.freeze({ setterPercent: CHANNEL_PERCENTS.setter, estimatorPercent: CHANNEL_PERCENTS.estimator, directEstimatorPercent: CHANNEL_PERCENTS.estimator,
+/* The appointment-setter and estimator terms the owner approves as one contract (knock-admin.js approveSetterTerms):
+   fixed values, never settings. A walkthrough a door-to-door rep set pays 13% to the rep and 7% to its estimator, a
+   walkthrough an estimator sells directly 7%, of the job's whole collected price including goods, rounded to the
+   nearest cent, paid every two weeks with the door-to-door commission, whose approval it needs. Junk removal earns
+   nothing and channels never stack.
+   knock-setter-v2 (SETTER_CONTRACT, owner decision 2026-10-30), the terms approved from now on: a share is earned on the
+   day the job is completed once it is paid in full (or at the approval, or the office's later record, when later); a
+   quote saved from the walkthrough and approved within ONLINE_APPROVAL_DAYS of it pays exactly as if signed there (its
+   estimator is the one who did the walkthrough), and one approved later pays nothing; a short or excess payment is held
+   for review; a refund or cancellation after a share was earned takes back the refunded part of it (all of it when
+   cancelled) on the next pay period's statement, never more than was earned.
+   knock-setter-v1 (SETTER_CONTRACT_V1, D6b, 2026-10-17), which an approval made before keeps until the owner approves
+   v2, and whose shares earned before that approval keep their time: earned once the job is closed and paid in full;
+   only a signed walkthrough handoff pays; a refund or cancellation is held for review. Under both a signed walkthrough
+   handoff for a garage transformation is garage work and its signer is the estimator, unless the office recorded
+   otherwise. */
+export const SETTER_CONTRACT_V1 = 'knock-setter-v1', SETTER_CONTRACT = 'knock-setter-v2';
+export const SETTER_TERMS_V1 = Object.freeze({ setterPercent: CHANNEL_PERCENTS.setter, estimatorPercent: CHANNEL_PERCENTS.estimator, directEstimatorPercent: CHANNEL_PERCENTS.estimator,
   calculationBase: 'collected_job_total_including_goods', earnedOn: 'closed_and_paid_in_full', rounding: 'nearest_cent', payoutCadence: 'biweekly',
   serviceScope: 'garage_only_signed_handoff_or_office', estimatorAttribution: 'office_recorded_else_handoff_signer',
   partialCollections: 'review_required', refunds: 'review_required', stacking: false });
+export const SETTER_TERMS = Object.freeze({ setterPercent: CHANNEL_PERCENTS.setter, estimatorPercent: CHANNEL_PERCENTS.estimator, directEstimatorPercent: CHANNEL_PERCENTS.estimator,
+  calculationBase: 'collected_job_total_including_goods', earnedOn: 'job_completed_and_paid_in_full', rounding: 'nearest_cent', payoutCadence: 'biweekly',
+  serviceScope: 'garage_only_signed_or_approved_quote_or_office', estimatorAttribution: 'office_recorded_else_handoff_signer_else_walkthrough_estimator',
+  approvedQuotes: `walkthrough_quote_approved_within_${ONLINE_APPROVAL_DAYS}_days`, partialCollections: 'review_required', refunds: 'clawback_next_period', stacking: false });
+const SETTER_TERMS_BY_CONTRACT = { [SETTER_CONTRACT_V1]: SETTER_TERMS_V1, [SETTER_CONTRACT]: SETTER_TERMS };
 
-export function validSetterTerms(terms) {
-  return Boolean(terms) && typeof terms === 'object' && !Array.isArray(terms) && Object.keys(terms).length === Object.keys(SETTER_TERMS).length &&
-    Object.entries(SETTER_TERMS).every(([key, value]) => Object.hasOwn(terms, key) && terms[key] === value);
+// Exactly the fixed terms of that contract (the current one by default).
+export function validSetterTerms(terms, contract = SETTER_CONTRACT) {
+  const want = SETTER_TERMS_BY_CONTRACT[contract];
+  return Boolean(want && terms) && typeof terms === 'object' && !Array.isArray(terms) && Object.keys(terms).length === Object.keys(want).length &&
+    Object.entries(want).every(([key, value]) => Object.hasOwn(terms, key) && terms[key] === value);
 }
 
-// The setter rule a rep reads on My money, once the owner approved the setter terms (setter: {verified}).
+// The setter rule a rep reads on My money, once the owner approved the setter terms (setter: {verified, contract}).
 export function setterRuleText(setter) {
   if (setter?.verified !== true) return SETTER_RULE_TEXT;
-  return `${CHANNEL_PERCENTS.setter}% to you when a walkthrough you set closes and the customer pays the whole price, goods included; the estimator gets ${CHANNEL_PERCENTS.estimator}% (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total). It is earned once the job is paid in full, rounded to the cent and paid every two weeks. Booking, a no-show or junk removal earns nothing, and a short payment, refund or cancellation is held for review. It is never added to the ${CHANNEL_PERCENTS.directSale}% direct-sale rate.`;
+  if (setter.contract === SETTER_CONTRACT_V1) return `${CHANNEL_PERCENTS.setter}% to you when a walkthrough you set closes and the customer pays the whole price, goods included; the estimator gets ${CHANNEL_PERCENTS.estimator}% (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total). It is earned once the job is paid in full, rounded to the cent and paid every two weeks. Booking, a no-show or junk removal earns nothing, and a short payment, refund or cancellation is held for review. It is never added to the ${CHANNEL_PERCENTS.directSale}% direct-sale rate.`;
+  return `${CHANNEL_PERCENTS.setter}% to you when a walkthrough you set is sold (signed there, or its quote approved within ${ONLINE_APPROVAL_DAYS} days of it) and the customer pays the whole price, goods included; the estimator gets ${CHANNEL_PERCENTS.estimator}% (${CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator}% total). It is earned on the day the job is completed once it is paid in full, rounded to the cent and paid every two weeks. Booking, a no-show, junk removal or a quote approved later earns nothing; a short payment is held for review, and a refund or cancellation after it was earned takes its share back on the next pay period's statement. It is never added to the ${CHANNEL_PERCENTS.directSale}% direct-sale rate.`;
 }
 
-// The only collection policy and scope the knock-collected-v3 contract accepts. The owner's
-// approval screen shows these exact values; they are not adjustable settings.
+// The only collection policies and scope the door-to-door contracts accept: knock-completed-v4 (DOOR_CONTRACT) from now
+// on, knock-collected-v3 for the approvals and sales made under it. The owner's approval screen shows these exact
+// values; they are not adjustable settings.
 export const COLLECTED_V3_POLICY = Object.freeze({ earnedOn: 'customer_collection', payoutCadence: 'biweekly',
   calculationBase: 'eligible_collected_amount', attribution: 'recorded_rep', partialCollections: 'review_required', refunds: 'review_required' });
+export const COMPLETED_V4_POLICY = Object.freeze({ earnedOn: 'job_completion', payoutCadence: 'biweekly',
+  calculationBase: 'eligible_collected_amount', attribution: 'recorded_rep', partialCollections: 'review_required', refunds: 'clawback_next_period' });
 export const D2D_GARAGE_SCOPE = Object.freeze({ service: 'garage_only', channel: 'door_to_door', estimatorStacking: false });
+const DOOR_POLICIES = { [DOOR_CONTRACT_V3]: COLLECTED_V3_POLICY, [DOOR_CONTRACT]: COMPLETED_V4_POLICY };
 
-export function validCollectionPolicy(policy) {
-  return policy?.earnedOn === 'customer_collection' && policy.payoutCadence === 'biweekly' &&
-    policy.calculationBase === 'eligible_collected_amount' && policy.attribution === 'recorded_rep' &&
-    policy.partialCollections === 'review_required' && policy.refunds === 'review_required';
+// The policy of that contract (knock-collected-v3 by default), value for value.
+export function validCollectionPolicy(policy, contract = DOOR_CONTRACT_V3) {
+  const want = DOOR_POLICIES[contract];
+  return Boolean(want) && Object.entries(want).every(([key, value]) => policy?.[key] === value);
 }
 
 // Package names alone do not prove which part of a job is garage work. Finance
@@ -87,7 +119,7 @@ export function validCommissionScope(scope) {
 export function commissionEligibility(sale) {
   const terms = sale?.commissionTerms;
   if (terms?.contract === 'knock-v1') return 'legacy';
-  if (!['knock-garage-v2', 'knock-collected-v3'].includes(terms?.contract) || !validCommissionScope(terms.scope) || terms.package !== sale.package) return 'unverified';
+  if (!['knock-garage-v2', ...COLLECTED_CONTRACTS].includes(terms?.contract) || !validCommissionScope(terms.scope) || terms.package !== sale.package) return 'unverified';
   return terms.scope.junkRemovalPackages.includes(sale.package) ? 'excluded'
     : terms.scope.garageOnlyPackages.includes(sale.package) ? 'garage' : 'unverified';
 }
@@ -95,10 +127,12 @@ export function commissionEligibility(sale) {
 // Created only by the server when booking under an evidenced contract. Current
 // settings must never replace the terms captured on an older sale.
 export function snapshotCommissionTerms(commission, soldAt, packageName) {
-  if (commission?.verified !== true || commission.rate !== 0.25 || !PACKAGES.includes(packageName) || !Number.isFinite(ms(commission.approvedAt)) || !validCommissionScope(commission.scope) || !validCollectionPolicy(commission.collectionPolicy)) return null;
+  // The contract the owner approved (knock-access.js loadSettings); an approval that names none is knock-collected-v3.
+  const contract = COLLECTED_CONTRACTS.includes(commission?.contract) ? commission.contract : DOOR_CONTRACT_V3;
+  if (commission?.verified !== true || commission.rate !== 0.25 || !PACKAGES.includes(packageName) || !Number.isFinite(ms(commission.approvedAt)) || !validCommissionScope(commission.scope) || !validCollectionPolicy(commission.collectionPolicy, contract)) return null;
   // A delayed offline sale cannot silently inherit a policy approved later.
   if (soldAt != null && (!Number.isFinite(ms(soldAt)) || ms(soldAt) < ms(commission.approvedAt))) return null;
-  return { contract: 'knock-collected-v3', approvedAt: commission.approvedAt, package: packageName,
+  return { contract, approvedAt: commission.approvedAt, package: packageName,
     scope: structuredClone(commission.scope), collectionPolicy: structuredClone(commission.collectionPolicy),
     policy: Object.fromEntries(TERM_FIELDS.map(key => [key, commission[key]])) };
 }
@@ -107,12 +141,12 @@ function saleTerms(sale, commission) {
   const terms = sale?.commissionTerms;
   if (terms != null) {
     const p = terms.policy;
-    if (!['knock-v1', 'knock-garage-v2', 'knock-collected-v3'].includes(terms.contract) || !Number.isFinite(ms(terms.approvedAt)) ||
+    if (!['knock-v1', 'knock-garage-v2', ...COLLECTED_CONTRACTS].includes(terms.contract) || !Number.isFinite(ms(terms.approvedAt)) ||
       !Number.isFinite(ms(sale.soldAt)) || ms(sale.soldAt) < ms(terms.approvedAt) ||
       !['rate', 'acceleratorRate', 'leadOverrideRate'].every(key => typeof p?.[key] === 'number' && p[key] >= 0 && p[key] <= 1) ||
       !['acceleratorEnabled', 'leadOverrideEnabled'].every(key => typeof p?.[key] === 'boolean') ||
       !Number.isFinite(p?.acceleratorThreshold) || p.acceleratorThreshold <= 0) return null;
-    if (terms.contract === 'knock-collected-v3' && !validCollectionPolicy(terms.collectionPolicy)) return null;
+    if (COLLECTED_CONTRACTS.includes(terms.contract) && !validCollectionPolicy(terms.collectionPolicy, terms.contract)) return null;
     if (terms.contract !== 'knock-v1') {
       if (p.rate !== 0.25) return null;
       const eligibility = commissionEligibility(sale);
@@ -171,10 +205,27 @@ function shortFinalCollection(sale, payment) {
   return !payment.at || ms(payment.at) >= completed;
 }
 
+/* knock-completed-v4: when the job was completed and paid in full (the later of the two), by the sale's own evidence,
+   or null. The commission is earned then, unless something holds it (commissionIssues). */
+function completedPaidAt(sale) {
+  const payment = customerCollection(sale), done = ms(sale?.completedAt);
+  return payment.gross > 0 && money(payment.gross) === money(sale.ticket) && payment.at && Number.isFinite(done) ? Math.max(ms(payment.at), done) : null;
+}
+/* knock-completed-v4: a refund and a cancellation dated after the sale was completed and paid in full, the ones its
+   commission is taken back for (saleClawbacks) instead of being held: {refund: {amount, at}, cancellation: {at}}. A
+   refund above what was collected, or one before, holds the sale for review as under earlier terms. */
+function clawbackEvents(sale) {
+  const earned = sale?.commissionTerms?.contract === DOOR_CONTRACT ? completedPaidAt(sale) : null;
+  if (earned === null) return {};
+  const payment = customerCollection(sale), after = value => datable(value) && ms(value) > earned;
+  return { refund: payment.refunded > 0 && payment.refunded <= payment.gross && after(sale.refundedAt) ? { amount: payment.refunded, at: ms(sale.refundedAt) } : null,
+    cancellation: sale.status === 'cancelled' && after(sale.cancelledAt) ? { at: ms(sale.cancelledAt) } : null };
+}
+
 export function commissionIssues(sale, commission) {
   const payment = customerCollection(sale), issues = [];
-  const collectedTerms = sale?.commissionTerms?.contract === 'knock-collected-v3';
-  if (['knock-garage-v2', 'knock-collected-v3'].includes(sale?.commissionTerms?.contract) && commissionEligibility(sale) === 'unverified') issues.push('commission_scope_unverified');
+  const contract = sale?.commissionTerms?.contract, collectedTerms = COLLECTED_CONTRACTS.includes(contract), clawed = clawbackEvents(sale);
+  if (['knock-garage-v2', ...COLLECTED_CONTRACTS].includes(contract) && commissionEligibility(sale) === 'unverified') issues.push('commission_scope_unverified');
   if ((sale?.commissionTerms != null || commission?.verified === true) && !saleTerms(sale, commission)) issues.push('commission_terms_missing_or_invalid');
   if (sale?.status === 'paid') {
     if (!collectedTerms && (!sale.completedAt || !Number.isFinite(ms(sale.completedAt)))) issues.push('completion_unverified');
@@ -190,7 +241,7 @@ export function commissionIssues(sale, commission) {
     // partial-collection policy (see shortFinalCollection).
     if (money(payment.gross) > money(sale.ticket) || shortFinalCollection(sale, payment)) issues.push('partial_collection_policy_unconfigured');
   }
-  if (payment.refunded === null || payment.refunded > 0) issues.push('refund_review');
+  if (payment.refunded === null || payment.refunded > 0 && !clawed.refund) issues.push('refund_review');
   if (sale?.collectionHistory != null) {
     const history = sale.collectionHistory;
     if (!Array.isArray(history) || history.some((event, i) => !Number.isFinite(event?.total) || !Number.isFinite(event?.previousTotal) ||
@@ -199,7 +250,9 @@ export function commissionIssues(sale, commission) {
       (history.length && history.at(-1).total !== payment.gross)) issues.push('collection_history_invalid');
   }
   const wasCancelled = sale?.status === 'cancelled' || sale?.statusHistory?.some(event => event?.status === 'cancelled');
-  if (wasCancelled && (payment.gross > 0 || sale.completedAt)) issues.push('cancellation_review');
+  if (wasCancelled && (payment.gross > 0 || sale.completedAt) && !clawed.cancellation) issues.push('cancellation_review');
+  // knock-completed-v4 earns at completion: a job reopened after it was completed is held, never silently un-earned.
+  if (contract === DOOR_CONTRACT && !sale.completedAt && sale.statusHistory?.some(event => ['completed', 'paid'].includes(event?.status))) issues.push('completion_review');
   return issues;
 }
 
@@ -208,6 +261,7 @@ const unique = rows => [...new Map(rows.map((row, i) => [row.id || `row-${i}`, r
 // The instant commission becomes earned, or null if it is not (yet) earned.
 export function earnedAt(sale) {
   if (commissionEligibility(sale) === 'excluded' || commissionIssues(sale).length) return null;
+  if (sale?.commissionTerms?.contract === DOOR_CONTRACT) return completedPaidAt(sale);
   if (sale?.commissionTerms?.contract === 'knock-collected-v3') {
     const payment = customerCollection(sale);
     return payment.gross > 0 && money(payment.gross) === money(sale.ticket) && payment.at ? ms(payment.at) : null;
@@ -275,6 +329,36 @@ export function leadOverrides(sales, commission, { now = Date.now() } = {}) {
     .map(sale => ({ saleId: sale.id, leadKey: sale.leadKey, repKey: sale.repKey, amount: money(collectedAmount(sale) * saleTerms(sale, commission).leadOverrideRate), earnedAt: earnedAt(sale) }));
 }
 
+/* knock-completed-v4 (owner decision 2026-10-30): a refund or a cancellation after a sale's commission was earned takes
+   that share back: the refunded part of what was collected (all of it when cancelled), rounded half up to the cent and
+   never more than was earned, from the rep and from the lead's override alike. Each is a negative line the statement
+   counts in the pay period after the refund or cancellation (periodStatement):
+   [{ saleId, repKey, role: 'rep'|'lead', amount (negative), at (ms), reason: 'refund'|'cancellation' }]. */
+export function saleClawbacks(sales, commission, { now = Date.now(), timeZone = 'America/Denver' } = {}) {
+  if (commission?.verified === false) return [];
+  const all = unique(sales || []), list = all.filter(sale => sale?.commissionTerms?.contract === DOOR_CONTRACT);
+  if (!list.length) return [];
+  // Each sale's commission as the statement earned it (the monthly accelerator counts every sale of the rep's month).
+  const earned = new Map(saleCommissions(all, commission, { now, timeZone }).map(row => [row.saleId, row.total]));
+  const overrides = new Map(leadOverrides(all, commission, { now }).map(row => [row.saleId, row.amount]));
+  const lines = [];
+  for (const sale of list) {
+    if (!earned.has(sale.id)) continue;
+    const { refund, cancellation } = clawbackEvents(sale), grossCents = Math.round(customerCollection(sale).gross * 100);
+    const events = [refund && { ...refund, reason: 'refund' }, cancellation && { ...cancellation, reason: 'cancellation' }].filter(event => event && event.at <= now).sort((a, b) => a.at - b.at);
+    for (const [role, repKey, total] of [['rep', sale.repKey, earned.get(sale.id)], ...(overrides.has(sale.id) ? [['lead', sale.leadKey, overrides.get(sale.id)]] : [])]) {
+      const cents = Math.round(total * 100);
+      let taken = 0;
+      for (const event of events) {
+        const want = event.reason === 'cancellation' ? cents : Math.floor((2 * cents * Math.round(event.amount * 100) + grossCents) / (2 * grossCents));
+        const amount = Math.min(cents, want) - taken;
+        if (amount > 0) { lines.push({ saleId: sale.id, repKey, role, amount: -amount / 100, at: event.at, reason: event.reason }); taken += amount; }
+      }
+    }
+  }
+  return lines;
+}
+
 // Commission a booked sale would pay at the base rate (for "pending").
 export const projectedCommission = (sale, commission) => commission?.verified === false || !saleTerms(sale, commission) ? null : sale?.status === 'cancelled' ? 0 : money(Number(sale?.ticket || 0) * Number(saleTerms(sale, commission).rate));
 
@@ -328,7 +412,7 @@ const datable = value => value != null && value !== '' && Number.isFinite(ms(val
 // the cancellation deadline, so that date counts for them.
 function activityDates(sale, timeZone) {
   const history = list => (Array.isArray(list) ? list : []);
-  const deadline = sale.commissionTerms?.contract === 'knock-collected-v3' ? null : sale.cancelEndsAt;
+  const deadline = COLLECTED_CONTRACTS.includes(sale.commissionTerms?.contract) ? null : sale.cancelEndsAt;
   const instants = [sale.soldAt, sale.paidAt, sale.completedAt, sale.refundedAt, sale.cancelledAt, deadline, sale.handoff?.deposit?.collectedAt,
     ...collectionEvents(sale).map(event => event.at), ...history(sale.collectionHistory).flatMap(event => [event?.at, event?.previousAt]),
     ...history(sale.statusHistory).map(event => event?.at)];
@@ -380,8 +464,14 @@ function reviewScope(sale, issues, period, timeZone, tiered) {
               that period by that recipient at that amount, and holds any row where a share it paid is earned again
               (another period or recipient): a share that changed after it was paid needs finance, never a silent
               move or a second payment. Recorded payments above the period's earnings hold the row too
-              (payout_exceeds_earned).
-              Without channels the statement is exactly what it was. */
+              (payout_exceeds_earned). A channel item with kind 'clawback' (estimator-commission.js channelLedger: a
+              share taken back for a refund or cancellation after it was earned, a negative amount already placed in
+              the pay period after it) subtracts like any share.
+              Without channels the statement is exactly what it was.
+   clawback - once any share is taken back (a channel clawback, or a knock-completed-v4 sale's, saleClawbacks, counted
+              in the pay period after its refund or cancellation): the negative total in this period, with each line in
+              clawbacks [{ref, role, reason, amount, eventDate}]. A period whose clawbacks leave it below zero is held
+              (clawback_exceeds_earned): finance settles the rest. */
 export function periodStatement({ sales = [], payouts = [], training = [], reps = [], settings, period, now = Date.now(), timeZone = 'America/Denver', channels = null, channelReview = [], channelHolds = [] }) {
   sales = unique(sales);
   payouts = unique(payouts);
@@ -389,9 +479,11 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
   const trainingRate = Number(settings?.payroll?.trainingHourlyRate ?? 15.16);
   const commissions = saleCommissions(sales, commission, { now, timeZone });
   const overrides = leadOverrides(sales, commission, { now });
+  const clawbacks = saleClawbacks(sales, commission, { now, timeZone }), previous = previousPayPeriod(period, settings?.payroll);
   // Reps with any receipt counted under an enabled monthly accelerator.
   const tieredReps = new Set(sales.filter(sale => saleTerms(sale, commission) && saleTerms(sale, commission).acceleratorEnabled !== false).map(sale => sale.repKey));
   const byRep = new Map(), withChannels = Array.isArray(channels), doorWalks = withChannels && channels.some(item => item?.role === 'direct_rep');
+  const withClawback = clawbacks.length > 0 || withChannels && channels.some(item => item?.kind === 'clawback');
   const row = (repKey, name = '') => {
     if (!byRep.has(repKey)) {
       const rep = reps.find(r => r.repKey === repKey);
@@ -400,6 +492,7 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
         earned: 0, accelerator: 0, override: 0, paid: 0, trainingMinutes: 0, trainingPay: 0,
         projectedCommission: 0, customerCollectedRevenue: 0, customerRefundedRevenue: 0,
         collectionUnknownCount: 0, reviewReasons: [], ...(withChannels ? { setterCommission: 0, estimatorCommission: 0 } : {}), ...(doorWalks ? { doorWalkthroughCommission: 0 } : {}),
+        ...(withClawback ? { clawback: 0, clawbacks: [] } : {}),
       });
     }
     return byRep.get(repKey);
@@ -408,7 +501,8 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
   for (const sale of sales) {
     const r = row(sale.repKey), payment = customerCollection(sale);
     const issues = commissionIssues(sale, commission);
-    // Unresolved adjustments may affect prior payouts or monthly tiers; never invent a clawback.
+    // Unresolved adjustments may affect prior payouts or monthly tiers: held, never a guessed clawback (only a
+    // knock-completed-v4 share is taken back, by its own rule: saleClawbacks).
     const lead = sale.leadKey && sale.leadKey !== sale.repKey ? row(sale.leadKey) : null;
     if (issues.length) {
       const scope = reviewScope(sale, issues, period, timeZone, tieredReps.has(sale.repKey));
@@ -440,6 +534,14 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
     const r = row(item.leadKey);
     r.override = money(r.override + item.amount);
   }
+  // knock-completed-v4: a share taken back for a refund or cancellation counts in the pay period after it.
+  for (const line of clawbacks) {
+    if (!previous || !inPeriod(zonedDate(line.at, timeZone), previous)) continue;
+    const r = row(line.repKey);
+    if (line.role === 'lead') r.override = money(r.override + line.amount); else r.earned = money(r.earned + line.amount);
+    r.clawback = money(r.clawback + line.amount);
+    r.clawbacks.push({ ref: `sale:${line.saleId}`, role: line.role, reason: line.reason, amount: line.amount, eventDate: zonedDate(line.at, timeZone) });
+  }
   const windowStart = Date.parse(addDays(period.start, -CHANNEL_LOOKBACK_DAYS)), counted = [];
   for (const item of withChannels ? channels : []) {
     if (!Number.isFinite(item?.earnedAt) || !Number.isFinite(item.amount) || !inPeriod(zonedDate(item.earnedAt, timeZone), period)) continue;
@@ -448,6 +550,10 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
     counted.push(item);
     r[key] = money(r[key] + item.amount);
     r.earned = money(r.earned + item.amount);
+    if (item.kind === 'clawback') {
+      r.clawback = money(r.clawback + item.amount);
+      r.clawbacks.push({ ref: item.ref ?? null, role: item.role, reason: item.reason ?? null, amount: item.amount, eventDate: item.eventDate ?? null });
+    }
   }
   for (const hold of withChannels ? channelHolds : []) {
     const dated = (Array.isArray(hold?.dates) ? hold.dates : []).some(at => datable(at) && inPeriod(zonedDate(ms(at), timeZone), period));
@@ -480,7 +586,9 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
     r.commissionSettled = null;
     // With the approved shares, payments recorded above what the period earned (a share that left a paid period) are
     // finance's to settle, never a silent zero.
-    if (withChannels && r.balance < 0) r.reviewReasons.push('payout_exceeds_earned');
+    if (withChannels && r.balance < 0 && r.earned + r.override >= 0) r.reviewReasons.push('payout_exceeds_earned');
+    // Shares taken back above what the period earned: finance settles the rest, never a silent zero or a debt.
+    if (r.earned + r.override < 0) r.reviewReasons.push('clawback_exceeds_earned');
     r.reviewReasons = [...new Set([...r.reviewReasons, ...(withChannels ? channelReview : [])])];
     r.compensationState = commission.verified === false ? 'unconfigured' : r.reviewReasons.length ? 'review_required' : 'configured';
     if (commission.verified === false) {
@@ -493,6 +601,7 @@ export function periodStatement({ sales = [], payouts = [], training = [], reps 
       if (r.reviewReasons.includes('commission_terms_missing_or_invalid')) r.projectedCommission = r.pending = null;
     }
     if (withChannels && r.earned === null) { r.setterCommission = r.estimatorCommission = null; if (doorWalks) r.doorWalkthroughCommission = null; }
+    if (withClawback && r.earned === null) r.clawback = null;
     r.earnedCommission = r.earned === null ? null : money(r.earned + r.override);
     r.payableCommission = r.compensationState === 'configured' ? Math.max(0, r.balance) : null;
   }
@@ -513,13 +622,15 @@ export function toCsv(header, rows) {
 }
 
 export function commissionCsv(statement, period) {
-  // A statement with the approved setter and estimator shares (periodStatement channels) adds their two columns.
-  const channels = statement.some(r => Object.hasOwn(r, 'setterCommission')), doorWalks = statement.some(r => Object.hasOwn(r, 'doorWalkthroughCommission'));
+  // A statement with the approved setter and estimator shares (periodStatement channels) adds their two columns, and one
+  // with a share taken back (clawback) its own.
+  const channels = statement.some(r => Object.hasOwn(r, 'setterCommission')), doorWalks = statement.some(r => Object.hasOwn(r, 'doorWalkthroughCommission')), clawed = statement.some(r => Object.hasOwn(r, 'clawback'));
   return toCsv(
     ['period_start', 'period_end', 'rep', 'username', 'sales_booked', 'booked_revenue', 'pending_commission', 'earned_commission', 'accelerator_included', 'lead_override', 'rep_payments_recorded', 'calculated_balance', 'projected_commission', 'customer_collected_revenue', 'customer_refunded_revenue', 'payable_commission', 'compensation_state', 'review_reasons', 'collection_unknown_count', 'rep_payment_evidence', 'settled_commission',
-      ...(channels ? ['setter_commission_included', 'estimator_commission_included'] : []), ...(doorWalks ? ['door_walkthrough_commission_included'] : [])],
+      ...(channels ? ['setter_commission_included', 'estimator_commission_included'] : []), ...(doorWalks ? ['door_walkthrough_commission_included'] : []), ...(clawed ? ['commission_clawback_included'] : [])],
     statement.map(r => [period.start, period.end, r.name, r.repKey, r.salesBooked, ...[r.booked, r.pending, r.earned, r.accelerator, r.override, r.commissionPaid, r.balance, r.projectedCommission, r.customerCollectedRevenue, r.customerRefundedRevenue, r.payableCommission].map(v => v == null ? '' : v.toFixed(2)), r.compensationState, r.reviewReasons.join(';'), r.collectionUnknownCount, r.commissionPaymentEvidence, r.commissionSettled == null ? '' : r.commissionSettled.toFixed(2),
-      ...(channels ? [r.setterCommission, r.estimatorCommission].map(v => v == null ? '' : v.toFixed(2)) : []), ...(doorWalks ? [r.doorWalkthroughCommission == null ? '' : r.doorWalkthroughCommission.toFixed(2)] : [])]),
+      ...(channels ? [r.setterCommission, r.estimatorCommission].map(v => v == null ? '' : v.toFixed(2)) : []), ...(doorWalks ? [r.doorWalkthroughCommission == null ? '' : r.doorWalkthroughCommission.toFixed(2)] : []),
+      ...(clawed ? [r.clawback == null ? '' : r.clawback.toFixed(2)] : [])]),
   );
 }
 

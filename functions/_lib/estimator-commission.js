@@ -12,6 +12,11 @@
    Both use the same evidence (knock-setters.js collectionEvidence): the job closed (accepted estimate) and paid in full
    with verified receipts, on its whole price including goods, rounded to the cent; garage work by its signed lines or
    scope (signedGarageHandoff) or the office's classification (estimator.classify; setter.classify for a setter record).
+   Under knock-setter-v2 (owner decision 2026-10-30) a share is earned on the day the job is completed once it is paid
+   in full, a refund or cancellation after that takes its share back on the next pay period's statement (clawbacks),
+   and a quote saved from the walkthrough and approved within 30 days of it pays as if signed there: 7% to the employee
+   who did the walkthrough (knock-setters.js walkthroughEstimator), never whoever recorded or sent the quote; approved
+   later it pays nothing. A knock-setter-v1 approval keeps its own rules until the owner approves v2.
    Before the owner's approval every row says so (commission_terms_unapproved, or the setter record's own holds) and
    shows no amount. Reads are bounded: one estimator's signed receipts (actorId) and setter records, or, for the office
    and the statement, the receipts and setter records made in the CHANNEL_LOOKBACK_DAYS before the pay period (the same
@@ -23,7 +28,8 @@ import { addDays, zonedDate } from '../../crew/knock-time.js';
 import { knockFailure, write } from './knock-store.js';
 import { dispatchStorage } from './dispatch-storage.js';
 import { commissionAllocations } from './knock-allocations.js';
-import { SETTER_JOB_FIELDS, adjustmentHold, approvedBase, centsToDollars, collectionEvidence, directSalesFor, earnedFloor, earnedTime, handoffSigner, qualifyingCollection, setterAttributions, setterBatchReaderFor, signedGarageHandoff } from './knock-setters.js';
+import { SETTER_JOB_FIELDS, adjustmentHold, approvalWindow, approvedBase, approvedGarageQuote, approvedWalkthroughQuote, centsToDollars, collectionEvidence, completionProjection, directSalesFor, earlierRules,
+  earnedFloor, earnedTime, handoffSigner, qualifyingCollection, setterAttributions, setterBatchReaderFor, signedGarageHandoff, underEarlierTerms, walkthroughEstimator } from './knock-setters.js';
 
 export const ESTIMATOR_LOOKBACK_DAYS = CHANNEL_LOOKBACK_DAYS;
 // Setter records a statement or the office view projects (each reads its walkthrough and job); the rest hold their
@@ -36,25 +42,39 @@ const CANCELLED = ['cancelled', 'canceled', 'no_show'];
 
 /** A walkthrough the estimator sold directly (no setter record), as money: the 7% direct-estimator channel. office is the
  * office's classification of the job (knock_estimator_jobs, estimator.classify), directSale a door sale the office linked
- * to it, signedAt the newest signed-handoff receipt (the source a statement's lookback counts from). */
-export function projectEstimatorJob(job, { terms = null, nowMs = Date.now(), office = null, directSale = null, signedAt = null } = {}) {
-  const approved = terms?.verified === true, estimatorKey = handoffSigner(job);
+ * to it, signedAt the newest signed-handoff receipt (the source a statement's lookback counts from; for a quote approved
+ * online, its approval). visit: the walkthrough of a quote saved from it and approved (knock-setter-v2, ONLINE-APPROVAL),
+ * whose estimator and date it pays by. */
+export function projectEstimatorJob(job, { terms = null, nowMs = Date.now(), office = null, directSale = null, signedAt = null, visit = null } = {}) {
+  const earlier = underEarlierTerms(terms, legacy => projectEstimatorJob(job, { terms: legacy, nowMs, office, directSale, signedAt, visit }));
+  if (earlier) return earlier;
+  const approved = terms?.verified === true, v1 = earlierRules(terms), online = approvedWalkthroughQuote(job);
+  const estimatorKey = online ? walkthroughEstimator(visit) : handoffSigner(job);
   const result = { id: `${job?.id}:direct_estimator`, jobId: job?.id || null, walkthroughId: job?.sourceWalkthroughId || null, jobDate: typeof job?.date === 'string' ? job.date : null,
-    channel: 'direct_estimator', estimatorKey: estimatorKey || null, estimatorEvidence: estimatorKey ? 'handoff_signer' : 'unverified', state: 'awaiting_close', rate: RATE,
+    channel: 'direct_estimator', estimatorKey: estimatorKey || null, estimatorEvidence: estimatorKey ? online ? 'walkthrough_estimator' : 'handoff_signer' : 'unverified', state: 'awaiting_close', rate: RATE,
     customerCollectedRevenue: null, qualifyingAt: null, earnedAt: null, projectedCommission: null, earnedCommission: null, payableCommission: null, reviewReasons: [], settlement: 'not_reconciled',
-    ...(approved ? { signedAt } : {}) };
+    ...(approved ? { signedAt } : {}), ...(online ? { closedBy: 'approved_quote' } : {}) };
   if (!job || job.type !== 'job' || !job.revision || !ID.test(String(job.sourceWalkthroughId || ''))) return { ...result, state: 'review_required', reviewReasons: ['conversion_link_unverified'] };
+  // Only a signed handoff paid under knock-setter-v1.
+  if (online && v1) return result;
+  if (online && (visit?.id !== job.sourceWalkthroughId || visit.type !== 'walkthrough')) return { ...result, state: 'review_required', reviewReasons: ['walkthrough_unverified'] };
   const officeClass = ['garage', 'junk_removal'].includes(office?.serviceClassification) ? office.serviceClassification : null;
   if (officeClass === 'junk_removal') return { ...result, serviceClassification: 'junk_removal', state: 'excluded', earnedCommission: 0, payableCommission: 0 };
-  const classification = officeClass || (signedGarageHandoff(job) ? 'garage' : 'unverified');
+  // Approved more than 30 days after the walkthrough: no commission, and why.
+  const window = online ? approvalWindow(visit, job) : 'signed';
+  if (window === 'after') return { ...result, state: 'excluded', earnedCommission: 0, payableCommission: 0, reviewReasons: ['approved_after_30_days'] };
+  if (window === 'unverified') result.reviewReasons.push('walkthrough_date_unverified');
+  const classification = officeClass || ((online ? approvedGarageQuote(job) : signedGarageHandoff(job)) ? 'garage' : 'unverified');
   if (classification !== 'garage') result.reviewReasons.push('service_scope_unverified');
   if (directSale) Object.assign(result, { directSaleRepKey: directSale.repKey || null }).reviewReasons.push('direct_close_attribution_conflict');
-  if (CANCELLED.includes(job.pipelineStatus || job.status)) result.reviewReasons.push('cancellation_review');
+  // knock-setter-v2 decides a cancellation by when it came (knock-setters.js completionEarning); v1 holds every one.
+  if (v1 && CANCELLED.includes(job.pipelineStatus || job.status)) result.reviewReasons.push('cancellation_review');
   const evidence = collectionEvidence(job);
   if (!evidence) return { ...result, state: 'awaiting_close' };
   const allocation = commissionAllocations({ channel: 'direct_estimator', jobId: job.id, serviceClassification: classification, estimatorKey, ...approvedBase(terms, evidence) });
   // A cancelled job projects nothing: it cannot be earned while it stays cancelled.
   if (approved && !result.reviewReasons.includes('cancellation_review')) result.projectedCommission = centsToDollars(allocation.allocations[0]?.amountCents);
+  if (!v1) return completionProjection(result, { job, evidence, allocation, terms, floors: [officeClass ? office.classifiedAt : null], ownRole: 'estimator', nowMs, unapproved: { reviewReasons: ['commission_terms_unapproved'] } });
   if (!evidence.verified) result.reviewReasons.push('collection_unverified');
   if (evidence.collected !== null) result.customerCollectedRevenue = evidence.collected;
   const floor = officeClass ? office.classifiedAt : null;
@@ -75,13 +95,14 @@ export function projectEstimatorJob(job, { terms = null, nowMs = Date.now(), off
  * never the setter's share. */
 export function estimatorShare(row) {
   const share = (Array.isArray(row?.allocations) ? row.allocations : []).find(item => item?.role === 'estimator');
-  const amount = centsToDollars(share?.amountCents), reasons = row.reviewReasons || [];
+  const amount = centsToDollars(share?.amountCents), reasons = row.reviewReasons || [], mine = (row.clawbacks || []).filter(line => line.role === 'estimator');
   return { id: share?.id || `${row.walkthroughId}:appointment_setter:estimator`, jobId: row.jobId || null, walkthroughId: row.walkthroughId, jobDate: row.jobDate ?? null,
     channel: 'appointment_setter', estimatorKey: row.estimatorKey || null, estimatorEvidence: row.estimatorEvidence || 'unverified', setterKey: row.setterKey || null,
     state: row.state, rate: RATE, customerCollectedRevenue: row.customerCollectedRevenue ?? null, qualifyingAt: row.qualifyingAt ?? null, earnedAt: row.earnedAt ?? null,
-    projectedCommission: reasons.includes('cancellation_review') ? null : amount, earnedCommission: row.state === 'earned' ? amount : row.earnedCommission === 0 ? 0 : null,
+    projectedCommission: reasons.includes('cancellation_review') || row.state === 'cancelled' ? null : amount, earnedCommission: row.state === 'earned' ? amount : row.earnedCommission === 0 ? 0 : null,
     payableCommission: row.state === 'earned' ? amount : row.payableCommission === 0 ? 0 : null, reviewReasons: reasons, settlement: 'not_reconciled',
-    ...(row.recordedAt !== undefined ? { recordedAt: row.recordedAt } : {}) };
+    ...(row.recordedAt !== undefined ? { recordedAt: row.recordedAt } : {}), ...(row.completedAt ? { completedAt: row.completedAt } : {}),
+    ...(mine.length ? { clawbacks: mine, clawedBackCommission: mine.reduce((sum, line) => sum + line.amountCents, 0) / 100 } : {}) };
 }
 
 // The signed walkthrough jobs behind the receipts a ledger query returns (each job once; masked, in batches), each with
@@ -96,6 +117,18 @@ async function signedJobs(dispatch, spec, signer) {
     .map(job => ({ job, signedAt: signedAt.get(job.id) || null }));
 }
 
+/* ONLINE-APPROVAL (knock-setter-v2): the quotes saved from a walkthrough and approved since `since` (one range on the
+   approval time), with their walkthroughs (masked, in batches) and the approval as their source time (signedAt); a job
+   in `skip` (signed) is left out; with signer, only the walkthroughs that employee did. */
+async function approvedQuotes(dispatch, since, skip, signer) {
+  if (typeof dispatch.approvedJobsSince !== 'function') return [];
+  const jobs = (await dispatch.approvedJobsSince(String(since || ''), [...SETTER_JOB_FIELDS])).filter(job => approvedWalkthroughQuote(job) && !skip.has(job.id));
+  const ids = [...new Set(jobs.map(job => job.sourceWalkthroughId))], visits = new Map();
+  for (let at = 0; at < ids.length; at += BATCH) for (const visit of await dispatch.readMany('jobs', ids.slice(at, at + BATCH), [...SETTER_JOB_FIELDS])) visits.set(visit.id, visit);
+  return jobs.map(job => ({ job, visit: visits.get(job.sourceWalkthroughId) || null, signedAt: job.customerApproval.approvedAt }))
+    .filter(({ visit }) => !signer || walkthroughEstimator(visit) === signer);
+}
+
 const byId = rows => [...new Map(rows.map(row => [row.id, row])).values()];
 
 /** The estimator 7% rows: one estimator's (estimatorKey, the staff key, and actorId, the Hub sign-in their receipts carry)
@@ -106,7 +139,11 @@ const byId = rows => [...new Map(rows.map(row => [row.id, row])).values()];
  * them for that another employee signed (estimator_attribution_conflict): it is not theirs until the office settles it. */
 export async function estimatorLedger({ kstore, dispatch, env = {}, estimatorKey = null, actorId = null, since = null, terms = null, nowMs = Date.now(), readJob = null, setterLimit = ESTIMATOR_SETTER_LIMIT } = {}) {
   const signer = estimatorKey ? String(estimatorKey).trim().toLowerCase() : '';
-  const signed = await signedJobs(dispatch, signer ? { field: 'actorId', op: 'EQUAL', value: String(actorId || estimatorKey) } : { field: 'createdAt', op: 'GREATER_THAN_OR_EQUAL', value: String(since || '') }, signer);
+  const signedOnly = await signedJobs(dispatch, signer ? { field: 'actorId', op: 'EQUAL', value: String(actorId || estimatorKey) } : { field: 'createdAt', op: 'GREATER_THAN_OR_EQUAL', value: String(since || '') }, signer);
+  // ONLINE-APPROVAL: never under a knock-setter-v1 approval. One estimator's own view reads the approvals of the year a
+  // statement could still count (CHANNEL_LOOKBACK_DAYS before the longest pay period).
+  const quotes = earlierRules(terms) ? [] : await approvedQuotes(dispatch, signer ? addDays(zonedDate(nowMs), -(ESTIMATOR_LOOKBACK_DAYS + 31)) : since, new Set(signedOnly.map(({ job }) => job.id)), signer);
+  const signed = [...signedOnly, ...quotes];
   const walkthroughs = [...new Set(signed.map(({ job }) => job.sourceWalkthroughId))];
   let records;
   if (signer) {
@@ -120,34 +157,42 @@ export async function estimatorLedger({ kstore, dispatch, env = {}, estimatorKey
     records = byId([...recent, ...linked.values()]).sort((a, b) => String(b.recordedAt || '').localeCompare(String(a.recordedAt || '')));
   }
   const viaSetter = new Set(records.map(row => row.walkthroughId)), direct = signed.filter(({ job }) => !viaSetter.has(job.sourceWalkthroughId));
-  const unclassified = direct.filter(({ job }) => !signedGarageHandoff(job)).map(({ job }) => job.id);
+  const unclassified = direct.filter(({ job }) => !signedGarageHandoff(job) && !approvedGarageQuote(job)).map(({ job }) => job.id);
   const [offices, sales, setters] = await Promise.all([unclassified.length ? kstore.getMany('knock_estimator_jobs', unclassified) : new Map(), directSalesFor(kstore, direct.map(({ job }) => job.id)),
     setterAttributions(kstore, env, { rows: records, terms, nowMs, limit: setterLimit, ...(readJob ? { readJob } : { readJobs: setterBatchReaderFor(dispatch) }) })]);
   const saleFor = new Map(sales.map(sale => [sale.handoff?.job?.ref, sale]));
   // REP-WALKTHROUGH: a walkthrough the rep ran and signed (channel direct_sale) has no estimator share at all.
   const shares = setters.rows.filter(row => row.channel !== 'direct_sale').map(estimatorShare).filter(row => !signer || row.estimatorKey === signer && !row.reviewReasons.includes('estimator_attribution_conflict'));
-  const directRows = direct.map(({ job, signedAt }) => projectEstimatorJob(job, { terms, nowMs, office: offices.get(job.id) || null, directSale: saleFor.get(job.id) || null, signedAt }));
+  const directRows = direct.map(({ job, signedAt, visit = null }) => projectEstimatorJob(job, { terms, nowMs, office: offices.get(job.id) || null, directSale: saleFor.get(job.id) || null, signedAt, visit }));
   return { rows: [...shares, ...directRows], setters, truncated: setters.truncated, overflow: records.slice(setterLimit) };
 }
 
 /** What earned setter and estimator shares add to a commission statement (periodStatement channels, channelHolds and
  * channelReview), from projected setter rows, direct estimator rows and the setter records left unread:
  *  - items: each earned share, by its share (jobId:role, the same for a job's estimator on either channel) and source time;
+ *    and, under knock-setter-v2, each share a refund or cancellation took back after it was earned (kind 'clawback', a
+ *    negative amount by its own share key, counted on the first day of the pay period after the refund or cancellation,
+ *    by `payroll`, the approved pay cycle; ref, reason and eventDate keep its evidence);
  *  - holds: the recipients of a share held after money was collected (adjustmentHold), and of a setter record that was
  *    not read (setter_records_truncated, setter_source_unavailable);
  *  - review: reasons that hold every row: a record that was not read and names no estimator (its signer is unknown). */
-export function channelLedger({ setters = { rows: [] }, rows = [], overflow = [] } = {}) {
+export function channelLedger({ setters = { rows: [] }, rows = [], overflow = [], payroll = null } = {}) {
   const items = [], holds = [], review = new Set();
   const sourceMs = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? Date.parse(value) : null;
+  const nextPeriod = at => { const period = payPeriodFor(zonedDate(Date.parse(at)), payroll), next = period && payPeriodFor(addDays(period.end, 1), payroll); return next ? Date.parse(`${next.start}T12:00:00Z`) : NaN; };
+  const clawback = (line, sourceAt) => items.push({ id: line.id, share: `${line.jobId}:${line.role}:clawback:${line.reason}:${Date.parse(line.at)}`, repKey: line.repKey, role: line.role, amount: -line.amountCents / 100,
+    earnedAt: nextPeriod(line.at), sourceAt, kind: 'clawback', reason: line.reason, eventDate: zonedDate(Date.parse(line.at)), ref: `job:${line.jobId}:${line.role}` });
   const hold = (keys, extra) => { for (const repKey of new Set(keys.filter(key => typeof key === 'string' && key))) holds.push({ repKey, ...extra }); };
   const unread = (row, reason) => { const estimator = String(row.estimatorKey || '').trim().toLowerCase(); if (estimator) hold([row.setterKey, estimator], { reasons: [reason], all: true }); else review.add(reason); };
   for (const row of setters.rows || []) {
     if (row.state === 'earned') for (const share of row.allocations) items.push({ id: share.id, share: `${row.jobId}:${share.role}`, repKey: share.repKey, role: share.role, amount: share.amountCents / 100, earnedAt: Date.parse(row.earnedAt), sourceAt: sourceMs(row.recordedAt) });
+    if (row.state === 'earned') for (const line of row.clawbacks || []) clawback(line, sourceMs(row.recordedAt));
     if (row.adjustment) hold((row.allocations || []).map(share => share.repKey), row.adjustment);
     if ((row.reviewReasons || []).includes('source_unavailable')) unread(row, 'setter_source_unavailable');
   }
   for (const row of rows) if (row.channel === 'direct_estimator') {
     if (row.state === 'earned') items.push({ id: row.id, share: `${row.jobId}:estimator`, repKey: row.estimatorKey, role: 'estimator', amount: row.earnedCommission, earnedAt: Date.parse(row.earnedAt), sourceAt: sourceMs(row.signedAt) });
+    if (row.state === 'earned') for (const line of row.clawbacks || []) clawback(line, sourceMs(row.signedAt));
     if (row.adjustment) hold([row.estimatorKey], row.adjustment);
   }
   for (const record of overflow) unread(record, 'setter_records_truncated');
@@ -155,10 +200,10 @@ export function channelLedger({ setters = { rows: [] }, rows = [], overflow = []
 }
 
 /** The earned setter and estimator shares a commission statement adds (channelLedger: {items, holds, review}), once the
- * owner approved the setter terms; null before. */
-export async function channelEarnings({ kstore, dispatch, env = {}, terms, nowMs = Date.now(), period, readJob = null }) {
+ * owner approved the setter terms; null before. payroll: the approved pay cycle a share taken back is counted by. */
+export async function channelEarnings({ kstore, dispatch, env = {}, terms, nowMs = Date.now(), period, readJob = null, payroll = null }) {
   if (terms?.verified !== true) return null;
-  return channelLedger(await estimatorLedger({ kstore, dispatch, env, since: addDays(period.start, -ESTIMATOR_LOOKBACK_DAYS), terms, nowMs, readJob }));
+  return channelLedger({ ...await estimatorLedger({ kstore, dispatch, env, since: addDays(period.start, -ESTIMATOR_LOOKBACK_DAYS), terms, nowMs, readJob }), payroll });
 }
 
 /** One estimator's own read-only view (GET /api/estimator-commission): their 7% rows, newest job first, with no setter,
@@ -170,7 +215,9 @@ export function estimatorView(ledger, terms, { payroll = null } = {}) {
   const outside = row => Boolean(payroll) && row.state === 'earned' && !(Date.parse(row.channel === 'direct_estimator' ? row.signedAt : row.recordedAt) >= windowStart(row.earnedAt));
   const rows = ledger.rows.map(row => outside(row) ? { ...row, state: 'review_required', earnedCommission: null, payableCommission: null, reviewReasons: [...row.reviewReasons, 'statement_lookback_exceeded'] } : row)
     .map(row => ({ id: row.id, jobId: row.jobId, jobDate: row.jobDate, channel: row.channel === 'direct_estimator' ? 'direct' : 'door_to_door',
-      state: row.state, rate: row.rate, projectedCommission: row.projectedCommission, earnedCommission: row.earnedCommission, earnedAt: row.earnedAt, reviewReasons: row.reviewReasons }))
+      state: row.state, rate: row.rate, projectedCommission: row.projectedCommission, earnedCommission: row.earnedCommission, earnedAt: row.earnedAt, reviewReasons: row.reviewReasons,
+      // knock-setter-v2: what a refund or cancellation after it was earned took back from this share (their own lines).
+      ...(Number.isFinite(row.clawedBackCommission) && row.clawedBackCommission > 0 ? { clawedBackCommission: row.clawedBackCommission } : {}) }))
     .sort((a, b) => String(b.jobDate || '').localeCompare(String(a.jobDate || '')) || String(a.id).localeCompare(String(b.id)));
   const sum = values => Math.round(values.reduce((total, value) => total + value * 100, 0)) / 100;
   return { terms: { verified: terms?.verified === true, approvedAt: terms?.approvedAt || null, percent: CHANNEL_PERCENTS.estimator },

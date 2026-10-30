@@ -11,8 +11,11 @@ const kit=()=>window.EGCHubKit;
 const h=(...args)=>kit().h(...args);
 const fetcher=()=>S.ctx&&typeof S.ctx.hubFetch==='function'?S.ctx.hubFetch:undefined;
 const ERRORS={estimator_commission_sign_in:'Sign in again to see your commission.',estimator_commission_unavailable:'Your commission could not be loaded. Retry in a moment.'};
-const STATES={earned:'Earned',awaiting_collection:'Waiting for full payment',awaiting_close:'Quote not accepted yet',review_required:'Held for review',excluded:'No commission',no_show:'No-show',cancelled:'Cancelled',lost:'Not sold'};
-const REASONS={commission_terms_unapproved:'the owner has not approved the terms yet',service_scope_unverified:'the office has not confirmed it is garage work',collection_unverified:'a payment is not verified yet',partial_collection_policy_unconfigured:'the payment does not match the price',cancellation_review:'the job was cancelled',recipient_unverified:'the estimator is not confirmed',recipient_overlap_review:'the setter and estimator are the same person',payroll_anchor_unconfigured:'the owner has not approved the terms yet',calculation_base_unconfigured:'the owner has not approved the terms yet'};
+const STATES={earned:'Earned',awaiting_completion:'Not earned yet — job not complete',awaiting_collection:'Waiting for full payment',awaiting_close:'Quote not accepted yet',review_required:'Held for review',excluded:'No commission',no_show:'No-show',cancelled:'Cancelled',lost:'Not sold'};
+const REASONS={commission_terms_unapproved:'the owner has not approved the terms yet',service_scope_unverified:'the office has not confirmed it is garage work',collection_unverified:'a payment is not verified yet',partial_collection_policy_unconfigured:'the payment does not match the price',cancellation_review:'the job was cancelled',recipient_unverified:'the estimator is not confirmed',recipient_overlap_review:'the setter and estimator are the same person',payroll_anchor_unconfigured:'the owner has not approved the terms yet',calculation_base_unconfigured:'the owner has not approved the terms yet',
+  // Owner decision 2026-10-30: earned at job completion; a quote approved online within 30 days of the walkthrough pays.
+  job_not_complete:'the job is not complete yet',balance_due:'the customer still owes the balance',approved_after_30_days:'the quote was approved more than 30 days after the walkthrough',
+  walkthrough_date_unverified:'the walkthrough date is missing',walkthrough_unverified:'the walkthrough could not be read',refund_review:'a refund came before the share was earned',refund_unverified:'a refund is missing its amount or date'};
 const dollars=value=>Number.isFinite(value)?kit().money(Math.round(value*100)):'—';
 const valid=data=>Boolean(data&&data.ok===true&&data.terms&&typeof data.terms.verified==='boolean'&&Array.isArray(data.rows)&&data.totals&&data.rows.every(row=>row&&typeof row.id==='string'&&typeof row.state==='string'&&Array.isArray(row.reviewReasons)));
 const dayLabel=date=>{try{return new Intl.DateTimeFormat('en-US',{timeZone:'UTC',weekday:'short',month:'short',day:'numeric',year:'numeric'}).format(new Date(date+'T12:00:00Z'));}catch{return date;}};
@@ -27,8 +30,9 @@ async function load(){
   finally{if(generation===S.generation){S.loading=false;render();}}
 }
 function share(row){
-  if(row.state==='earned')return `${dollars(row.earnedCommission)} earned`;
-  if(Number.isFinite(row.projectedCommission))return `${dollars(row.projectedCommission)} once paid in full`;
+  // A refund or cancellation after it was earned takes part of it back on a later statement (clawedBackCommission).
+  if(row.state==='earned')return `${dollars(row.earnedCommission)} earned${row.clawedBackCommission>0?`, ${dollars(row.clawedBackCommission)} taken back`:''}`;
+  if(Number.isFinite(row.projectedCommission))return `${dollars(row.projectedCommission)} once ${row.state==='awaiting_completion'?'the job is done and ':''}paid in full`;
   return row.earnedCommission===0?dollars(0):'No amount yet';
 }
 function rowNode(row){

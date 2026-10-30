@@ -776,16 +776,18 @@ function put(obj, path, value) {
 }
 
 /* The owner's "Approve commission terms" card. It shows exactly what an approval records:
-   the SAVED commission and pay-period settings (not unsaved edits), the fixed
-   knock-collected-v3 collection policy and scope, and the owner's package classification.
+   the SAVED commission and pay-period settings (not unsaved edits), the fixed collection
+   policy and scope of the current contract (knock-completed-v4, owner decision 2026-10-30),
+   and the owner's package classification. An earlier knock-collected-v3 approval keeps
+   paying its sales until the owner approves the current terms.
    Everyone else sees the status only. The server re-checks owner and saved values. */
 const POLICY_LABELS = {
-  earnedOn: ['Earned when', { customer_collection: 'the customer has paid the full price' }],
+  earnedOn: ['Earned when', { customer_collection: 'the customer has paid the full price', job_completion: 'the job is completed and the customer has paid the full price' }],
   payoutCadence: ['Paid out', { biweekly: 'every two weeks' }],
   calculationBase: ['Calculated on', { eligible_collected_amount: 'the eligible amount collected' }],
   attribution: ['Credited to', { recorded_rep: 'the rep recorded on the sale' }],
   partialCollections: ['Short final payment', { review_required: 'held for finance review (a deposit or balance still due is just pending)' }],
-  refunds: ['Refunds', { review_required: 'held for finance review' }],
+  refunds: ['Refunds', { review_required: 'held for finance review', clawback_next_period: 'a refund or cancellation after it was earned takes its share back (all of it if cancelled) on the next pay period\'s statement' }],
 };
 
 const pct = value => `${Math.round(Number(value) * 1000) / 10}%`;
@@ -794,7 +796,10 @@ function approvalCard(data, card) {
   const c = data.compensation;
   if (!c) return null;
   const saved = data.settings, com = saved.commission, pay = saved.payroll;
-  const status = c.verified
+  const earlier = c.verified && c.approval?.contract !== c.terms.contract;
+  const status = earlier
+    ? banner('warn', 'alert', 'Earlier commission terms approved', `${c.approval.contract} was approved by ${c.approval.reviewedBy} ${timeLabel(c.approval.reviewedAt)}. Sales booked now carry those terms until you approve the current ones below; sales keep the terms they were booked under.`)
+    : c.verified
     ? banner('success', 'check', 'Commission terms approved', `Approved by ${c.approval.reviewedBy} ${timeLabel(c.approval.reviewedAt)} · reference ${c.approval.reference}. Sales booked from then on carry these terms.`)
     : c.approval && !c.approval.matchesSavedSettings
       ? banner('warn', 'alert', 'Approval no longer matches the saved terms', 'The commission or pay-period settings changed after the last approval. Commission stays unconfigured until the owner approves again.')
@@ -836,11 +841,12 @@ function approvalCard(data, card) {
     const sameList = (a, b = []) => a.length === b.length && a.every(name => b.includes(name));
     // Approved terms date the sales that carry them. Fixing only the reference keeps that time
     // (the server checks the same); new terms start now and earlier sales never inherit them.
-    const referenceOnly = c.verified && sameList(garageOnlyPackages, prior.garageOnlyPackages) && sameList(junkRemovalPackages, prior.junkRemovalPackages);
+    const referenceOnly = c.verified && !earlier && sameList(garageOnlyPackages, prior.garageOnlyPackages) && sameList(junkRemovalPackages, prior.junkRemovalPackages);
     const effect = !c.verified ? ' Sales booked after this approval carry these terms.'
       : referenceOnly ? ` Only the reference changes. The approval time stays ${timeLabel(c.approval.reviewedAt)}, so every sale made since then keeps these terms.`
         : ' These terms start now. A sale made before now on a phone that has not synced yet will not carry them and will be held for finance review.';
-    const summary = `${pct(com.rate)} of collected garage sales, earned at full payment and paid every two weeks from ${pay.anchorDate}. Garage only: ${garageOnlyPackages.join(', ')}.` +
+    const earning = c.terms.collectionPolicy.earnedOn === 'job_completion' ? 'earned when the job is completed and paid in full (a refund or cancellation after that comes off the next statement)' : 'earned at full payment';
+    const summary = `${pct(com.rate)} of collected garage sales, ${earning} and paid every two weeks from ${pay.anchorDate}. Garage only: ${garageOnlyPackages.join(', ')}.` +
       `${junkRemovalPackages.length ? ` No commission: ${junkRemovalPackages.join(', ')}.` : ''}${unclassified.length ? ` Held for review: ${unclassified.join(', ')}.` : ''}${effect}`;
     if (!await confirmSheet(c.verified ? 'Update the approved terms?' : 'Approve these commission terms?', summary, c.verified ? 'Update approval' : 'Approve terms')) return;
     try {
@@ -860,15 +866,18 @@ function approvalCard(data, card) {
     h('button', { type: 'button', class: 'btn btn--primary', onclick: approve }, c.verified ? 'Update approval' : title));
 }
 
-/* The owner's "Approve walkthrough-setting and estimator terms" card (D6b): the fixed SETTER_TERMS the server records
-   (setter.approve), never adjustable. Until it is approved every setter and estimator share stays held for review.
+/* The owner's "Approve walkthrough-setting and estimator terms" card (D6b; knock-setter-v2, owner decision 2026-10-30):
+   the fixed SETTER_TERMS the server records (setter.approve), never adjustable. Until it is approved every setter and
+   estimator share stays held for review, or, after an approval of the earlier knock-setter-v1 terms, is paid by those.
    It needs the door-to-door commission terms (their pay cycle) approved first. Everyone else sees the status only. */
 function setterApprovalCard(data, card) {
   const s = data.setter;
   if (!s) return null;
   const t = s.terms;
-  const status = s.verified
-    ? banner('success', 'check', 'Walkthrough-setting and estimator terms approved', `Approved by ${s.approval.reviewedBy} ${timeLabel(s.approval.reviewedAt)} · reference ${s.approval.reference}. Setter and estimator shares of jobs paid in full are earned and payable from then on.`)
+  const status = s.earlierTerms
+    ? banner('warn', 'alert', 'Earlier walkthrough-setting terms approved', `${s.approval.contract} was approved by ${s.approval.reviewedBy} ${timeLabel(s.approval.reviewedAt)}. Shares are paid by those terms (earned at full payment, signed walkthroughs only, refunds held) until you approve the new ones below; shares already earned keep their time.`)
+    : s.verified
+    ? banner('success', 'check', 'Walkthrough-setting and estimator terms approved', `Approved by ${s.approval.reviewedBy} ${timeLabel(s.approval.reviewedAt)} · reference ${s.approval.reference}. Setter and estimator shares of completed jobs paid in full are earned and payable from then on.`)
     : s.approval && s.approval.termsMatch && !s.compensationVerified
       ? banner('warn', 'alert', 'Waiting for the door-to-door approval', 'These terms are approved, but they are paid with the door-to-door commission, whose approval no longer verifies. Shares stay held until it is approved again.')
       : banner('warn', 'alert', 'Walkthrough-setting and estimator terms are not approved', 'Every setter and estimator share stays held for review, with no amount, until the owner approves these terms.');
@@ -877,11 +886,13 @@ function setterApprovalCard(data, card) {
     kv('Walkthrough a rep set at the door', `${t.setterPercent}% to the rep who set it, ${t.estimatorPercent}% to its estimator (${t.setterPercent + t.estimatorPercent}% total)`),
     kv('Walkthrough an estimator sold directly', `${t.directEstimatorPercent}% to the estimator`),
     kv('Calculated on', 'the job\'s whole price, goods included, rounded to the cent'),
-    kv('Earned when', 'the job is closed and the customer has paid the full price (never before this approval)'),
+    kv('Earned when', 'the job is completed and the customer has paid the full price, on the completion day (never before this approval)'),
+    kv('Quote approved online', 'a quote saved from the walkthrough and approved within 30 days of it pays as if signed there; approved later, nothing'),
     kv('Paid out', 'every two weeks, with the door-to-door commission'),
-    kv('Garage work', 'a signed walkthrough for a garage transformation, unless the office classified it; junk removal earns nothing'),
-    kv('Estimator', 'the one the office or the door booking recorded, else whoever recorded the customer\'s signature'),
-    kv('Short payment or refund', 'held for finance review'),
+    kv('Garage work', 'a signed walkthrough or approved quote for a garage transformation, unless the office classified it; junk removal earns nothing'),
+    kv('Estimator', 'the one the office or the door booking recorded, else whoever recorded the customer\'s signature or did the walkthrough'),
+    kv('Short payment', 'held for finance review'),
+    kv('Refund or cancellation', 'after a share was earned, its part (all of it if cancelled) comes off the next pay period\'s statement'),
     kv('Stacking', `never added to the ${CHANNEL_PERCENTS.directSale}% direct door-to-door rate`));
   const title = 'Approve walkthrough-setting and estimator terms';
   if (!s.canApprove) return card(title, status, terms, h('p', { class: 'caption muted' }, 'Only the owner can approve these terms.'));
@@ -890,20 +901,21 @@ function setterApprovalCard(data, card) {
   const reference = h('input', { class: 'input', id: 'setter-approve-reference', maxlength: '120', placeholder: 'Decision record (no customer details)', value: s.approval?.reference || '' });
   const approve = async () => {
     if (reference.value.trim().length < 3) return toast('Add the approval reference.', { tone: 'bad' });
-    const summary = `${t.setterPercent}% to the rep and ${t.estimatorPercent}% to the estimator of a walkthrough set at the door, ${t.directEstimatorPercent}% to the estimator of a walkthrough sold directly, of the whole price of jobs paid in full, every two weeks.${s.verified ? ' Only the reference changes; the approval time stays.' : ' Jobs already paid in full count from now on.'}`;
-    if (!await confirmSheet(s.verified ? 'Update the approval reference?' : 'Approve these terms?', summary, s.verified ? 'Update reference' : 'Approve terms')) return;
+    const current = s.verified && !s.earlierTerms;
+    const summary = `${t.setterPercent}% to the rep and ${t.estimatorPercent}% to the estimator of a walkthrough set at the door, ${t.directEstimatorPercent}% to the estimator of a walkthrough sold directly, of the whole price of jobs completed and paid in full, every two weeks; a quote approved within 30 days of its walkthrough pays as if signed, and a refund or cancellation after a share was earned comes off the next statement.${current ? ' Only the reference changes; the approval time stays.' : s.earlierTerms ? ' Shares earned under the earlier terms keep their time; everything else follows these from now on.' : ' Jobs already completed and paid in full count from now on.'}`;
+    if (!await confirmSheet(current ? 'Update the approval reference?' : 'Approve these terms?', summary, current ? 'Update reference' : 'Approve terms')) return;
     try {
       const result = await action({ action: 'setter.approve', requestId, contract: t.contract, reference: reference.value.trim(),
         terms: Object.fromEntries(Object.entries(t).filter(([key]) => key !== 'contract')) }, { quiet: true });
       toast(result.duplicate ? 'These terms were already approved' : result.referenceOnly ? 'Approval reference updated' : 'Walkthrough-setting and estimator terms approved',
-        { sub: 'Setter and estimator shares of jobs paid in full are earned and payable.' });
+        { sub: 'Setter and estimator shares of completed jobs paid in full are earned and payable.' });
       invalidate('settings');
       app.render();
     } catch (error) { toast(error.message, { tone: 'bad' }); }
   };
   return card(title, status, terms,
     field('Setter terms reference', reference, null, 'setter-approve-reference'),
-    h('button', { type: 'button', class: 'btn btn--primary', onclick: approve }, s.verified ? 'Update reference' : title));
+    h('button', { type: 'button', class: 'btn btn--primary', onclick: approve }, s.verified && !s.earlierTerms ? 'Update reference' : title));
 }
 
 async function settingsSection() {

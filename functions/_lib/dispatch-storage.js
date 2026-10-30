@@ -239,6 +239,11 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     // OPEN-QUOTES (open-quotes.js): the estimator quotes sent on or after an ISO time, one range on the nested single
     // field quoteDraft.sentAt (Firestore's automatic single-field index; no composite index), masked to `fields`.
     sentQuoteJobs: (since, fields, limit = 5000) => query('jobs', fields, limit)({ field: 'quoteDraft.sentAt', op: 'GREATER_THAN_OR_EQUAL', value: since }),
+    // ONLINE-APPROVAL (knock-setters.js approvedWalkthroughQuote): jobs a customer approval was recorded on since an ISO
+    // time (one range on customerApproval.approvedAt, automatic single-field index), and the jobs saved from up to 30
+    // walkthroughs (sourceWalkthroughId IN), both masked to `fields`.
+    approvedJobsSince: (since, fields, limit = 5000) => query('jobs', fields, limit)({ field: 'customerApproval.approvedAt', op: 'GREATER_THAN_OR_EQUAL', value: since }),
+    walkthroughJobs: (ids, fields) => query('jobs', fields, 1000)({ field: 'sourceWalkthroughId', op: 'IN', value: ids.slice(0, 30) }),
     customersByKey: key => query('customers', [...CUSTOMER_FIELDS, 'searchKeys'], 20000)({ field: 'searchKeys', op: 'ARRAY_CONTAINS', value: key }),
     // CREW-SCHEDULE (functions/api/crew-schedule.js): the crew records alone, and the work dated in a bounded window.
     crewResources: () => query('dispatchResources', CREW_RESOURCE_FIELDS, 2000)({ field: 'recordType', op: 'EQUAL', value: 'crew' }),

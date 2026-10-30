@@ -152,7 +152,15 @@ Each rule is an owner decision recorded in the code. Changing one needs the owne
   13%, estimator 7%. A walkthrough a rep runs and signs themselves at the door (Knock "Do the walkthrough now") is their
   direct sale: 25% only, never with the 13% or the 7% (owner decision 2026-10-21, `repRanWalkthrough` in
   `functions/_lib/knock-setters.js`). One job pays once and the shares never stack (`functions/_lib/estimator-commission.js`,
-  `functions/_lib/knock-setters.js`). Rows show no amount until the owner approves the terms.
+  `functions/_lib/knock-setters.js`). Rows show no amount until the owner approves the terms. Owner decision 2026-10-30
+  (terms `knock-setter-v2` and door contract `knock-completed-v4`, each approved by the owner in Knock Admin; earlier
+  approvals keep their own rules until then, and a share earned under them keeps its time): a share is earned on the
+  job's completion day (America/Denver) once it is paid in full, and a completed job with a balance due waits for it; a
+  refund or cancellation after a share was earned takes back its part (all of it when cancelled) as a negative line on
+  the next pay period's statement, never more than was earned, with its evidence (`shareClawbacks`, `saleClawbacks`);
+  a quote saved from a walkthrough and approved (portal or office) within 30 days of it pays exactly as if signed there,
+  its estimator being whoever did the walkthrough, never whoever recorded the quote (`approvedWalkthroughQuote`); approved
+  later, or a lead with no walkthrough, pays nothing. Job actuals deducts only what the ledgers will pay (`channelOf`).
 - **The Hub is the source of truth; HighLevel is a second record.** HighLevel owns customer messages and follow-ups;
   the Hub owns the schedule, jobs and money and only tells HighLevel. Never add a HighLevel write or a customer send
   that is not a real, flagged send: register it in `functions/_lib/automation-registry-data.js` and follow

@@ -78,7 +78,7 @@ const saleJobDate = (store, admin, body, nowIso, env, { dispatch = dispatchStora
    owner approved the setter terms). */
 async function statementChannels(store, params, now, env, dispatch) {
   const settings = await loadSettings(store), terms = await loadSetterTerms(store, settings);
-  return { settings, channels: await channelEarnings({ kstore: store, dispatch: dispatch(env), env, terms, nowMs: now.getTime(), period: periodFromParams(params, settings, now.getTime()) }) };
+  return { settings, channels: await channelEarnings({ kstore: store, dispatch: dispatch(env), env, terms, nowMs: now.getTime(), period: periodFromParams(params, settings, now.getTime()), payroll: settings.payroll }) };
 }
 
 // A sale's status changes its rep's booked revenue for the sale day.
