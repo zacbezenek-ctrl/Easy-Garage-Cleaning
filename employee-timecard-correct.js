@@ -81,14 +81,14 @@ function body(strict=true){
   if(d.rate!==null&&d.rate.trim()!==d.origRate){if(!/^\d+(?:\.\d{1,2})?$/.test(d.rate.trim())||Number(d.rate)>1000)throw new Error('Enter an hourly rate such as 22 or 22.50.');out.hourlyRate=Number(d.rate.trim());}
   return out;
 }
-// Paid time the correction would save: the shift less its unpaid (meal) breaks; rest breaks are paid. The timecard's own
-// hours (its row on Time approvals) leave out every break, so with a rest break both numbers are named.
+// Paid time the correction would save: the shift less its unpaid (meal) breaks. Rest breaks are paid, on the timecard's
+// row on Time approvals and in payroll alike.
 function preview(){
   try{
     const data=body(false),start=Date.parse(data.clockInAt||S.entry.clockInAt),end=Date.parse(data.clockOutAt);
     const breaks=data.breaks||(Array.isArray(S.entry.breaks)?S.entry.breaks.map(item=>item?.endAt?item:{...item,endAt:data.clockOutAt}):[]);
     let unpaid=0,rest=0;for(const item of breaks){const ms=Math.max(0,Date.parse(item?.endAt)-Date.parse(item?.startAt))||0;if(item?.kind==='rest')rest+=ms;else unpaid+=ms;}
-    return`${hours(end-start-unpaid)} h paid time over a ${hours(end-start)} h shift${unpaid?` with ${hours(unpaid)} h unpaid breaks`:''}.${rest?` The timecard row shows ${hours(end-start-unpaid-rest)} h: its hours leave out the ${hours(rest)} h of paid rest breaks too, which payroll pays.`:''}`;
+    return`${hours(end-start-unpaid)} h paid time over a ${hours(end-start)} h shift${unpaid?` with ${hours(unpaid)} h unpaid breaks`:''}${rest?`, including ${hours(rest)} h of paid rest breaks`:''}.`;
   }catch{return'Enter the times to see the corrected hours.';}
 }
 

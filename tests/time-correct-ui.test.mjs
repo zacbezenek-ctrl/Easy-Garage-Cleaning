@@ -305,7 +305,15 @@ test('an unconfirmed correction outlives the dialog and a reload: reopening that
   assert.equal(next.page.session.getItem(key), null);
 });
 
-test('Correct time on a shift still running says so, and with a paid rest break the preview names both the paid time and the timecard’s hours', async () => {
+test('a timecard row on Time approvals pays its rest break and leaves out its meal break, as payroll does', async () => {
+  // 8 h with a 10-minute paid rest break and a 30-minute lunch: 7.50 h on the row, not 7.33.
+  const rested = card('rested', 'Crew.One', at('2026-09-21', '07:00'), at('2026-09-21', '15:00'), { approvalStatus: 'pending',
+    breaks: [{ startAt: at('2026-09-21', '09:00'), endAt: at('2026-09-21', '09:10'), kind: 'rest' }, { startAt: at('2026-09-21', '12:00'), endAt: at('2026-09-21', '12:30'), kind: 'meal' }] });
+  const main = await show(hub({ timecards: [rested] }), 'timesheets');
+  assert.equal(rowOf(main, 'rested').querySelector('strong').textContent, '7.50');
+});
+
+test('Correct time on a shift still running says so, and with a paid rest break the preview counts it in the paid time', async () => {
   const screen = hub({ timecards: WEEK }), { page, dialog, input } = screen, main = await show(screen, 'timesheets');
   tap(page, buttonOf(main, 'today', 'Correct time'));
   assert.match(dialog().querySelector('.tc-summary').textContent, /^Clocked in Tue, Sep 22, 8:00 AM and still clocked in \(4\.00 h so far\)\. Saving sets the clock-out, which ends the shift\.$/);
@@ -318,7 +326,7 @@ test('Correct time on a shift still running says so, and with a paid rest break 
   const paid = dialog().querySelector('.tc-break input[type="checkbox"]');
   paid.checked = true;
   paid.dispatchEvent({ type: 'change', target: paid });
-  assert.equal(dialog().querySelector('.tc-preview').textContent, '4.00 h paid time over a 4.00 h shift. The timecard row shows 3.75 h: its hours leave out the 0.25 h of paid rest breaks too, which payroll pays.');
+  assert.equal(dialog().querySelector('.tc-preview').textContent, '4.00 h paid time over a 4.00 h shift, including 0.25 h of paid rest breaks.');
   dialog().querySelector('.tc-actions button').click();
   // A forgotten shift (over 14 hours) still reads as never clocked out.
   tap(page, buttonOf(main, 'forgot', 'Correct time'));
