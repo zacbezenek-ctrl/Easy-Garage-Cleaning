@@ -65,7 +65,7 @@ test('every builder quote with garage work carries the Labor line; such a quote 
   assert.deepEqual([step.labor, step.lineItems.some(line => line.kind === 'labor')], [null, false]);
   const missing = priceCompositeQuote(untimed, selection({ labor: { manHours: null } }));
   assert.deepEqual([missing.labor.manHours, missing.labor.totalCents, missing.lineItems.some(line => line.kind === 'labor')], [null, null, false]);
-  assert.match(missing.approval.blocked.find(row => row.id === LABOR_ID).reason, /Enter the estimated man-hours for the Labor line/);
+  assert.match(missing.approval.blocked.find(row => row.id === LABOR_ID).reason, /Enter the crew and hours on site for the Labor line \(the estimated man-hours\)/);
   assert.equal(missing.approval.blocked.some(row => row.id === 'goods-installation'), false, 'goods wait for the man-hours, never for the installation question');
   // A signed handoff of a saved selection without labor (a draft saved before the Labor line) is refused as well.
   const f = fixture(), old = selection({ labor: null });
@@ -379,4 +379,22 @@ test('a refused send with a changed truck price and a draft price names only the
   const refusal = approvalRefusal(compositeApproval(priced.breakdown, now));
   assert.equal(refusal.message, 'This quote has 1 price the owner has not approved: Mattress. It stays saved as a draft and can be sent once the owner approves it in Hub > Catalog & pricing. The owner changed the price of Full truck load since it was saved: save the quote again to use the approved price; no owner approval is needed for that.');
   assert.deepEqual(refusal.details.unapproved.map(row => [row.name, row.resave ?? false]), [['Full truck load', true], ['Mattress', false]]);
+});
+
+// Owner decision 2026-10-30: the estimator enters the crew, people (1 to 6) x hours on site for the whole crew; the server
+// works out the man-hours, prices them at the owner's rate, keeps the crew on the quote, and a quote job saved from the
+// builder takes its crew size and on-site time from it, which dispatch suggests as the job's length.
+test('labor is people x hours on site: the server works out the man-hours, keeps the crew, and the saved job carries its crew size and on-site time', async () => {
+  const state = builderState(), f = fixture();
+  const priced = priceCompositeQuote(state, selection({ labor: { manHours: null, people: 3, hours: 4.5 } }), { complete: true });
+  assert.deepEqual([priced.labor.manHours, priced.labor.people, priced.labor.hours, priced.labor.adjusted, priced.labor.totalCents], [13.5, 3, 4.5, true, laborTotalCents(13.5, DEFAULT_LABOR_RATE_CENTS)]);
+  assert.deepEqual([priced.compositePricing.labor.people, priced.compositePricing.labor.hours, priced.breakdown.labor.people, priced.breakdown.labor.hours], [3, 4.5, 3, 4.5]);
+  assert.equal(priced.lineItems.at(-1).name, 'Labor', 'the customer still sees one amount (D-LABOR-TEXT)');
+  assert.doesNotMatch(JSON.stringify(priced.lineItems), /people|hours on site|man-hour/i);
+  const saved = await saveQuoteDraft(f.store, estimator, { requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r', draft: { client: client(1), title: 'Garage reset', scope: 'Reset.', line_items: priced.lineItems, valid_until: '2026-10-30', catalog_version: priced.menuVersion, crew_size: 2, estimated_duration_min: 180, composite_pricing: priced.compositePricing } }, NOW, { env: ON_ENV, compositeState: async () => state });
+  const job = f.job(saved.job.id);
+  assert.deepEqual([job.crewNeeded, job.estimatedDurationMin], [3, 270], 'the crew plans the job, not the walkthrough\'s 2 people for 3 hours');
+  assert.deepEqual([job.quoteDraft.compositePricing.labor.people, job.quoteDraft.compositePricing.labor.hours], [3, 4.5]);
+  const duration = suggestedDuration(job);
+  assert.deepEqual([duration.minutes, duration.crewSize], [270, 3], 'dispatch suggests the 4.5 hours on site for the crew of 3');
 });

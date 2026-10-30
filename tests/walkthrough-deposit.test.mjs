@@ -30,10 +30,10 @@ test('manual walkthrough total changes refresh the 25% due today and the 75% due
   vm.runInContext([sourceLine(walkthrough,'function depositSummary('),sourceLine(walkthrough,'function updateField(')].join('\n'),context);
   context.updateField('lockedPrice','1425');
   assert.equal(context.S.priceManuallySet,true);
-  assert.equal(nodes['deposit-summary'].textContent,'25% deposit due today: $356.25. Remaining 75% due on the job day: $1068.75.');
+  assert.equal(nodes['deposit-summary'].textContent,'25% deposit due today: $356.25. Remaining 75% due when the job is complete: $1,068.75.');
   // With the job booked (Schedule), the remainder names its day.
   context.S.jobDate='2026-10-20';context.updateField('lockedPrice','1000.02');
-  assert.equal(nodes['deposit-summary'].textContent,'25% deposit due today: $250.01. Remaining 75% due on the job day (Tue, Oct 20): $750.01.');
+  assert.equal(nodes['deposit-summary'].textContent,'25% deposit due today: $250.01. Remaining 75% due when the job is complete (booked for Tue, Oct 20): $750.01.');
 });
 
 function financeHarness(job,input=null){

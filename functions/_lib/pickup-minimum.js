@@ -1,11 +1,11 @@
-/** Minimum pickup (owner decision 2026-10-21: "minimum pickup should be 250, unless they are booking when a truck is
- * nearby"). A builder quote whose menu lines are all hauling (truck loads, special-handling items, access charges:
- * HAULING_GROUPS), with or without a truck load, is a pickup. Below $250 in all (its Labor line, if any, included) it
- * gets a visible customer line, "Minimum pickup", that raises it to exactly $250 (composite-quote.js priceCompositeQuote,
- * server-only: the browser never adds, removes or prices it, and a save whose lines differ is refused). It never
- * changes junkOnly (the minimum line is not a menu line) or the Labor line. Any quote with garage work is untouched.
+/** The $250 minimum to come out (owner decision 2026-10-30, which widened the 2026-10-21 minimum pickup from hauling-only
+ * quotes to every quote): a builder quote below $250 in all (its menu lines and its Labor line, if any) gets one visible
+ * customer line, "Minimum to come out", that raises it to exactly $250 (composite-quote.js priceCompositeQuote,
+ * server-only: the browser never adds, removes or prices it, and a save whose lines differ is refused). It never changes
+ * junkOnly (the minimum line is not a menu line) or the Labor line. The line keeps its id (PICKUP_MINIMUM_LINE_ID) so
+ * stored jobs and the waiver records read the same. haulingOnly stays a fact of the pricing (breakdown.pickup).
  *
- * The waiver, "Truck already nearby": the selection carries nearbyTruck:{reason} (3 to 300 characters, never customer
+ * The waiver, "Truck already nearby" (unchanged): the selection carries nearbyTruck:{reason} (3 to 300 characters, never customer
  * data), and the quote is then priced without the minimum. The server confirms it (confirmNearbyTruck) once the job's
  * date is known (a save of a booked job, the send, the in-person signature): another scheduled job, not cancelled, on
  * the same day whose service address has the same 5-digit ZIP code. The owner may waive it without one (an override).
@@ -17,23 +17,24 @@
  * approved or signed keeps the terms it was signed on (AGENTS.md section 4), its waiver included: it moves freely, with
  * an audited note (waiverNoteAudit).
  *
- * The winter sale (winter-sale.js) runs on the minimum's total and never takes a pickup below it (pickupFloorCents), so
- * a pickup at the minimum gets no sale credit and the two lines never show together. */
+ * The winter sale (winter-sale.js) runs on the minimum's total and never takes a builder quote below it (pickupFloorCents),
+ * so a quote at the minimum gets no sale credit and the two lines never show together. */
 import { HAULING_GROUPS } from './quote-model.js';
 import { AUTO_CREW_TYPES } from './dispatch-crew-assign.js';
 import { jobClosed } from './change-orders.js';
 
 export const PICKUP_MINIMUM_CENTS = 25000;
 export const PICKUP_MINIMUM_LINE_ID = 'minimum-pickup';
-export const PICKUP_MINIMUM_LINE_NAME = 'Minimum pickup';
+export const PICKUP_MINIMUM_LINE_NAME = 'Minimum to come out';
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const fail = (prefix, message) => Object.assign(new Error(message), { code: `${prefix}pickup_waiver_unconfirmed`, status: 409 });
 
-/** Whether a builder breakdown's lines (the menu lines, not Labor) are all hauling: a pickup. */
+/** Whether a builder breakdown's lines (the menu lines, not Labor) are all hauling: a pickup (a fact of the pricing; the
+ * minimum applies to every quote since 2026-10-30). */
 export const haulingOnly = lines => Array.isArray(lines) && lines.length > 0 && lines.every(line => plain(line) && line.section === 'removal' && HAULING_GROUPS.includes(line.group));
 
-/** The customer's line that raises a pickup to the minimum (a fee of cents). */
-export const pickupMinimumLine = cents => ({ id: PICKUP_MINIMUM_LINE_ID, kind: 'fee', name: PICKUP_MINIMUM_LINE_NAME, description: 'Raises this pickup to the $250 minimum.', quantity: 1, unitCents: cents, totalCents: cents, optional: false, selected: true, taxable: false });
+/** The customer's line that raises a quote to the minimum to come out (a fee of cents). */
+export const pickupMinimumLine = cents => ({ id: PICKUP_MINIMUM_LINE_ID, kind: 'fee', name: PICKUP_MINIMUM_LINE_NAME, description: 'Raises this quote to the $250 minimum to come out.', quantity: 1, unitCents: cents, totalCents: cents, optional: false, selected: true, taxable: false });
 
 /** The waiver a selection may carry: {reason}; anything else is refused. */
 export function normalizeNearbyTruck(value, refuse) {
@@ -41,12 +42,12 @@ export function normalizeNearbyTruck(value, refuse) {
   return { reason: value.reason.trim() };
 }
 
-/** The total a sale may never take a pickup below: the minimum, unless the quote is not a pickup or its minimum is waived.
- * A builder breakdown saved before the minimum (no pickup facts) that is all hauling is a pickup: no waiver predates it. */
+/** The total a sale may never take a builder quote below (2026-10-30: every quote): the minimum, unless its minimum is
+ * waived. A builder breakdown saved before the minimum (no pickup facts) has no waiver either. A quote without a builder
+ * breakdown (walkthrough-priced or catalog) keeps its own rules: 0. */
 export function pickupFloorCents(breakdown) {
   if (!plain(breakdown)) return 0;
-  if (!plain(breakdown.pickup)) return haulingOnly(breakdown.lines) ? PICKUP_MINIMUM_CENTS : 0;
-  return breakdown.pickup.haulingOnly === true && breakdown.pickup.waived !== true ? PICKUP_MINIMUM_CENTS : 0;
+  return plain(breakdown.pickup) && breakdown.pickup.waived === true ? 0 : PICKUP_MINIMUM_CENTS;
 }
 
 /** The 5-digit ZIP code ending a service address ("…, CO 80521", "80521-1234", optionally then the country), or ''.
@@ -67,7 +68,7 @@ export const jobWaiver = job => plain(job?.minimumWaiver) ? job.minimumWaiver : 
 // The job's current builder pricing: the signed quote's, else its draft's.
 const currentBreakdown = job => plain(job?.compositeQuote?.breakdown) ? job.compositeQuote.breakdown : plain(job?.quoteDraft?.breakdown) ? job.quoteDraft.breakdown : null;
 /** The waiver that prices the job now: its record, while its current pricing is waived (breakdown.pickup.waived) and
- * carries no Minimum pickup line; a record left from an earlier, waived revision is not live. */
+ * carries no minimum line (Minimum to come out); a record left from an earlier, waived revision is not live. */
 export function liveWaiver(job) {
   const waiver = jobWaiver(job), lines = Array.isArray(job?.estimate?.lineItems) ? job.estimate.lineItems : [];
   return waiver && currentBreakdown(job)?.pickup?.waived === true && !lines.some(line => line?.id === PICKUP_MINIMUM_LINE_ID) ? waiver : null;
@@ -94,8 +95,8 @@ export function pickupWaiverProblem(job, sameDayJobs = null, { approving = false
   if (!date) return approving && waiver.date ? `Book the job's day again before approving: the truck-nearby price was confirmed for ${waiver.date}.` : null;
   if (date === waiver.date && !zipMoved) return null;
   const confirmed = date === waiver.date ? `The truck-nearby price on this quote was confirmed for another ZIP code (${waiver.zip}).` : `The truck-nearby price on this quote was confirmed for ${waiver.date || 'another day'}.`;
-  if (waiver.ownerOverride || !Array.isArray(sameDayJobs)) return `${confirmed} Save the quote again for ${date}: the $250 minimum pickup applies unless another job is booked that day in the same ZIP code, or the owner waives it.`;
-  return nearbyJob(sameDayJobs, { jobId: job.id, date, zip }) ? null : `${confirmed} No other job is booked on ${date} in this job's ZIP code. Save the quote again (the $250 minimum pickup applies) or ask the owner.`;
+  if (waiver.ownerOverride || !Array.isArray(sameDayJobs)) return `${confirmed} Save the quote again for ${date}: the $250 minimum to come out applies unless another job is booked that day in the same ZIP code, or the owner waives it.`;
+  return nearbyJob(sameDayJobs, { jobId: job.id, date, zip }) ? null : `${confirmed} No other job is booked on ${date} in this job's ZIP code. Save the quote again (the $250 minimum to come out applies) or ask the owner.`;
 }
 /** Whether the job's service ZIP code is no longer the one its waiver was confirmed for (a record without one: never). */
 export const waiverZipMoved = (waiver, job) => Boolean(waiver?.zip) && serviceZip(job?.address) !== waiver.zip;
@@ -115,7 +116,7 @@ export const waiverNoteAudit = (auditWrite, waiver, { actor, via = 'hub', jobId,
 /**
  * Confirms a quote's waiver. priced: the builder pricing (breakdown.pickup); date/address: the job's booked day and
  * service address ('' when not booked yet); nearbyJobs(date): the jobs dated that day. Returns null when nothing is
- * waived (no waiver, or the quote is no pickup below the minimum), {pending:true} when no date is booked yet (allowed only
+ * waived (no waiver, or the quote is not below the minimum), {pending:true} when no date is booked yet (allowed only
  * where pending is), else {nearbyJobId, ownerOverride, date}. An unconfirmable waiver throws 409
  * `${prefix}pickup_waiver_unconfirmed` (quote_draft_ or handoff_).
  */
@@ -140,6 +141,6 @@ export async function confirmNearbyTruck({ priced, owner = false, jobId = '', da
   const zip = serviceZip(address), found = zip ? nearbyJob(await nearbyJobs(date), { jobId, date, zip }) : null;
   if (found) return { nearbyJobId: found.id, ownerOverride: false, date, zip };
   if (owner) return { nearbyJobId: null, ownerOverride: true, date, zip };
-  throw fail(prefix, zip ? `No other job is booked on ${date} in this job's ZIP code, so the truck-nearby waiver can't apply. Remove the waiver (the $250 minimum pickup applies) or ask the owner.`
-    : 'This job\'s address has no 5-digit ZIP code to find a nearby truck. Add it, remove the waiver (the $250 minimum pickup applies), or ask the owner.');
+  throw fail(prefix, zip ? `No other job is booked on ${date} in this job's ZIP code, so the truck-nearby waiver can't apply. Remove the waiver (the $250 minimum to come out applies) or ask the owner.`
+    : 'This job\'s address has no 5-digit ZIP code to find a nearby truck. Add it, remove the waiver (the $250 minimum to come out applies), or ask the owner.');
 }

@@ -40,7 +40,7 @@ test('the owner sets the labor rate on Menu prices: approved at once, recorded w
   assert.deepEqual(laborRate(await state()), { rateCents: 5300, source: 'default', reason: 'Owner decision (2026-10-19): $53.00 per man-hour.' });
   // D-JUNK: the time model has no truck-load minutes, and the menu names the groups a junk-only quote (no Labor line) is made of.
   assert.deepEqual(builderMenu(await state()).labor, { rateCents: 5300, approved: true, source: 'default', reason: 'Owner decision (2026-10-19): $53.00 per man-hour.', minManHours: 0.5, maxManHours: 200, stepManHours: 0.25,
-    version: 2, haulingGroups: ['junk', 'special', 'access'], time: { basePersonMinutes: 120, fillPersonMinutes: { light: 0, medium: 60, full: 120, packed: 240 }, defaultFillPersonMinutes: 60 } });
+    minPeople: 1, maxPeople: 6, version: 2, haulingGroups: ['junk', 'special', 'access'], time: { basePersonMinutes: 120, fillPersonMinutes: { light: 0, medium: 60, full: 120, packed: 240 }, defaultFillPersonMinutes: 60 } });
   const before = priceCompositeQuote(await state(), selection(), { complete: true });
   assert.deepEqual([before.labor.rateCents, before.labor.totalCents], [DEFAULT_LABOR_RATE_CENTS, LABOR_CENTS]);
   // The rate alone is a valid request; it counts as one change, and the receipt and the audit entry record both amounts.

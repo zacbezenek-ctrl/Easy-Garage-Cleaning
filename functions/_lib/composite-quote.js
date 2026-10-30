@@ -39,6 +39,10 @@ import { PICKUP_MINIMUM_CENTS, PICKUP_MINIMUM_LINE_ID, PICKUP_MINIMUM_LINE_NAME,
  * only while CATALOG_QUOTES_ENABLED is on) or with the menu approvals (approvals.goodsInstallationIncluded). A quote with
  * a Labor line also passes once the estimator set the man-hours by hand (labor.adjusted) after being told which goods
  * the estimate leaves out.
+ * Since the owner decision of 2026-10-30 the estimator enters the crew instead (labor.people, 1 to 6, and labor.hours, the
+ * hours on site for the whole crew in quarter hours): the man-hours are people x hours, worked out here (a browser number
+ * that differs is refused) and set by hand (adjusted). The selection and the breakdown keep both for dispatch and the
+ * office. The time estimate stays on the server for the quotes saved before it and for the records that read it.
  *
  * Junk removal (owner decision D-JUNK, 2026-10-18: "$750 per truck covers the crew's time"; the full truck is $1,000 since the
  * owner decision of 2026-10-21): the truck-load prices (the $1,000 full truck and the partial loads drafted from it) already pay for loading, hauling and disposal, and so do the
@@ -110,10 +114,14 @@ export const junkOnly = builderJunkOnly;
 export const DEFAULT_LABOR_RATE_CENTS = 5300;
 export const LABOR_RATE_LIMITS = Object.freeze({ min: 100, max: 100000 });
 export const LABOR_MAN_HOURS = Object.freeze({ min: 0.5, max: 200, step: 0.25 });
-// The browser's labor selection: the man-hours (null: the estimate), whether the estimator set them by hand, and the
+/** The crew the estimator enters (owner decision 2026-10-30): 1 to 6 people, the hours on site for the whole crew in
+ * quarter hours; people x hours are the man-hours, within LABOR_MAN_HOURS. */
+export const LABOR_CREW = Object.freeze({ minPeople: 1, maxPeople: 6 });
+// The browser's labor selection: the man-hours (null: the estimate), whether the estimator set them by hand, the
 // walkthrough's garage fullness (crew/gameplan.html "How full is it?"), the one input of the time estimate the builder
-// selection does not hold. The signed handoff replaces the fullness with the signed plan's own (scope.fullness).
-const LABOR_KEYS = ['manHours', 'adjusted', 'fullness'];
+// selection does not hold, and the crew (people x hours on site) the estimator entered. The signed handoff replaces the
+// fullness with the signed plan's own (scope.fullness).
+const LABOR_KEYS = ['manHours', 'adjusted', 'fullness', 'people', 'hours'];
 export const FULLNESS = Object.freeze(['light', 'medium', 'full', 'packed']);
 /** A walkthrough fullness ('Medium', 'packed', ...) as the time model's key, else null (unknown: the model's default). */
 export const fullnessOf = value => typeof value === 'string' && FULLNESS.includes(value.trim().toLowerCase()) ? value.trim().toLowerCase() : null;
@@ -411,10 +419,22 @@ export function laborEstimate(selection, state) {
   const personMinutes = Math.round(removal + install);
   return { personMinutes, removalPersonMinutes: Math.round(removal), installPersonMinutes: Math.round(install), fullness, installNotEstimated: missing, manHours: manHoursOf(personMinutes) };
 }
-// The browser's labor selection {manHours, adjusted, fullness}: manHours null asks for the estimate; adjusted says the
-// estimator set the man-hours by hand (it needs a number). Anything else is refused.
+// The browser's labor selection {manHours, adjusted, fullness, people?, hours?}: manHours null asks for the estimate;
+// adjusted says the estimator set the man-hours by hand (it needs a number). people and hours (the crew, 2026-10-30) come
+// together: the man-hours are people x hours, set by hand. Anything else is refused.
 function normalizeLabor(value) {
   if (!keysOnly(value, LABOR_KEYS) || !Object.hasOwn(value, 'manHours')) throw fail('invalid_labor', 'The labor selection is incomplete. Reload the builder and try again.');
+  if (value.people !== undefined || value.hours !== undefined) {
+    const { people, hours } = value, manHours = people * hours;
+    if (!Number.isSafeInteger(people) || people < LABOR_CREW.minPeople || people > LABOR_CREW.maxPeople || !quarterHours(hours) || !(hours > 0) || !validManHours(manHours)) {
+      throw fail('invalid_labor', `Enter the crew as ${LABOR_CREW.minPeople} to ${LABOR_CREW.maxPeople} people and their hours on site in quarter hours (like 3 or 3.25): people × hours must come to ${LABOR_MAN_HOURS.min} to ${LABOR_MAN_HOURS.max} man-hours.`, 400, { minPeople: LABOR_CREW.minPeople, maxPeople: LABOR_CREW.maxPeople, min: LABOR_MAN_HOURS.min, max: LABOR_MAN_HOURS.max, step: LABOR_MAN_HOURS.step });
+    }
+    if (value.manHours !== null && value.manHours !== manHours) throw fail('invalid_labor', 'The man-hours do not equal people × hours on site. Reload the builder and enter the crew again.');
+    if (value.adjusted === false) throw fail('invalid_labor', 'The labor selection is incomplete. Reload the builder and try again.');
+    const fullness = value.fullness ?? null;
+    if (fullness !== null && !FULLNESS.includes(fullness)) throw fail('invalid_labor', 'The garage fullness behind the labor estimate is invalid: light, medium, full or packed.');
+    return { manHours, adjusted: true, fullness, people, hours };
+  }
   if (value.manHours !== null && !validManHours(value.manHours)) throw fail('invalid_labor', `Enter the labor as ${LABOR_MAN_HOURS.min} to ${LABOR_MAN_HOURS.max} man-hours in quarter hours (like 6 or 6.25).`, 400, { min: LABOR_MAN_HOURS.min, max: LABOR_MAN_HOURS.max, step: LABOR_MAN_HOURS.step });
   if (!(value.adjusted === undefined || typeof value.adjusted === 'boolean') || value.adjusted === true && value.manHours === null) throw fail('invalid_labor', 'The labor selection is incomplete. Reload the builder and try again.');
   const fullness = value.fullness ?? null;
@@ -427,7 +447,7 @@ function normalizeLabor(value) {
  * the owner. manHours (and totalCents) stay null while the estimator has neither an estimate nor a number. */
 function pricedLabor(labor, estimate, state) {
   const prefilled = estimate ? estimate.manHours : null, manHours = labor.manHours ?? prefilled, rate = laborRate(state);
-  return { version: LABOR_VERSION, manHours, rateCents: rate.rateCents, rateSource: rate.source, totalCents: manHours === null ? null : laborTotalCents(manHours, rate.rateCents),
+  return { version: LABOR_VERSION, manHours, ...(labor.people !== undefined ? { people: labor.people, hours: labor.hours } : {}), rateCents: rate.rateCents, rateSource: rate.source, totalCents: manHours === null ? null : laborTotalCents(manHours, rate.rateCents),
     prefilledManHours: prefilled, adjusted: labor.manHours !== null && labor.adjusted === true, belowEstimate: manHours !== null && prefilled !== null && manHours < prefilled,
     estimate: estimate && { personMinutes: estimate.personMinutes, removalPersonMinutes: estimate.removalPersonMinutes, installPersonMinutes: estimate.installPersonMinutes, fullness: estimate.fullness, installNotEstimated: estimate.installNotEstimated } };
 }
@@ -439,7 +459,7 @@ function laborBlock(labor, state, { required, signed, junk = false }) {
   if (junk && !signed) return labor === undefined || labor === null ? null
     : row('This junk-only quote still has a Labor line from before the owner\'s decision of 2026-10-18: the truck-load price covers the crew\'s time, so a junk-only quote has no Labor line. Edit the quote and save it again to drop it.');
   if (labor === undefined || labor === null) return required ? row(`This quote has no Labor line. Every builder quote with garage work charges labor: the estimated man-hours × ${money(rate)} per man-hour. Edit the quote, check the man-hours and save it again.`) : null;
-  if (!plain(labor) || !validManHours(labor.manHours)) return row('Enter the estimated man-hours for the Labor line, then save the quote again.');
+  if (!plain(labor) || !validManHours(labor.manHours)) return row('Enter the crew and hours on site for the Labor line (the estimated man-hours), then save the quote again.');
   if (signed) return validLaborRate(labor.rateCents) && labor.totalCents === laborTotalCents(labor.manHours, labor.rateCents) ? null
     : row('The labor amount on this signed quote does not equal its man-hours × the labor rate it was signed at. Review the job\'s quote with the office before it is sent.');
   if (labor.version !== LABOR_VERSION) return row('This quote was saved before the owner\'s Labor decisions of 2026-10-18: its man-hours estimate counted truck-load time the truck price already covers, and its Labor line showed the customer the man-hours. Edit the quote, check the man-hours on the review step and save it again.');
@@ -473,7 +493,7 @@ export function builderMenu(state, { internal = false, canApprove = false } = {}
     ...(internal ? { internal: { goodsMarkup: goodsMarkupOf(settings).multiplier, goodsInstallationIncluded: installationIncluded(state), roundingRule: settings.roundingRule, approvalsRevision: approvals.revision,
       ...(typeof approvals.goodsInstallationIncluded === 'boolean' ? { installationConfirmed: approvals.goodsInstallationIncluded } : {}) } } : {}),
     // The labor rate is the owner's decision: every viewer sees it, approved. Installation is billed through it.
-    labor: { rateCents: rate.rateCents, approved: true, source: rate.source, reason: rate.reason, minManHours: LABOR_MAN_HOURS.min, maxManHours: LABOR_MAN_HOURS.max, stepManHours: LABOR_MAN_HOURS.step, version: LABOR_VERSION, haulingGroups: HAULING_GROUPS,
+    labor: { rateCents: rate.rateCents, approved: true, source: rate.source, reason: rate.reason, minManHours: LABOR_MAN_HOURS.min, maxManHours: LABOR_MAN_HOURS.max, stepManHours: LABOR_MAN_HOURS.step, minPeople: LABOR_CREW.minPeople, maxPeople: LABOR_CREW.maxPeople, version: LABOR_VERSION, haulingGroups: HAULING_GROUPS,
       time: time ? { basePersonMinutes: time.base, fillPersonMinutes: time.fill, defaultFillPersonMinutes: time.defaultFill } : null },
     installation: { included: installationIncluded(state), billedAs: 'labor' },
     viewer: { internal, canApprove: internal && canApprove },
@@ -661,23 +681,24 @@ export function priceCompositeQuote(state, descriptor, { complete = false, requi
   // the saved selection carries none; every other complete quote needs its labor.
   const junk = junkOnly(detail);
   if (junk) delete selection.labor;
-  else if (complete && requireLabor && !selection.labor) throw fail('labor_required', 'Every builder quote with garage work has a Labor line. Reopen the quote builder, check the man-hours on the review step and save the quote again.', 400);
+  else if (complete && requireLabor && !selection.labor) throw fail('labor_required', 'Every builder quote with garage work has a Labor line. Reopen the quote builder, enter the crew and hours on the review step and save the quote again.', 400);
   // D12: the Labor line, man-hours x the server's rate, after the menu lines. It is labor by its kind (estimateTotals
   // attributes it to laborCents) and carries no minutes, so the dispatch duration still comes from the time estimate.
   // The estimate is the server's, from this selection (laborEstimate); the saved selection keeps the man-hours priced.
   // D-LABOR-TEXT: the customer sees one amount, "Labor" (quote-model.js LABOR_LINE_NAME), never the man-hours or rate.
   const labor = selection.labor ? pricedLabor(selection.labor, laborEstimate(selection, state), state) : null;
-  if (labor) selection.labor = { manHours: labor.manHours, adjusted: labor.adjusted, fullness: selection.labor.fullness };
+  if (labor) selection.labor = { manHours: labor.manHours, adjusted: labor.adjusted, fullness: selection.labor.fullness, ...(selection.labor.people !== undefined ? { people: selection.labor.people, hours: selection.labor.hours } : {}) };
   if (complete && labor?.manHours === null) throw fail('labor_required', 'Enter the estimated man-hours for the Labor line before saving the quote: there is no time estimate to pre-fill them from.', 400);
   if (labor?.manHours != null) {
     const goodsSold = model.some(line => line.kind === 'product');
     model.push({ id: LABOR_ID, kind: 'labor', name: LABOR_LINE_NAME, description: goodsSold ? LABOR_INSTALL_NOTE : '',
       quantity: 1, unitCents: lineCents(labor.totalCents, 1), totalCents: labor.totalCents, optional: false, selected: true, taxable: false });
   }
-  // Minimum pickup (pickup-minimum.js, owner decision 2026-10-21): a quote of hauling lines only, below $250 in all, gets
-  // the line that raises it to $250, unless its selection asks for the truck-nearby waiver (confirmed where the job is
-  // booked: quote-draft.js, walkthrough-handoff.js). It is not a menu line, so junkOnly and the Labor line are unchanged.
-  const hauling = haulingOnly(detail), short = hauling ? Math.max(0, PICKUP_MINIMUM_CENTS - detail.reduce((sum, line) => sum + line.totalCents, 0) - (labor?.totalCents ?? 0)) : 0;
+  // The $250 minimum to come out (pickup-minimum.js, owner decision 2026-10-30; hauling-only quotes since 2026-10-21): a
+  // quote below $250 in all, its Labor line included, gets the line that raises it to $250, unless its selection asks for
+  // the truck-nearby waiver (confirmed where the job is booked: quote-draft.js, walkthrough-handoff.js). It is not a menu
+  // line, so junkOnly and the Labor line are unchanged. haulingOnly stays a fact of the pricing.
+  const hauling = haulingOnly(detail), short = Math.max(0, PICKUP_MINIMUM_CENTS - detail.reduce((sum, line) => sum + line.totalCents, 0) - (labor?.totalCents ?? 0));
   const minimumCents = selection.nearbyTruck ? 0 : short, pickup = { haulingOnly: hauling, minimumCents, waived: Boolean(selection.nearbyTruck) && short > 0, waivedCents: selection.nearbyTruck ? short : 0 };
   // The line follows the menu lines, before Labor (the Labor line stays last).
   if (minimumCents) { const at = model.findIndex(line => line.id === LABOR_ID); model.splice(at < 0 ? model.length : at, 0, pickupMinimumLine(minimumCents)); }

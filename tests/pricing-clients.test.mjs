@@ -218,16 +218,16 @@ test('with the quote builder on, Review hides the flat rates and waits for a bui
   // On and built: the dark card shows the builder total, the homeowner signs it, and its 25% / 75% split shows.
   const built = page(true, { builderQuote: BUILT }), signed = built.reviewScreen();
   assert.doesNotMatch(signed, FLAT);
-  assert.match(signed, /<div class="eyebrow">Quote builder total<\/div><div class="price">\$1312\.56<\/div>/);
-  assert.match(signed, /id="approved"[^]*a 25% deposit due today with the remaining 75% due on the job day[^]*id="signature"/);
-  assert.match(signed, /<p id="deposit-summary">25% deposit due today: \$328\.14\. Remaining 75% due on the job day \(Thu, Oct 1\): \$984\.42\.<\/p>/);
+  assert.match(signed, /<div class="eyebrow">Quote builder total<\/div><div class="price">\$1,312\.56<\/div>/);
+  assert.match(signed, /id="approved"[^]*a 25% deposit due today with the remaining 75% due when the job is complete[^]*id="signature"/);
+  assert.match(signed, /<p id="deposit-summary">25% deposit due today: \$328\.14\. Remaining 75% due when the job is complete \(booked for Thu, Oct 1\): \$984\.42\.<\/p>/);
   assert.match(signed, /<button class="save-btn" onclick="sendHighLevel\(this\)">Save brief \+ schedule<\/button>/);
   assert.deepEqual(Array.from(built.readyToSend()), []);
   // Off: the flat-rate Review is unchanged, now with the 25% / 75% split.
   const off = page(false), legacy = off.reviewScreen();
   assert.match(legacy, /<div class="eyebrow">Recommended flat rate<\/div><div class="price">\$950<\/div>/);
   for (const id of ['locked-price', 'approved', 'signature']) assert.match(legacy, new RegExp(`id="${id}"`));
-  assert.match(legacy, /<p id="deposit-summary">25% deposit due today: \$237\.50\. Remaining 75% due on the job day \(Thu, Oct 1\): \$712\.50\.<\/p>/);
+  assert.match(legacy, /<p id="deposit-summary">25% deposit due today: \$237\.50\. Remaining 75% due when the job is complete \(booked for Thu, Oct 1\): \$712\.50\.<\/p>/);
   assert.doesNotMatch(legacy, /build-quote|builder-total-missing|disabled>Save brief/);
   assert.deepEqual(Array.from(off.readyToSend()), []);
   // A builder answer that cannot be read is off (the page keeps working as before).
@@ -245,10 +245,10 @@ test('with the quote builder on, the homeowner signs a junk-only quote at $750 p
     lineItems: [{ id: 'removal-junk-full', kind: 'service', name: 'Full truck load', description: '', quantity: 2, unitCents: 75000, totalCents: 150000 }] };
   const junk = page(JUNK), review = junk.reviewScreen();
   assert.equal(junk.builderJunkOnly(), true);
-  assert.match(review, /<div class="eyebrow">Quote builder total<\/div><div class="price">\$1500\.00<\/div>/);
-  assert.match(review, /<span class="quote-line"><span>Full truck load × 2<\/span><b>\$1500\.00<\/b><\/span>/);
+  assert.match(review, /<div class="eyebrow">Quote builder total<\/div><div class="price">\$1,500\.00<\/div>/);
+  assert.match(review, /<span class="quote-line"><span>Full truck load × 2<\/span><b>\$1,500\.00<\/b><\/span>/);
   assert.doesNotMatch(review, /builder-no-labor|Labor|man-hour/i, 'the truck price covers the crew\'s time: no Labor line and no warning about one');
-  assert.match(review, /<p id="deposit-summary">25% deposit due today: \$375\.00\. Remaining 75% due on the job day \(Thu, Oct 1\): \$1125\.00\.<\/p>/);
+  assert.match(review, /<p id="deposit-summary">25% deposit due today: \$375\.00\. Remaining 75% due when the job is complete \(booked for Thu, Oct 1\): \$1,125\.00\.<\/p>/);
   assert.deepEqual(Array.from(junk.readyToSend()), []);
   // 6 man-hours × $53.00 = $318.00 of labor (the owner's rate of 2026-10-19): $994.56 + $318.00 = $1,312.56.
   const GARAGE = { compositePricing: { steps: ['removal', 'shelving'], labor: { manHours: 6, fullness: 'medium' } }, totalCents: 131256, menuVersion: 'menu-v1', jobId: 'draft-3', scope: 'Removal / cleanout: Two-car garage base. Labor.',
@@ -259,7 +259,7 @@ test('with the quote builder on, the homeowner signs a junk-only quote at $750 p
   assert.match(signed, /<span class="quote-line"><span>Labor<\/span><b>\$318\.00<\/b><\/span>/);
   assert.match(signed, /<b>Quote scope<\/b><span id="review-finish">Removal \/ cleanout: Two-car garage base\. Labor\.<\/span>/, 'the homeowner reads the priced scope, not the walkthrough\'s Cleanout + reset');
   assert.doesNotMatch(signed, /man-hour|per hour|hourly|billed per|\$40\.00|\$53\.00|builder-no-labor|Cleanout \+ reset/i);
-  assert.match(signed, /<p id="deposit-summary">25% deposit due today: \$328\.14\. Remaining 75% due on the job day \(Thu, Oct 1\): \$984\.42\.<\/p>/);
+  assert.match(signed, /<p id="deposit-summary">25% deposit due today: \$328\.14\. Remaining 75% due when the job is complete \(booked for Thu, Oct 1\): \$984\.42\.<\/p>/);
   // Built before 2026-10-18 (the Labor line named the man-hours, at that day's $40.00): the server prices it differently,
   // so Review stops before the signature with Edit the quote, shows its lines as the customer reads them and disables the
   // save.
@@ -299,6 +299,41 @@ test('with the quote builder on, a junk-only quote is not signed on a walkthroug
   // A quote of special items or access alone is not junk-only (D-JUNK: they are priced on top of a truck): it keeps its Labor line.
   assert.equal(page({}).builderJunkOnly([{ id: 'removal-special', kind: 'service', name: 'Special-handling items', quantity: 1, totalCents: 7000 }]), false);
   assert.equal(page({}).builderJunkOnly([{ id: 'removal-junk-partial', kind: 'service', name: 'Junk removal: quarter load', quantity: 1, totalCents: 18750 }, { id: 'removal-access', kind: 'service', name: 'Access charges', quantity: 1, totalCents: 12000 }]), true);
+});
+
+// The Review screen is where the homeowner reads and signs the quote on the estimator's phone or tablet. It shows them
+// what they buy and when the crew arrives, in their words and with thousands separators ($1,312.56), never the crew
+// size, the job hours or the crew's paid shift, the internal notes or the internal handoff (D-LABOR-TEXT's spirit: staff
+// working details stay staff). The notes box on Schedule says the crew reads it, so no prices go in it.
+test('the Review screen the homeowner signs shows no crew shift, internal notes or handoff, says what it is in their words, and formats money with separators', () => {
+  const BUILT = { compositePricing: { steps: ['removal', 'shelving', 'storage'], labor: { manHours: 6, fullness: 'medium' } }, totalCents: 131256, menuVersion: 'menu-v1', jobId: 'draft-5', scope: 'Removal / cleanout: Two-car garage base. Labor.',
+    lineItems: [{ id: 'removal-base', kind: 'service', name: 'Two-car garage base', description: '', quantity: 1, unitCents: 99456, totalCents: 99456 }, { id: 'labor', kind: 'labor', name: 'Labor', description: '', quantity: 1, unitCents: 31800, totalCents: 31800 }] };
+  const { context } = walkthroughPage({ pricing: servedPricing(), state: { approved: true, acceptanceAt: '2026-10-01T15:00:00.000Z', signature: 'data:image/png;base64,c2ln', builderQuote: BUILT, sortMethod: 'zones',
+    crewSize: '3', assignedTo: 'Synthetic Lead', notes: 'Synthetic gate note for the crew' } });
+  context.window.EGCWalkthroughPricing.quoteBuilder = () => true;
+  const review = context.reviewScreen();
+  assert.equal(context.builderSignGate(), '');
+  assert.match(review, /<div class="sum-row"><b>Arrival<\/b><span>2026-10-01 · 08:00–13:00<\/span><\/div>/);
+  assert.doesNotMatch(review, /crew of|crew shift|hours? job|\d hr\b|Internal notes|Synthetic gate note|Synthetic Lead|Generated handoff|job brief|pre-job checks|post-job checks/i);
+  assert.match(review, /<div class="eyebrow">Quote builder total<\/div><div class="price">\$1,312\.56<\/div>/);
+  assert.match(review, /<span class="quote-line"><span>Two-car garage base<\/span><b>\$994\.56<\/b><\/span><span class="quote-line"><span>Labor<\/span><b>\$318\.00<\/b><\/span>/);
+  assert.match(review, /<p id="deposit-summary">25% deposit due today: \$328\.14\. Remaining 75% due when the job is complete \(booked for Thu, Oct 1\): \$984\.42\.<\/p>/);
+  // Ten trucks: every amount on the screen has its thousands separator.
+  context.S.builderQuote = { ...BUILT, compositePricing: { steps: ['removal'] }, totalCents: 1000000, scope: 'Junk removal only: Full truck load × 10. Loading, hauling and disposal; no sorting, organizing or reset.',
+    lineItems: [{ id: 'removal-junk-full', kind: 'service', name: 'Full truck load', description: '', quantity: 10, unitCents: 100000, totalCents: 1000000 }] };
+  context.S.sortMethod = 'remove_all';
+  const trucks = context.reviewScreen();
+  assert.equal(context.builderSignGate(), '');
+  assert.match(trucks, /<div class="price">\$10,000\.00<\/div>/);
+  assert.match(trucks, /<span class="quote-line"><span>Full truck load × 10<\/span><b>\$10,000\.00<\/b><\/span>/);
+  assert.match(trucks, /25% deposit due today: \$2,500\.00\. Remaining 75% due when the job is complete \(booked for Thu, Oct 1\): \$7,500\.00\./);
+  assert.doesNotMatch(trucks, /\$\d{4,}/, 'no amount of $1,000 or more without its separator');
+  // The screen's heading speaks to the homeowner, not the staff handoff.
+  assert.match(gameplan, /\(\)=>title\('Review','Review your quote and sign','Check the work, the itemized quote and the arrival window together before you sign\. Only the items you approve are removed\.'\)\+reviewScreen\(\)/);
+  assert.doesNotMatch(gameplan, /Confirm once and create the job brief|It becomes the internal notes/);
+  // Schedule: the notes box goes to the crew's brief, so it says so and keeps prices out.
+  assert.match(context.scheduleScreen(), /<label class="label" for="f-notes">Notes for the crew \(no prices\)<\/label><textarea class="field" id="f-notes" placeholder="What the crew must know before arrival\. The crew reads this: no prices or amounts\."/);
+  assert.doesNotMatch(gameplan, /Internal customer \/ job notes/);
 });
 
 test('the walkthrough page loads its tables after sign-in and ships none of its own', () => {

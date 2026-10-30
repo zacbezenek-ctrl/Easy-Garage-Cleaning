@@ -38,7 +38,7 @@ test('truckload rates keep smaller jobs and charge $950 for a full load (Option 
 test('a selected one-car pressure wash adds $600 and produces a $387.50 deposit due today and $1,162.50 on the job day on one load', () => {
   const h = harness({ finish: ['cleanout', 'pressure_wash'] });
   assert.equal(h.recommend(), 1550);
-  assert.equal(h.depositSummary(), '25% deposit due today: $387.50. Remaining 75% due on the job day (Thu, Oct 1): $1162.50.');
+  assert.equal(h.depositSummary(), '25% deposit due today: $387.50. Remaining 75% due when the job is complete (booked for Thu, Oct 1): $1,162.50.');
   const plan = h.payload();
   assert.equal(plan.quote.total, 1550);
   assert.equal(plan.quote.deposit, 387.5);

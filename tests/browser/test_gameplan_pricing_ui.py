@@ -174,8 +174,8 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         expect(page.locator('#screen')).not_to_contain_text(re.compile('target', re.I))
         expect(page.locator('#signature')).to_be_visible()
         # D-DEPOSIT: 25% when the homeowner signs and 75% on the job day, with both amounts.
-        expect(page.locator('#deposit-summary')).to_have_text('25% deposit due today: $237.50. Remaining 75% due on the job day: $712.50.')
-        expect(page.locator('label[for=approved]')).to_contain_text('a 25% deposit due today with the remaining 75% due on the job day')
+        expect(page.locator('#deposit-summary')).to_have_text('25% deposit due today: $237.50. Remaining 75% due when the job is complete: $712.50.')
+        expect(page.locator('label[for=approved]')).to_contain_text('a 25% deposit due today with the remaining 75% due when the job is complete')
         self.audit(page, 'review')
         # Offline later on the same device: the saved copy still prices the walkthrough.
         self.online = False; page.reload(); expect(page.locator('#app')).to_be_visible()
@@ -254,7 +254,7 @@ class GameplanPricingBrowserTests(unittest.TestCase):
             'finish': ['cleanout', 'pressure_wash', 'mouse_trapping'], 'keepNotes': 'Blue bicycle', 'jobDate': '2026-09-24', 'startTime': '08:00', 'endTime': '13:00', 'crewSize': '1', 'assignedTo': 'Crew One',
             'notes': 'Dog in the yard', 'signature': 'data:image/png;base64,iVBORw0KGgo=', 'approved': True, 'acceptanceAt': '2026-09-22T14:45:00.000Z', 'acceptanceBy': 'Synthetic Customer'})
         expect(page.locator('#screen')).to_contain_text('Pest waste (+$300)')
-        expect(page.locator('#deposit-summary')).to_have_text('25% deposit due today: $556.25. Remaining 75% due on the job day (Thu, Sep 24): $1668.75.')
+        expect(page.locator('#deposit-summary')).to_have_text('25% deposit due today: $556.25. Remaining 75% due when the job is complete (booked for Thu, Sep 24): $1,668.75.')
         page.get_by_role('button', name='Save brief + schedule').click()
         expect(page.locator('#send-status')).to_contain_text('Job and CRM schedule verified', timeout=20000)
         plan = self.handoff_posts[-1]['plan']
@@ -300,11 +300,11 @@ class GameplanPricingBrowserTests(unittest.TestCase):
         # The estimator built the quote (Build the quote saves it and hands the page its total): the homeowner signs that total.
         page.evaluate(BUILT_QUOTE)
         expect(page.locator('.price-card .eyebrow')).to_have_text('Quote builder total')
-        expect(page.locator('.price-card .price')).to_have_text('$1312.56')
+        expect(page.locator('.price-card .price')).to_have_text('$1,312.56')
         for hidden in ('Recommended flat rate', 'Final flat rate'): expect(screen).not_to_contain_text(hidden)
         expect(page.locator('#locked-price')).to_have_count(0)
         expect(page.locator('#signature')).to_be_visible()
-        expect(page.locator('#deposit-summary')).to_have_text('25% deposit due today: $328.14. Remaining 75% due on the job day (Thu, Sep 24): $984.42.')
+        expect(page.locator('#deposit-summary')).to_have_text('25% deposit due today: $328.14. Remaining 75% due when the job is complete (booked for Thu, Sep 24): $984.42.')
         expect(page.get_by_role('button', name='Save brief + schedule')).to_be_enabled()
         self.audit(page, 'review, builder on, built')
         page.screenshot(path=str(out / 'gameplan-review-builder-mobile.png'), full_page=True)

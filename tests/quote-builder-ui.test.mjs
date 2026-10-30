@@ -18,6 +18,14 @@ const plan = () => ({ client: { name: 'Synthetic Customer', phone: '+19705550100
   quote: { title: 'EGC Garage Service', estimated_duration_min: 240, line_items: [{ id: 'cleanout', kind: 'service', name: 'Garage cleanout and reset', quantity: 1, unitCents: 90000, totalCents: 90000 }] },
   scope: { garages: '2', loads: '1', special_items: ['Mattress'], access: [], finish: ['cleanout', 'shelving'], hazards: [], finish_details: { shelf_type: 'metal', shelf_qty: 3, tote_qty: 0 } }, raw: {}, logistics: { crew_size: 2 } });
 const flush = async () => { for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve)); };
+// The estimator's crew on the review step (owner decision 2026-10-30): people x hours on site for the whole crew, priced
+// on the server. The Labor input is open until the crew is entered; Adjust opens it again.
+const enterCrew = async (h, people, hours) => {
+  if (!h.dialog().querySelector('#qb-labor-hours')) h.button('Adjust').click();
+  h.dialog().querySelector('#qb-labor-people').dispatchEvent({ type: 'change', target: { value: String(people) } });
+  h.dialog().querySelector('#qb-labor-hours').dispatchEvent({ type: 'input', target: { value: String(hours) } });
+  h.button('Apply crew and hours').click(); await flush();
+};
 
 // hub: {builder} is the Hub's EGC_QUOTE_BUILDER_ENABLED; hint is what the walkthrough's /api/pricing-config answer said.
 // walkthroughId is the walkthrough's Hub walkthrough id ('' for a manual walkthrough). datesPending: the send preview is refused
@@ -110,25 +118,34 @@ test('the walkthrough quote opens the guided builder: removal, shelving, extra s
   assert.deepEqual(h.calls.at(-1).body.compositePricing.steps, ['removal'], 'the server prices the finished removal step only');
   assert.match(h.text(), /Shelving units/);
   assert.match(h.text(), /Walkthrough note: 3 metal shelving units\./, 'the walkthrough count is a reminder, not a guessed product');
-  assert.match(h.text(), /Installing them is billed through the Labor line \(man-hours × \$53\.00\) on the review step\./);
+  assert.match(h.text(), /Installing them is billed through the Labor line on the review step\./);
   h.button(`Add ${shelf.name}`).click();
-  // Shelving is garage work: the Labor line comes back, the server's time model in person-minutes: 2 x 60 for set-up and
-  // sweep-out plus an hour to install the unit (the truck load and the mattress add none), 3 man-hours whatever the crew.
-  assert.match(h.text(), /Running total\$1,344\.70/, 'the shelving unit and its labor');
-  assert.match(h.text(), /Labor \$159\.00 \(3 man-hours\)/, 'the labor is the server\'s estimate of the selection, whatever the crew size');
+  // Shelving is garage work: the Labor line comes back, priced once the estimator enters the crew on the review step
+  // (owner decision 2026-10-30: people x hours on site); the builder shows no time estimate.
+  assert.match(h.text(), /Running total\$1,185\.70/, 'the shelving unit, before its labor');
+  assert.match(h.text(), /· Labor: set on the review step/);
   h.button('Continue to extra storage').click(); await flush();
   assert.deepEqual(h.calls.at(-1).body.compositePricing.steps, ['removal', 'shelving']);
   assert.match(h.text(), /All storage groups/);
   h.button('Review quote').click(); await flush();
   assert.deepEqual(h.calls.at(-1).body.compositePricing.steps, ['removal', 'shelving', 'storage']);
   assert.match(h.text(), /Removal \/ cleanout · \$1,070\.00/);
-  // The Labor row: the pre-filled man-hours × the owner's rate, where they came from, Adjust and the approved rate.
-  // The estimator sees the man-hours and the rate (staff); the customer's line will read "Labor" and its amount.
+  // The Labor input: the crew, people x hours on site; until it is entered the quote is priced without labor and cannot
+  // be saved. No time estimate is shown or sent.
+  assert.equal('labor' in h.calls.at(-1).body.compositePricing, false);
+  assert.match(h.text(), /Labor · enter the crew and hours/);
+  assert.match(h.text(), /Quote total before Labor \$1,185\.70/);
+  assert.doesNotMatch(h.text(), /Estimate:|crew time|Pre-filled/);
+  assert.ok(h.button('Save draft').hasAttribute('disabled'), 'no Labor line yet: nothing to save');
+  assert.equal(h.dialog().querySelector('#qb-labor-people').querySelectorAll('option').find(option => option.hasAttribute('selected')).value, '2', 'the people start at the walkthrough crew');
+  assert.equal(h.dialog().querySelector('#qb-labor-people').querySelectorAll('option').length, 6, 'one to six people');
+  // 3 people x 1 hour on site: 3 man-hours x the owner's rate. The estimator sees the crew, the man-hours and the rate
+  // (staff) in Estimator detail; the customer's line reads "Labor" and its amount.
+  await enterCrew(h, 3, 1);
+  assert.deepEqual(h.calls.at(-1).body.compositePricing.labor, { manHours: 3, adjusted: true, fullness: null, people: 3, hours: 1 });
   assert.match(h.text(), /Labor · \$159\.00/);
-  assert.match(h.text(), /3 man-hours × \$53\.00 = \$159\.00 Approved rate/);
-  assert.match(h.text(), /Estimate: 3 man-hours of crew time \(set-up 2 man-hours, installing shelving 1 man-hour\), whatever the crew size\. Truck loads, special items and access charges are not counted: their own prices pay for loading, hauling and disposal\. Pre-filled from the estimate\. Installing the shelving and storage is billed through this line\./);
+  assert.match(h.text(), /3 people × 1 hour on site = 3 man-hours × \$53\.00 = \$159\.00 Approved rate/);
   assert.ok(h.button('Adjust'));
-  assert.equal(h.button('Reset to estimate (3 man-hours)'), undefined, 'nothing to reset while the pre-fill is kept');
   assert.match(h.text(), /Quote total \$1,344\.70/);
   assert.match(h.text(), /cannot be sent until the owner approves these 2 draft prices/);
   assert.match(h.text(), /Mattress: draft price \$70\.00, not yet approved by the owner\./);
@@ -139,7 +156,7 @@ test('the walkthrough quote opens the guided builder: removal, shelving, extra s
   assert.ok(save.body.draft.composite_pricing, 'the builder selection is saved with the lines');
   assert.match(save.body.draft.scope, /^Removal \/ cleanout: Full truck load; Mattress\. Shelving: HDX plastic shelving/);
   assert.deepEqual(save.body.draft.line_items.map(line => line.id), ['removal-junk-full', 'removal-special', 'shelving-goods', 'labor']);
-  assert.deepEqual(save.body.draft.composite_pricing.labor, { manHours: 3, adjusted: false, fullness: null }, 'the saved selection keeps the man-hours priced');
+  assert.deepEqual(save.body.draft.composite_pricing.labor, { manHours: 3, adjusted: true, fullness: null, people: 3, hours: 1 }, 'the saved selection keeps the crew and its man-hours');
   // D-LABOR-TEXT: the customer's scope and Labor line name no man-hours, rate or hourly billing.
   assert.match(save.body.draft.scope, /\. Labor\.$/);
   assert.deepEqual([save.body.draft.line_items.at(-1).name, save.body.draft.line_items.at(-1).description, save.body.draft.line_items.at(-1).totalCents], ['Labor', 'Includes installing the shelving and storage.', 15900]);
@@ -158,6 +175,7 @@ test('a held quote is sent after the owner approves it, from a reopened dialog t
   h.button(`Add ${shelf.name}`).click();
   h.button('Continue to extra storage').click(); await flush();
   h.button('Review quote').click(); await flush();
+  await enterCrew(h, 3, 1);
   h.button('Save draft').click(); await flush();
   assert.match(h.text(), /Sending is blocked/);
   h.button('Done').click();
@@ -170,7 +188,7 @@ test('a held quote is sent after the owner approves it, from a reopened dialog t
   assert.ok(h.calls.slice(before).some(call => call.url === '/api/quote-draft?jobId=job-1'), 'the saved quote job is read once');
   assert.match(h.text(), /Quote EST-JOB1 revision 1 is saved as a draft and has not been sent\./);
   assert.match(h.text(), /Shelving · \$115\.70/);
-  assert.match(h.text(), /Labor · \$159\.003 man-hours × \$53\.00 = \$159\.00/, 'the saved quote shows its Labor row');
+  assert.match(h.text(), /Labor · \$159\.00Includes installing the shelving and storage\.Estimator detail3 people × 1 hour on site = 3 man-hours × \$53\.00 = \$159\.00/, 'the saved quote shows its Labor row');
   assert.match(h.text(), /Quote total \$1,344\.70/);
   h.button('Send saved quote').click(); await flush();
   assert.equal(h.calls.at(-1).body.action, 'send_preview');
@@ -188,16 +206,18 @@ test('editing a saved builder quote starts from its saved selection, not the wal
   h.button(`Add ${shelf.name}`).click();
   h.button('Continue to extra storage').click(); await flush();
   h.button('Review quote').click(); await flush();
+  await enterCrew(h, 3, 1);
   h.button('Save draft').click(); await flush();
   h.button('Done').click();
   h.open(memoryStorage()); await flush();
   h.button('Edit quote').click();
-  assert.match(h.text(), /Running total\$1,344\.70/, 'the saved shelving and labor are part of the selection again');
+  assert.match(h.text(), /Running total\$1,344\.70/, 'the saved shelving and crew are part of the selection again');
   assert.ok(h.button('Saved quote'), 'the saved quote stays one step back');
 });
 
-// D-JUNK: the labor estimate's help text names only the parts the server's estimate counted (composite-quote.js laborEstimate).
-test('the labor estimate names only the work it counted: set-up always, sorting with a cleaning base, cleaning with an add-on, the goods it installs', async () => {
+// The time estimate is gone from the builder (owner decision 2026-10-30): whatever the garage work, the review asks for the
+// crew (people x hours on site) and names no estimate, and a junk-only quote still asks for none (D-JUNK).
+test('the review asks for the crew whatever the garage work and names no time estimate; a junk-only quote asks for none', async () => {
   const tote = menuDoc.products.find(item => item.group === 'bins-totes' && item.section === 'storage');
   const review = async ({ pick = [], shelving = [], storage = [] } = {}) => {
     const h = harness();
@@ -208,14 +228,14 @@ test('the labor estimate names only the work it counted: set-up always, sorting 
     h.button('Continue to extra storage').click(); await flush();
     for (const item of storage) h.button(`Add ${item.name}`).click();
     h.button('Review quote').click(); await flush();
-    return h.dialog().querySelector('.qb-labor').textContent.match(/of crew time \(([^)]*)\)/)?.[1];
+    const row = h.dialog().querySelector('.qb-labor');
+    return [row.getAttribute('data-labor'), Boolean(row.querySelector('#qb-labor-hours')), /Estimate|crew time|set-up|Pre-filled/.test(row.textContent)];
   };
-  // A truck load and shelving (Jordan's quote): only the set-up counted, not sorting or cleaning.
-  assert.equal(await review({ shelving: [shelf] }), 'set-up 2 man-hours, installing shelving 1 man-hour');
-  assert.equal(await review({ pick: ['Two-car garage base'] }), 'set-up and sorting 3 man-hours');
-  assert.equal(await review({ pick: ['Two-car garage base', 'Deep clean'], shelving: [shelf], storage: [tote] }), 'set-up, sorting and cleaning 6 man-hours, installing shelving and storage 1.5 man-hours');
-  // Mouse trapping has no minutes in the walkthrough time model: with it, the cleaning is not named.
-  assert.equal(await review({ pick: ['Mouse trapping'], storage: [tote] }), 'set-up 2 man-hours, installing storage 0.5 man-hours');
+  assert.deepEqual(await review({ shelving: [shelf] }), ['needed', true, false]);
+  assert.deepEqual(await review({ pick: ['Two-car garage base'] }), ['needed', true, false]);
+  assert.deepEqual(await review({ pick: ['Two-car garage base', 'Deep clean'], shelving: [shelf], storage: [tote] }), ['needed', true, false]);
+  assert.deepEqual(await review({ pick: ['Mouse trapping'], storage: [tote] }), ['needed', true, false]);
+  assert.deepEqual(await review(), ['none', false, false], 'the truck load and the mattress: junk only');
 });
 
 test('a refused step stays put with the server reason; rules the server enforces are also shown on the step', async () => {
@@ -227,7 +247,7 @@ test('a refused step stays put with the server reason; rules the server enforces
   assert.match(wash.textContent, /One-car garage only\./);
   // Choosing a base keeps one base selected and re-totals.
   h.dialog().querySelectorAll('label').find(node => node.textContent.startsWith('Three-car garage base')).querySelector('input').dispatchEvent({ type: 'change', target: { checked: true } });
-  assert.match(h.text(), /Running total\$2,504\.00/, 'a cleaning base is garage work: its set-up, sweep-out and sorting are 3 man-hours');
+  assert.match(h.text(), /Running total\$2,345\.00/, 'a cleaning base is garage work: its labor is priced once the crew is entered');
   assert.equal(h.dialog().querySelectorAll('input[type="radio"]').filter(input => input.checked && input.name === 'qb-base').length, 1);
   h.button('Continue to shelving').click(); await flush();
   assert.match(h.text(), /Garage cleaning base/, 'still on the removal step');
@@ -235,7 +255,7 @@ test('a refused step stays put with the server reason; rules the server enforces
   h.button('Reload current prices').click(); await flush();
   assert.equal(h.calls.filter(call => call.url === '/api/quote-draft?view=builder').length, 2);
   assert.doesNotMatch(h.text(), /Prices changed/);
-  assert.match(h.text(), /Running total\$2,504\.00/, 'the selection survives the reload');
+  assert.match(h.text(), /Running total\$2,345\.00/, 'the selection survives the reload');
   h.button('Continue to shelving').click(); await flush();
   assert.match(h.text(), /Shelving units/);
 });
@@ -350,6 +370,7 @@ test('the builder opens with the shelving and storage picked on the walkthrough 
   assert.match(h.text(), /In this quote \(1\)/);
   h.button('Review quote').click(); await flush();
   assert.deepEqual(mirrored, []);
+  await enterCrew(h, 2, 2);
   h.button('Save draft').click(); await flush();
   const saved = h.calls.find(call => call.body?.action === 'save').body.draft.composite_pricing;
   assert.deepEqual([saved.shelving, saved.storage], [[{ id: shelf.id, quantity: 3 }], [{ id: tote.id, quantity: 1 }]]);
@@ -384,7 +405,9 @@ test('without Finish picks the builder keeps its own selection and tells the wal
   assert.match(h.text(), /Walkthrough note: 3 metal shelving units\./);
   h.button(`Add ${shelf.name}`).click();
   assert.deepEqual(mirrored, []);
-  for (const label of ['Continue to extra storage', 'Review quote', 'Save draft']) { h.button(label).click(); await flush(); }
+  for (const label of ['Continue to extra storage', 'Review quote']) { h.button(label).click(); await flush(); }
+  await enterCrew(h, 2, 1.5);
+  h.button('Save draft').click(); await flush();
   assert.deepEqual(mirrored.at(-1).shelving.map(row => [row.id, row.quantity, row.group]), [[shelf.id, 1, 'shelving']]);
   // A walkthrough whose goods hook throws keeps the builder working.
   const broken = harness({ goods: () => { throw new Error('unreadable'); } });
@@ -441,98 +464,81 @@ test('a walkthrough-priced draft saved while the builder is on is held, and the 
   assert.match(h.text(), /Running total\$1,070\.00/, 'built from the walkthrough capture: junk only, no Labor line');
 });
 
-// D12: the Labor row on the review step: pre-filled man-hours × the owner's rate, Adjust (total man-hours or people ×
-// hours), Reset to estimate, every change priced by the server, and the estimator's value kept on the saved draft.
-const toReview = async h => {
+// D12 with the owner decision of 2026-10-30: the Labor input on the review step is the crew, people (1 to 6) x hours on
+// site for the whole crew, priced by the server at the owner's rate; Adjust changes it, and the saved draft keeps it.
+// toReview enters a crew of 3 for an hour (3 man-hours, $159.00), the quote most tests build.
+const toReview = async (h, crew = [3, 1]) => {
   h.open(); await flush();
   h.button('Continue to shelving').click(); await flush();
   h.button(`Add ${shelf.name}`).click();
   h.button('Continue to extra storage').click(); await flush();
   h.button('Review quote').click(); await flush();
+  if (crew) await enterCrew(h, ...crew);
 };
 const typeInto = (h, id, value) => h.dialog().querySelector(`#${id}`).dispatchEvent({ type: 'input', target: { value } });
 const previews = h => h.calls.filter(call => call.body?.action === 'composite_preview');
 
-test('the Labor row: Adjust by total man-hours or by people × hours, each priced on the server, then Reset to estimate', async () => {
+test('the Labor input: people × hours on site for the whole crew, priced on the server; Adjust changes it and Cancel keeps it', async () => {
   const h = harness();
-  await toReview(h);
-  assert.deepEqual(previews(h).at(-1).body.compositePricing.labor, { manHours: null, adjusted: false, fullness: null }, 'the review asks the server for its own estimate');
+  await toReview(h, null);
+  assert.equal('labor' in previews(h).at(-1).body.compositePricing, false, 'no crew yet: priced without labor');
   assert.doesNotMatch(JSON.stringify(previews(h).at(-1).body), /rateCents|crewSize|onSiteMinutes/, 'neither the rate nor a time estimate is ever sent');
-  h.button('Adjust').click();
-  assert.equal(h.dialog().querySelector('#qb-labor-hours').value, '3', 'the editor starts at the man-hours on the quote');
-  assert.ok(h.button('Save draft').hasAttribute('disabled'), 'nothing is saved while a labor change is open');
-  // Total man-hours: a value outside 0.5 to 200 quarter hours is refused in the row; nothing is priced.
+  assert.ok(h.button('Save draft').hasAttribute('disabled'), 'nothing is saved before the crew is entered');
+  assert.equal(h.button('Cancel'), undefined, 'the input stays open until the crew is entered');
+  // Hours that are not quarter hours are refused in the row; nothing is priced.
   const before = previews(h).length;
-  typeInto(h, 'qb-labor-hours', '6.1');
-  assert.match(h.dialog().querySelector('.qb-labor-result').textContent, /Enter 0\.5 to 200 man-hours in quarter hours\./);
-  h.button('Apply man-hours').click(); await flush();
-  assert.match(h.text(), /Enter 0\.5 to 200 man-hours in quarter hours \(like 6 or 6\.25\)\./);
+  typeInto(h, 'qb-labor-hours', '2.1');
+  assert.match(h.dialog().querySelector('.qb-labor-result').textContent, /Enter the hours on site in quarter hours \(people × hours: 0\.5 to 200 man-hours\)\./);
+  h.button('Apply crew and hours').click(); await flush();
+  assert.match(h.text(), /Enter the hours on site in quarter hours \(like 3 or 3\.25\); people × hours must come to 0\.5 to 200 man-hours\./);
   assert.equal(previews(h).length, before);
-  typeInto(h, 'qb-labor-hours', '10.5');
+  // 3 people x 3.5 hours on site = 10.5 man-hours x $53.00 = $556.50.
+  h.dialog().querySelector('#qb-labor-people').dispatchEvent({ type: 'change', target: { value: '3' } });
+  typeInto(h, 'qb-labor-hours', '3.5');
   assert.equal(h.dialog().querySelector('.qb-labor-result').textContent, '= 10.5 man-hours × $53.00 = $556.50');
-  h.button('Apply man-hours').click(); await flush();
-  assert.deepEqual(previews(h).at(-1).body.compositePricing.labor, { manHours: 10.5, adjusted: true, fullness: null });
-  assert.match(h.text(), /Labor · \$556\.5010\.5 man-hours × \$53\.00 = \$556\.50/);
-  assert.match(h.text(), /Adjusted by hand from the estimate of 3 man-hours\./);
+  h.button('Apply crew and hours').click(); await flush();
+  assert.deepEqual(previews(h).at(-1).body.compositePricing.labor, { manHours: 10.5, adjusted: true, fullness: null, people: 3, hours: 3.5 });
+  assert.match(h.text(), /Labor · \$556\.50Includes installing the shelving and storage\.Estimator detail3 people × 3\.5 hours on site = 10\.5 man-hours × \$53\.00 = \$556\.50/);
   assert.match(h.text(), /Quote total \$1,742\.20/);
   assert.equal(h.button('Save draft').hasAttribute('disabled'), false);
-  // People × hours: 3 people × 2.5 hours each = 7.5 man-hours.
+  // Adjust: 6 people (the most) x 1.25 hours = 7.5 man-hours; the input opens at the crew on the quote.
   h.button('Adjust').click();
-  h.dialog().querySelectorAll('input[type="radio"]').find(input => input.parentNode.textContent.includes('By people × hours')).dispatchEvent({ type: 'change', target: { checked: true } });
-  h.dialog().querySelector('#qb-labor-people').dispatchEvent({ type: 'change', target: { value: '3' } });
-  typeInto(h, 'qb-labor-each', '2.5');
-  assert.equal(h.dialog().querySelector('.qb-labor-result').textContent, '= 7.5 man-hours × $53.00 = $397.50');
-  h.button('Apply man-hours').click(); await flush();
+  assert.equal(h.dialog().querySelector('#qb-labor-hours').value, '3.5', 'the input starts at the crew on the quote');
+  assert.ok(h.button('Save draft').hasAttribute('disabled'), 'nothing is saved while a labor change is open');
+  await enterCrew(h, 6, 1.25);
   assert.equal(previews(h).at(-1).body.compositePricing.labor.manHours, 7.5);
-  assert.match(h.text(), /7\.5 man-hours × \$53\.00 = \$397\.50/);
-  assert.match(h.text(), /Adjusted by hand from the estimate of 3 man-hours\./);
-  // 3 by hand is the estimate's number but still the estimator's own choice.
-  h.button('Adjust').click();
-  typeInto(h, 'qb-labor-hours', '3');
-  h.button('Apply man-hours').click(); await flush();
-  assert.match(h.text(), /Adjusted by hand from the estimate of 3 man-hours\./);
-  // Below the estimate, the job shows the owner the estimate (money-1: the owner sees labor cut under the estimate).
-  h.button('Adjust').click();
-  typeInto(h, 'qb-labor-hours', '2');
-  h.button('Apply man-hours').click(); await flush();
-  assert.match(h.text(), /Below the estimate: the job shows the owner the estimate of 3 man-hours\./);
-  // Reset to the estimate: the pre-fill again.
-  h.button('Reset to estimate (3 man-hours)').click(); await flush();
-  assert.deepEqual(previews(h).at(-1).body.compositePricing.labor, { manHours: null, adjusted: false, fullness: null });
-  assert.match(h.text(), /3 man-hours × \$53\.00 = \$159\.00/);
-  assert.match(h.text(), /Pre-filled from the estimate\./);
-  assert.equal(h.button('Reset to estimate (3 man-hours)'), undefined);
+  assert.match(h.text(), /6 people × 1\.25 hours on site = 7\.5 man-hours × \$53\.00 = \$397\.50/);
   // Cancel leaves the priced labor as it was.
   h.button('Adjust').click();
   typeInto(h, 'qb-labor-hours', '99');
   h.button('Cancel').click();
-  assert.match(h.text(), /Labor · \$159\.00/);
+  assert.match(h.text(), /Labor · \$397\.50/);
 });
 
-test('a saved draft keeps the estimator\'s man-hours: the saved view shows them and Edit quote reopens them', async () => {
+test('a saved draft keeps the estimator\'s crew: the saved view shows it in Estimator detail and Edit quote reopens it', async () => {
   const h = harness();
-  await toReview(h);
-  h.button('Adjust').click();
-  typeInto(h, 'qb-labor-hours', '9.25');
-  h.button('Apply man-hours').click(); await flush();
+  await toReview(h, [2, 4.75]);
   h.button('Save draft').click(); await flush();
   const save = h.calls.find(call => call.body?.action === 'save');
-  assert.deepEqual(save.body.draft.composite_pricing.labor, { manHours: 9.25, adjusted: true, fullness: null });
-  // The customer's line is one amount (D-LABOR-TEXT); the estimator's man-hours stay in the selection and the views below.
-  assert.deepEqual(save.body.draft.line_items.at(-1), { id: 'labor', kind: 'labor', name: 'Labor', description: 'Includes installing the shelving and storage.', quantity: 1, unitCents: 49025, totalCents: 49025, amount: 490.25, optional: false, selected: true, group: null, tier: null, package: null, catalog: null, customerSupplied: false, taxable: false });
+  assert.deepEqual(save.body.draft.composite_pricing.labor, { manHours: 9.5, adjusted: true, fullness: null, people: 2, hours: 4.75 });
+  // The customer's line is one amount (D-LABOR-TEXT); the estimator's crew and man-hours stay in the selection and the views below.
+  assert.deepEqual(save.body.draft.line_items.at(-1), { id: 'labor', kind: 'labor', name: 'Labor', description: 'Includes installing the shelving and storage.', quantity: 1, unitCents: 50350, totalCents: 50350, amount: 503.5, optional: false, selected: true, group: null, tier: null, package: null, catalog: null, customerSupplied: false, taxable: false });
   h.button('Done').click();
   h.open(memoryStorage()); await flush();
-  assert.match(h.text(), /Labor · \$490\.259\.25 man-hours × \$53\.00 = \$490\.25Adjusted by hand from the estimate of 3 man-hours\./);
+  assert.match(h.text(), /Labor · \$503\.50Includes installing the shelving and storage\.Estimator detail2 people × 4\.75 hours on site = 9\.5 man-hours × \$53\.00 = \$503\.50/);
   h.button('Edit quote').click();
-  assert.match(h.text(), /Labor \$490\.25 \(9\.25 man-hours\)/, 'the running total keeps the saved man-hours');
+  assert.match(h.text(), /· Labor \$503\.50/, 'the running total keeps the saved crew');
+  // A scope change keeps the crew: it is the estimator's own entry.
+  h.button('One more: Mattress').click();
+  assert.match(h.text(), /· Labor \$503\.50/);
   h.button('Continue to shelving').click(); await flush();
   h.button('Continue to extra storage').click(); await flush();
   h.button('Review quote').click(); await flush();
-  assert.equal(previews(h).at(-1).body.compositePricing.labor.manHours, 9.25, 'the reopened quote prices the saved man-hours, not the estimate');
-  assert.ok(h.button('Reset to estimate (3 man-hours)'));
+  assert.deepEqual(previews(h).at(-1).body.compositePricing.labor, { manHours: 9.5, adjusted: true, fullness: null, people: 2, hours: 4.75 }, 'the reopened quote prices the saved crew');
+  assert.ok(h.button('Adjust'));
 });
 
-test('no time estimate: the estimator enters the man-hours before the quote can be saved', async () => {
+test('without the server\'s time model the estimator enters the crew the same way before the quote can be saved', async () => {
   // A Hub whose walkthrough time model is unavailable: the menu carries no time model and the server no estimate.
   const state = baseState(), untimed = { ...state, walkthrough: { ...state.walkthrough, minutes: undefined } };
   const h = harness({ hub: { state: untimed, jobs: new Map(), sent: [] } });
@@ -541,20 +547,17 @@ test('no time estimate: the estimator enters the man-hours before the quote can 
   assert.match(h.text(), /No Labor line: junk only/);
   h.button('Continue to shelving').click(); await flush();
   h.button(`Add ${shelf.name}`).click();
-  assert.match(h.text(), /Labor: man-hours on the review step/);
+  assert.match(h.text(), /Labor: set on the review step/);
   h.button('Continue to extra storage').click(); await flush();
   h.button('Review quote').click(); await flush();
-  assert.deepEqual(previews(h).at(-1).body.compositePricing.labor, { manHours: null, adjusted: false, fullness: null });
-  assert.match(h.text(), /Labor · man-hours needed/);
-  assert.match(h.text(), /No time estimate is available, so the man-hours are entered by hand\. Enter the estimated man-hours before saving/);
+  assert.equal('labor' in previews(h).at(-1).body.compositePricing, false);
+  assert.match(h.text(), /Labor · enter the crew and hours/);
   assert.match(h.text(), /cannot be sent until the owner approves these 2 draft prices:Mattress: draft price/, 'the owner notice lists the menu prices only');
-  assert.doesNotMatch(h.text(), /owner approves[^:]*:[^.]*man-hours/, 'the missing man-hours are the estimator\'s to enter, not the owner\'s to approve');
+  assert.doesNotMatch(h.text(), /owner approves[^:]*:[^.]*(man-hours|crew)/, 'the missing crew is the estimator\'s to enter, not the owner\'s to approve');
   assert.ok(h.button('Save draft').hasAttribute('disabled'));
-  assert.equal(h.button('Cancel'), undefined, 'the editor stays open until the man-hours are entered');
-  typeInto(h, 'qb-labor-hours', '5');
-  h.button('Apply man-hours').click(); await flush();
-  assert.deepEqual(previews(h).at(-1).body.compositePricing.labor, { manHours: 5, adjusted: true, fullness: null });
-  assert.match(h.text(), /5 man-hours × \$53\.00 = \$265\.00/);
+  await enterCrew(h, 1, 5);
+  assert.deepEqual(previews(h).at(-1).body.compositePricing.labor, { manHours: 5, adjusted: true, fullness: null, people: 1, hours: 5 });
+  assert.match(h.text(), /1 person × 5 hours on site = 5 man-hours × \$53\.00 = \$265\.00/);
   assert.match(h.text(), /Quote total \$1,450\.70/);
   assert.equal(h.button('Save draft').hasAttribute('disabled'), false);
   h.button('Save draft').click(); await flush();
@@ -564,47 +567,37 @@ test('no time estimate: the estimator enters the man-hours before the quote can 
 const closeDialog = h => h.dialog().dispatchEvent({ type: 'cancel', preventDefault() {} });
 const approveAll = (state, items, extra = {}) => { state.approvals = { revision: 'a1', ...extra, items: Object.fromEntries(items.map(([item, unitCents]) => [item.id, { unitCents, identity: menuItemIdentity(item) }])) }; };
 
-// flow-7: the man-hours of a saved quote are what was saved, on the device that saved it and on any other; a later
-// estimate is shown next to them and never silently replaces them. A scope change follows the estimate again.
-test('a saved pre-filled quote reopens at its saved man-hours on this device and any other, and says when the estimate has moved', async () => {
+// flow-7: the crew of a saved quote is what was saved, on the device that saved it and on any other; the walkthrough's
+// fullness changing later never moves it (there is no estimate to follow).
+test('a saved quote reopens at its saved crew on this device and any other, whatever the walkthrough says later', async () => {
   let fullness = null;
   const walkthrough = () => { const p = plan(); if (fullness) p.scope.fullness = fullness; return p; };
   const h = harness({ walkthrough }), device = memoryStorage();
   const chooseTwoCar = () => h.dialog().querySelectorAll('label').find(node => node.textContent.startsWith('Two-car garage base')).querySelector('input').dispatchEvent({ type: 'change', target: { checked: true } });
   h.open(device); await flush();
-  // The fullness is the sorting time of a garage with a cleaning base (D-JUNK), so this quote has one.
   chooseTwoCar();
   h.button('Continue to shelving').click(); await flush();
   h.button(`Add ${shelf.name}`).click();
   h.button('Continue to extra storage').click(); await flush();
   h.button('Review quote').click(); await flush();
+  await enterCrew(h, 2, 2);
   h.button('Save draft').click(); await flush();
-  // 2 x (60 + 30 for the unknown fullness) + 60 for the shelving unit = 240 person-minutes.
-  assert.deepEqual(h.calls.find(call => call.body?.action === 'save').body.draft.composite_pricing.labor, { manHours: 4, adjusted: false, fullness: null });
+  assert.deepEqual(h.calls.find(call => call.body?.action === 'save').body.draft.composite_pricing.labor, { manHours: 4, adjusted: true, fullness: null, people: 2, hours: 2 });
   h.button('Done').click();
-  // The walkthrough now says the garage is packed: the estimate grows by 2 x 90 person-minutes to 7 man-hours.
+  // The walkthrough now says the garage is packed: the crew stays the estimator's.
   fullness = 'Packed';
   for (const [store, label] of [[device, 'the saving device'], [memoryStorage(), 'another device']]) {
     h.open(store); await flush();
-    assert.match(h.text(), /Labor · \$212\.004 man-hours × \$53\.00 = \$212\.00/, label);
+    assert.match(h.text(), /Labor · \$212\.00Includes installing the shelving and storage\.Estimator detail2 people × 2 hours on site = 4 man-hours × \$53\.00 = \$212\.00/, label);
     h.button('Edit quote').click();
-    assert.match(h.text(), /Labor \$212\.00 \(4 man-hours\)/, `${label}: the running total keeps the saved man-hours`);
+    assert.match(h.text(), /· Labor \$212\.00/, `${label}: the running total keeps the saved crew`);
     h.button('Continue to shelving').click(); await flush();
     h.button('Continue to extra storage').click(); await flush();
     h.button('Review quote').click(); await flush();
-    assert.deepEqual(previews(h).at(-1).body.compositePricing.labor, { manHours: 4, adjusted: false, fullness: 'packed' }, `${label}: the saved man-hours, not adjusted by anyone`);
-    assert.match(h.text(), /Kept at the saved 4 man-hours: the estimate is now 7 man-hours\./, label);
-    assert.doesNotMatch(h.text(), /Adjusted by hand/, `${label}: nobody adjusted them`);
-    assert.ok(h.button('Reset to estimate (7 man-hours)'), label);
+    assert.deepEqual(previews(h).at(-1).body.compositePricing.labor, { manHours: 4, adjusted: true, fullness: 'packed', people: 2, hours: 2 }, `${label}: the saved crew`);
+    assert.doesNotMatch(h.text(), /estimate/i, `${label}: no estimate is named`);
     closeDialog(h);
   }
-  // A change to the scope follows the estimate again: one more mattress (which adds no labor time of its own) and the
-  // man-hours are the packed garage's 7.
-  h.open(memoryStorage()); await flush();
-  h.button('Edit quote').click();
-  h.button('One more: Mattress').click();
-  assert.match(h.text(), /Labor \$371\.00 \(7 man-hours\)/);
-  closeDialog(h);
 });
 
 // flow-6: a send refused only for the Labor line is the estimator's to fix (save it again), not a wait for the owner.
@@ -625,7 +618,7 @@ test('a saved quote held only for its labor rate says to edit and save it again,
   assert.doesNotMatch(h.text(), /Sending is blocked until the owner approves/);
   assert.ok(h.button('Done'));
   h.button('Edit quote').click();
-  assert.match(h.text(), /Labor \$135\.00 \(3 man-hours\)/, 'the builder prices the saved man-hours at the new rate');
+  assert.match(h.text(), /· Labor \$135\.00/, 'the builder prices the saved 3 man-hours at the new rate');
   h.button('Continue to shelving').click(); await flush();
   h.button('Continue to extra storage').click(); await flush();
   h.button('Review quote').click(); await flush();
@@ -687,10 +680,12 @@ test('a $750 draft that also has a draft price says the owner approves the draft
   assert.deepEqual(h.footer(), ['Done', 'Edit quote']);
 });
 
-// money-1 / flow-2: the estimate has no install time for most storage goods; the review says which, and the quote is
-// sent only once the estimator set the man-hours by hand (or the owner says installation is in the goods price).
-test('goods the estimate cannot time are named on the review step, and the quote is sent only after the man-hours are set by hand', async () => {
-  const h = harness(), state = h.server.state;
+// money-1 / flow-2 with the crew entry (owner decision 2026-10-30): the server's estimate has no install time for most
+// storage goods, but the crew the estimator enters by hand covers installing them, so a new quote with them is sent once
+// its prices are approved. A quote saved earlier with man-hours pre-filled from the estimate leaves their installation
+// out: it is held until the estimator edits it and enters the crew.
+test('goods with no install time: the crew entered by hand covers them; a quote saved with pre-filled man-hours is held until the crew is entered', async () => {
+  const h = harness(), state = h.server.state, escaped = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const rack = menuDoc.products.find(item => item.group === 'overhead'), rackCents = builderMenu(baseState()).products.find(item => item.id === rack.id).unitCents;
   approveAll(state, [[mattress, 7000], [shelf, 11570], [rack, rackCents]]);
   h.open(); await flush();
@@ -699,24 +694,31 @@ test('goods the estimate cannot time are named on the review step, and the quote
   h.button('Continue to extra storage').click(); await flush();
   h.dialog().querySelector('select').dispatchEvent({ type: 'change', target: { value: 'overhead' } });
   h.button(`Add ${rack.name}`).click();
-  assert.match(h.text(), /Labor \$159\.00 \(3 man-hours\)/, 'the rack adds no install time to the estimate');
   h.button('Review quote').click(); await flush();
-  assert.match(h.text(), new RegExp(`The estimate has no install time for: ${rack.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.`));
-  assert.match(h.text(), /Adjust the man-hours to include installing them\. Until you do, this quote can be saved but not sent\./);
-  assert.doesNotMatch(h.text(), /Every price on this quote is owner-approved/);
-  assert.doesNotMatch(h.text(), /cannot be sent until the owner approves/, 'nothing waits for the owner: the man-hours are the estimator\'s');
+  await enterCrew(h, 2, 3);
+  assert.doesNotMatch(h.text(), /install time|leave out installing/);
+  assert.match(h.text(), /Every price on this quote is owner-approved/);
   h.button('Save draft').click(); await flush();
+  assert.match(h.text(), /Send EST-JOB1 revision 1 to Synthetic Customer/, 'the crew covers installing the rack');
+  closeDialog(h);
+  // The same quote as it was saved before the crew entry: man-hours pre-filled from the estimate, which has no install
+  // time for the rack.
+  const job = h.server.jobs.get('job-1'), { storedLineItems, ...earlier } = priceCompositeQuote(state, { ...job.priced.compositePricing, labor: { manHours: null, adjusted: false, fullness: null } }, { complete: true });
+  job.priced = earlier;
+  h.open(memoryStorage()); await flush();
+  assert.match(h.text(), new RegExp(`The saved man-hours leave out installing ${escaped(rack.name)}\\. Edit the quote and enter the crew and hours before sending it\\.`));
+  h.button('Send saved quote').click(); await flush();
   assert.match(h.text(), /Sending is blocked until you edit this quote and save it again:/);
   assert.match(h.text(), /the pre-filled man-hours do not include installing it/);
   h.button('Edit quote').click();
   h.button('Continue to shelving').click(); await flush();
   h.button('Continue to extra storage').click(); await flush();
   h.button('Review quote').click(); await flush();
-  h.button('Adjust').click();
-  typeInto(h, 'qb-labor-hours', '11.5');
-  h.button('Apply man-hours').click(); await flush();
-  assert.deepEqual(previews(h).at(-1).body.compositePricing.labor, { manHours: 11.5, adjusted: true, fullness: null });
-  assert.match(h.text(), /You set the man-hours by hand: make sure they include installing these\./);
+  assert.match(h.text(), new RegExp(`The saved man-hours leave out installing: ${escaped(rack.name)}\\.Choose Adjust and enter the crew and hours, installation included\\. Until you do, this quote can be saved but not sent\\.`));
+  assert.doesNotMatch(h.text(), /cannot be sent until the owner approves/, 'nothing waits for the owner: the crew is the estimator\'s');
+  await enterCrew(h, 2, 3);
+  assert.deepEqual(previews(h).at(-1).body.compositePricing.labor, { manHours: 6, adjusted: true, fullness: null, people: 2, hours: 3 });
+  assert.doesNotMatch(h.text(), /leave out installing/);
   assert.match(h.text(), /Every price on this quote is owner-approved/);
   h.button('Save draft').click(); await flush();
   assert.match(h.text(), /Send EST-JOB1 revision 1 to Synthetic Customer/);
@@ -751,11 +753,11 @@ test('a junk-only quote is reviewed, saved and reopened with no Labor line: the 
   h.open(memoryStorage()); await flush();
   assert.match(h.text(), /Junk-only quote: the truck-load price covers the crew’s time, so it has no Labor line\.The walkthrough records garage work this junk-only quote does not price: 3 shelving units\./);
   assert.doesNotMatch(h.text(), /no Labor line yet/);
-  // Adding garage work brings the Labor line back.
+  // Adding garage work brings the Labor line back: the review asks for the crew.
   h.button('Edit quote').click();
   h.button('Continue to shelving').click(); await flush();
   h.button(`Add ${shelf.name}`).click();
-  assert.match(h.text(), /Labor \$159\.00 \(3 man-hours\)/);
+  assert.match(h.text(), /· Labor: set on the review step/);
 });
 
 // D-JUNK: a junk-only quote is never sent on a walkthrough that records garage work (the server refuses the send preview,
@@ -802,7 +804,7 @@ test('a junk-only quote on a walkthrough that records crew sorting is saved but 
 
 // D-JUNK / D-LABOR-TEXT: a quote saved under the morning's Labor rules (its estimate counted truck-load time, its line
 // named the man-hours) says so before Send, and reopens on the new estimate unless its man-hours were set by hand.
-test('a quote saved under the earlier Labor rules says so, is held for a re-save, and reopens on the new estimate', async () => {
+test('a quote saved under the earlier Labor rules says so, is held for a re-save, and reopens without its pre-filled man-hours', async () => {
   const h = harness(), device = memoryStorage();
   approveAll(h.server.state, [[mattress, 7000], [shelf, 11570]]);
   h.open(device); await flush();
@@ -810,24 +812,28 @@ test('a quote saved under the earlier Labor rules says so, is held for a re-save
   h.button(`Add ${shelf.name}`).click();
   h.button('Continue to extra storage').click(); await flush();
   h.button('Review quote').click(); await flush();
+  await enterCrew(h, 3, 1);
   h.button('Save draft').click(); await flush();
   assert.match(h.text(), /Send EST-JOB1 revision 1 to Synthetic Customer/);
   closeDialog(h);
-  // The same job as the morning's code saved it: 7.5 man-hours pre-filled from the estimate that counted the truck load.
+  // The same job as the morning's code saved it: 7.5 man-hours pre-filled from the estimate that counted the truck load
+  // (not set by hand, no crew).
   const job = h.server.jobs.get('job-1'), labor = job.priced.breakdown.labor, line = job.priced.lineItems.at(-1);
-  delete labor.version;
-  Object.assign(labor, { manHours: 7.5, prefilledManHours: 7.5, rateCents: 4000, totalCents: 30000 });
-  Object.assign(job.priced.compositePricing.labor, { manHours: 7.5 });
+  delete labor.version; delete labor.people; delete labor.hours;
+  Object.assign(labor, { manHours: 7.5, prefilledManHours: 7.5, adjusted: false, rateCents: 4000, totalCents: 30000 });
+  job.priced.compositePricing.labor = { manHours: 7.5, adjusted: false, fullness: null };
   Object.assign(line, { name: 'Labor: 7.5 man-hours × $40.00', description: 'Crew time on site, billed per man-hour, including installing the shelving and storage.', unitCents: 30000, totalCents: 30000, amount: 300 });
   job.priced.totalCents += 30000 - 15900;
-  for (const store of [device, memoryStorage()]) {
+  // The saving device still holds the crew the estimator entered (set by hand, kept); another device has only the
+  // morning's pre-filled man-hours, which are dropped so the estimator enters the crew.
+  for (const [store, running] of [[device, /· Labor \$159\.00/], [memoryStorage(), /· Labor: set on the review step/]]) {
     h.open(store); await flush();
     assert.match(h.text(), /This Labor line was priced before the owner’s Labor decisions of 2026-10-18 \(its estimate counted truck-load time, and the customer would see the man-hours\)\. Edit the quote and save it again before sending it\./);
     h.button('Send saved quote').click(); await flush();
     assert.match(h.text(), /Sending is blocked until you edit this quote and save it again:/);
     assert.match(h.text(), /saved before the owner's Labor decisions of 2026-10-18/);
     h.button('Edit quote').click();
-    assert.match(h.text(), /Labor \$159\.00 \(3 man-hours\)/, 'the morning\'s pre-filled man-hours follow the new estimate, on any device');
+    assert.match(h.text(), running, 'the morning\'s pre-filled man-hours never come back');
     closeDialog(h);
   }
 });
@@ -856,7 +862,7 @@ test('a quote from a Hub walkthrough is saved and waits for its job date; Send s
   const h = harness({ walkthrough: truckOnly, datesPending: true });
   await toSavedTruck(h);
   assert.equal(h.calls.at(-1).body.action, 'send_preview');
-  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.Sending waits for the job date: the 25% deposit is due when the customer approves the quote, and the 75% balance on the job day\.Ask the office to book this job in Team schedule \(To schedule\)\. Then reopen this quote from the walkthrough and choose Send saved quote\./);
+  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.Sending waits for the job date: the 25% deposit is due when the customer approves the quote, and the remaining 75% when the job is complete\.Ask the office to book this job in Team schedule \(To schedule\)\. Then reopen this quote from the walkthrough and choose Send saved quote\./);
   waitsWithoutDeadEnd(h);
   h.button('Done').click();
   // Reopened before the job is booked: Send saved quote shows the same wait, never the edit-and-save advice.
@@ -896,7 +902,7 @@ test('with the builder off, a walkthrough quote waiting for its job date says to
   const h = harness({ builder: false, datesPending: true });
   h.open(); await flush();
   h.button('Save draft').click(); await flush();
-  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.Sending waits for the job date: the 25% deposit is due when the customer approves the quote, and the 75% balance on the job day\.Ask the office to book this job in Team schedule \(To schedule\)\. Then open Send options for review on the walkthrough again to send it\./);
+  assert.match(h.text(), /Draft EST-JOB1 revision 1 saved\.Sending waits for the job date: the 25% deposit is due when the customer approves the quote, and the remaining 75% when the job is complete\.Ask the office to book this job in Team schedule \(To schedule\)\. Then open Send options for review on the walkthrough again to send it\./);
   waitsWithoutDeadEnd(h);
 });
 
@@ -912,4 +918,65 @@ test('a catalog quote held for its payment dates says it needs a Hub-booked walk
   assert.match(h.text(), /Draft EST-JOB9 revision 1 saved\.A catalog quote can’t be sent for review: a quote is sent only from a walkthrough booked in the Hub, once the job date is booked\.Quote this customer from a walkthrough booked in the Hub instead\./);
   assert.doesNotMatch(h.text(), /Save brief \+ schedule|Team schedule/);
   waitsWithoutDeadEnd(h);
+});
+
+// D-LABOR-TEXT on the estimator's own screens: the builder is worked at the customer's garage, often with the homeowner
+// looking. What it shows without a tap reads Labor the way the customer's quote does, as one amount; the crew, the
+// man-hours and the rate stay with the estimator in a closed "Estimator detail" (open only while this dialog is open).
+// shown(): the text on screen without opening anything (a closed <details> shows its summary only).
+const shown = node => node.nodeType === 3 ? node.textContent : node.tagName === 'DETAILS' && !node.hasAttribute('open') ? node.children.filter(child => child.tagName === 'SUMMARY').map(shown).join('') : node.childNodes.map(shown).join('');
+const HOURLY = /man-hour|\$53\.00|per hour|hourly|\d hours?\b|\d people\b|\d person\b/i;
+test('the builder shows Labor as one amount; the crew, the man-hours and the rate stay in a closed Estimator detail that is never kept open', async () => {
+  const h = harness(), device = memoryStorage(), screen = () => shown(h.dialog());
+  h.open(device); await flush();
+  h.button('Continue to shelving').click(); await flush();
+  assert.match(screen(), /Installing them is billed through the Labor line on the review step\./);
+  h.button(`Add ${shelf.name}`).click();
+  assert.match(screen(), /Running total\$1,185\.70Removal \$1,070\.00 · Shelving \$115\.70 · Storage \$0\.00 · Labor: set on the review step ·/);
+  assert.doesNotMatch(screen(), HOURLY, 'the shelving step and its running total');
+  h.button('Continue to extra storage').click(); await flush();
+  assert.doesNotMatch(screen(), HOURLY, 'the storage step');
+  h.button('Review quote').click(); await flush();
+  await enterCrew(h, 3, 1);
+  assert.match(screen(), /Labor · \$159\.00Includes installing the shelving and storage\.Estimator detail/);
+  assert.doesNotMatch(screen(), HOURLY, 'the review step');
+  assert.ok(h.button('Adjust'), 'the estimator keeps the crew control');
+  assert.equal(h.button('Reset to estimate'), undefined, 'no time estimate to go back to');
+  const detail = () => h.dialog().querySelector('details.qb-estimator');
+  assert.equal(detail().hasAttribute('open'), false, 'closed by default');
+  assert.match(detail().textContent, /^Estimator detail3 people × 1 hour on site = 3 man-hours × \$53\.00 = \$159\.00 Approved rate/);
+  // Opened, it stays open while the estimator changes the crew; the result is priced on the server.
+  detail().dispatchEvent({ type: 'toggle', target: { open: true } });
+  await enterCrew(h, 4, 1);
+  assert.equal(detail().hasAttribute('open'), true, 'kept open across the redraw');
+  assert.match(screen(), /4 people × 1 hour on site = 4 man-hours × \$53\.00 = \$212\.00/);
+  // Saved and opened again: the saved quote shows one amount, and Estimator detail is closed again (never kept open).
+  h.button('Save draft').click(); await flush();
+  h.button('Done').click();
+  h.open(device); await flush();
+  assert.match(screen(), /Labor · \$212\.00Includes installing the shelving and storage\.Estimator detail/);
+  assert.doesNotMatch(screen(), HOURLY, 'the saved quote');
+  assert.equal(detail().hasAttribute('open'), false);
+  assert.match(detail().textContent, /4 people × 1 hour on site = 4 man-hours × \$53\.00 = \$212\.00/);
+  h.button('Edit quote').click();
+  assert.doesNotMatch(screen(), HOURLY, 'the reopened builder');
+  closeDialog(h);
+});
+
+// The $250 minimum to come out (owner decision 2026-10-30, every quote): the running total shows the line the server adds,
+// so the homeowner never watches one total and signs another; the review shows it once the Labor line is priced.
+test('a quote under $250 shows the Minimum to come out in the running total and on the review, as the server prices it', async () => {
+  const h = harness();
+  h.open(); await flush();
+  h.button('One fewer: full truck loads').click();
+  assert.match(h.text(), /Running total\$250\.00Removal \$70\.00 · Shelving \$0\.00 · Storage \$0\.00 · Labor: set on the review step · Minimum to come out \$180\.00/);
+  h.button('Continue to shelving').click(); await flush();
+  h.button('Continue to extra storage').click(); await flush();
+  h.button('Review quote').click(); await flush();
+  assert.match(h.text(), /Quote total before Labor \$70\.00/);
+  assert.doesNotMatch(h.text(), /Minimum to come out ·/, 'the minimum waits for the Labor line');
+  await enterCrew(h, 1, 1);
+  assert.match(h.text(), /Minimum to come out · \$127\.00Every quote has a \$250 minimum to come out\./);
+  assert.match(h.text(), /Quote total \$250\.00/);
+  closeDialog(h);
 });

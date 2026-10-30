@@ -188,7 +188,7 @@ export function winterSaleCap({ lineItems, manHours: quoted, junkOnly = false, c
   const marginAt = cents => estimatedSaleMargin({ lineItems: cents ? [...lineItems, winterSaleLine(settings, cents)] : lineItems, manHours, costs, channel });
   const base = marginAt(0);
   if (!base.known) return { known: false, reason: base.reason };
-  // minimumCents (pickup-minimum.js pickupFloorCents): a pickup never goes below the minimum pickup.
+  // minimumCents (pickup-minimum.js pickupFloorCents): a builder quote never goes below the $250 minimum to come out.
   const max = Math.min(settings.amountCents, wholeDollarsBelow(before), before - minimumCents), ok = cents => { const margin = marginAt(cents); return margin.known && margin.marginBp >= settings.marginFloorBp; };
   if (max <= 0 || !ok(0)) return { known: true, capCents: 0 };
   if (ok(max)) return { known: true, capCents: max };
@@ -214,10 +214,10 @@ export function winterSaleDecision({ settings = WINTER_SALE_DEFAULTS, beforeCent
   // A job that runs over several days is inside the window only when its last day is (jobEnd: winterSaleLastDay).
   if (jobDate && realDate(jobEnd) && jobEnd > settings.jobTo) return no('job_date_outside', `Not eligible: the job runs past ${dayText(settings.jobTo)}, outside ${window}.`);
   if (requireJobDate && !jobDate) return no('job_date_needed', `Book the job date (${window}) before sending a winter sale quote.`);
-  // A pickup never goes below the minimum pickup (minimumCents: pickup-minimum.js pickupFloorCents), override or not: one
-  // at the minimum gets no sale credit, so the sale line and the Minimum pickup line never show together.
+  // A builder quote never goes below the $250 minimum to come out (minimumCents: pickup-minimum.js pickupFloorCents),
+  // override or not: one at the minimum gets no sale credit, so the sale line and the minimum line never show together.
   const full = Number.isSafeInteger(beforeCents) ? Math.min(settings.amountCents, wholeDollarsBelow(beforeCents), beforeCents - minimumCents) : 0;
-  if (full <= 0 && minimumCents > 0 && Number.isSafeInteger(beforeCents) && beforeCents > 100) return no('at_minimum', 'Not eligible: a pickup never goes below the $250 minimum pickup.');
+  if (full <= 0 && minimumCents > 0 && Number.isSafeInteger(beforeCents) && beforeCents > 100) return no('at_minimum', 'Not eligible: a quote never goes below the $250 minimum to come out.');
   if (full <= 0) return no('nothing_to_discount', 'Not eligible: the quote has no total to take the sale off.');
   const overridden = ownerOverride && plain(override) && typeof override.reason === 'string' && override.reason.trim().length >= 3;
   const forced = { eligible: true, code: 'owner_override', reason: 'Eligible (owner override).', overridden: true, amountCents: full };

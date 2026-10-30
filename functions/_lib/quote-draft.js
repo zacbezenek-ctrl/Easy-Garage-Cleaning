@@ -5,7 +5,7 @@ import { identityMatches } from './walkthrough-handoff.js';
 import { authorCustomer, authorOpensJob, jobCustomerAccess, refPatch, shownCustomerId } from './estimator-customer-access.js';
 import { auditWrite } from './hub-audit.js';
 import { addDays, denverToday, validDate } from './dispatch-time.js';
-import { PICKUP_MINIMUM_CENTS, PICKUP_MINIMUM_LINE_ID, confirmNearbyTruck, savedOwnerWaiver, haulingOnly, pickupFloorCents, pickupReaders, waiverAudit, waiverRecord } from './pickup-minimum.js';
+import { PICKUP_MINIMUM_CENTS, PICKUP_MINIMUM_LINE_ID, confirmNearbyTruck, savedOwnerWaiver, pickupFloorCents, pickupReaders, waiverAudit, waiverRecord } from './pickup-minimum.js';
 import { builderJunkOnly, depositCents, estimateFingerprint, estimateChanged, estimateTotals, included, junkOnlyGarageWork, normalizeLineItems, packageTotals, validateSelection } from './quote-model.js';
 import { customerMoneyTotals, invoiceNumber } from './money-core.js';
 import { moneySnapshot } from './money-service.js';
@@ -379,6 +379,10 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
     if (draft.totalCents !== priced.totalCents) throw fail('composite_price_changed', 'The builder quote total changed. Review the quote in the builder again before saving.', 409);
     junkOnlyQuote = priced.junkOnly === true; builderPriced = priced;
     Object.assign(draft, { pricingSettingsVersion: priced.settingsVersion, compositePricing: structuredClone(priced.compositePricing), breakdown: structuredClone(priced.breakdown) });
+    // The crew the estimator priced (people x hours on site, owner decision 2026-10-30) plans the job: a new quote job's
+    // crew size and the on-site time dispatch suggests (estimatedDurationMin), as the server normalized them.
+    const crew = priced.compositePricing.labor;
+    if (Number.isSafeInteger(crew?.people)) Object.assign(draft, { crewSize: crew.people, estimatedDurationMin: Math.min(10080, Math.max(15, Math.round(crew.hours * 60))) });
   } else if (catalogMode) {
     if (!catalogQuotesEnabled(env)) throw fail('catalog_disabled', 'Catalog quotes are turned off. Keep this draft for review.', 404);
     const priced = priceCatalogQuote(await catalogState(env), input.draft.catalog_pricing, now);
@@ -611,13 +615,14 @@ async function pickupWaiver(priced, { actor, job = null, env, pickup, address, n
   const confirmed = await confirmNearbyTruck({ priced, owner: isHubOwner(actor), jobId: job?.id || '', date: job?.date || '', address, nearbyJobs: date => pickup.nearby(env, date), pending, prefix: 'quote_draft_' });
   return confirmed ? waiverRecord(confirmed, { reason: priced.compositePricing.nearbyTruck.reason, by: actor.user, at: now }) : null;
 }
-/** Minimum pickup at send: a pickup draft saved below the minimum before it applied is saved again first, and a waiver
- * is confirmed now against the booked day (the send records and audits it). Returns the waiver record or null. */
+/** The $250 minimum to come out at send: a builder draft saved below the minimum before it applied (2026-10-21 for
+ * pickups, 2026-10-30 for every quote) is saved again first, and a waiver is confirmed now against the booked day (the
+ * send records and audits it). Returns the waiver record or null. */
 async function pickupSendable(job, actor, env, pickup, now) {
   const breakdown = plain(job.quoteDraft?.breakdown) ? job.quoteDraft.breakdown : null, pricing = plain(job.quoteDraft?.compositePricing) ? job.quoteDraft.compositePricing : null;
-  if (!breakdown || !pricing || !haulingOnly(breakdown.lines)) return null;
+  if (!breakdown || !pricing) return null;
   const lines = (Array.isArray(job.estimate?.lineItems) ? job.estimate.lineItems : []).filter(line => !isWinterSaleLine(line));
-  if (!pricing.nearbyTruck && !lines.some(line => line?.id === PICKUP_MINIMUM_LINE_ID) && estimateTotals(lines).totalCents < PICKUP_MINIMUM_CENTS) throw fail('pickup_minimum_resave', 'Pickups now have a $250 minimum. Open the quote in the builder and save it again before sending.', 409);
+  if (!pricing.nearbyTruck && !lines.some(line => line?.id === PICKUP_MINIMUM_LINE_ID) && estimateTotals(lines).totalCents < PICKUP_MINIMUM_CENTS) throw fail('pickup_minimum_resave', 'Every quote now has a $250 minimum to come out. Open the quote in the builder and save it again before sending.', 409);
   if (!pricing.nearbyTruck) return null;
   // The owner's override saved for this very day (and reason) carries to anyone's send.
   const owned = savedOwnerWaiver(job.quoteDraft?.minimumWaiver, { date: job.date || '', reason: pricing.nearbyTruck.reason, address: job.address || '' });
