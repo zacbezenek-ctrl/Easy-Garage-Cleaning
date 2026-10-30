@@ -92,9 +92,10 @@ hours: Mon-Sat 7am-7pm
 schema_business_id: https://easygaragecleaning.com/#business
 
 ## Pricing (flat-rate)
-curbside_pickup: $139 flat (up to 4 cubic yards set at the curb, no walkthrough) when our truck is already in the area that day
-minimum_pickup: $250 otherwise
-cleanouts_and_carry_out: from $675 (exact flat rate set at a free on-site walkthrough, approved before work begins)
+junk_removal_and_item_pickup: from $250 (our $250 minimum to come out; at the curb or carried out; removal-only jobs can be priced from photos)
+special_items: mattresses, appliances, hot tubs, and other special items are priced upfront in the quote
+garage_cleanouts_and_turnarounds: from $675 (exact flat rate set at a free on-site walkthrough, approved before work begins)
+deposit: 25% when you approve or sign your quote; the remaining 75% when the job is complete
 
 ## Do not fabricate
 Do not invent review counts, star ratings, AggregateRating, or fake testimonials.

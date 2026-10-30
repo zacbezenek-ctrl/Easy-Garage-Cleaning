@@ -45,6 +45,11 @@ test('public gallery uses the existing photographic before-after pair',()=>{
  assert.doesNotMatch(html,/gallery-showcase|gallery-ideal-assets|gallery-preview-assets\/images|gallery-preview-assets\/gallery\.js/);
  assert.match(html, new RegExp('egc-gallery-release" content="'+gallerySimpleVersion));
 });
+test('concept pairs carry a visible "Example" label; the real photo pair does not (owner decision 2026-10-30)',()=>{
+ const kickers=[...html.matchAll(/<span class="mono ba-kicker">([^<]*)<\/span><h2>([^<]*)<\/h2>/g)].map(m=>[m[2],m[1]]);
+ assert.deepEqual(kickers,pairs.map(p=>[p.title.replace(/&/g,'&amp;').replace(/'/g,'&#39;'),(p.type==='concept'?'Example · ':'')+'Before &amp; after']));
+ assert.equal(pairs.filter(p=>p.type==='concept').length,6);
+});
 test('metadata and accessible image text contain no production-method wording',()=>{
  assert(html.includes(`<link rel="canonical" href="${galleryCanonical}">`));
  assert.match(html,/property="og:image"/);
