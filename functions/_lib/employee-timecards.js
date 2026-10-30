@@ -2,6 +2,7 @@ import { NO_CLOCK_IN_FIX, applyEmployeeJobAction, finishEmployeeJobTime, initial
 import { can, capabilityMode } from './staff-roles.js';
 import { isHubOwner } from './hub-session.js';
 import { canSetPay, payChangeRefused } from './pay-visibility.js';
+import { paidBreak } from './break-pay.js';
 
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const text = (value, limit = 180) => String(value || '').trim().slice(0, limit);
@@ -33,6 +34,8 @@ export function timecardWorkDate(value) {
   return ['year', 'month', 'day'].map(type => parts.find(part => part.type === type).value).join('-');
 }
 
+// Paid hours: the shift less its unpaid breaks, exactly as the payroll week counts them (break-pay.js: a rest break, or an
+// unmarked one of 20 minutes or less, is paid; a meal break or a longer unmarked one is not).
 export function timecardHours(entry, now = Date.now()) {
   const start = instant(entry.clockInAt), end = entry.clockOutAt ? instant(entry.clockOutAt) : now;
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || end - start > 31 * 86400000) throw timecardError('Review this timecard’s invalid shift times.');
@@ -42,7 +45,7 @@ export function timecardHours(entry, now = Date.now()) {
     const from = instant(item?.startAt), to = item?.endAt ? instant(item.endAt) : end;
     if (!Number.isFinite(from) || !Number.isFinite(to) || from < previousEnd || to < from || to > end) throw timecardError('Review overlapping or invalid breaks before saving this timecard.');
     if (entry.clockOutAt && !item.endAt) throw timecardError('End the open break before approving this timecard.');
-    previousEnd = to; breakTotal += to - from;
+    previousEnd = to; if (!paidBreak(item, from, to)) breakTotal += to - from;
   }
   return Math.round((end - start - breakTotal) / 3600000 * 1000) / 1000;
 }

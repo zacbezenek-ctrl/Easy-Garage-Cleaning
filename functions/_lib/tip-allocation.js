@@ -1,5 +1,6 @@
 import { paymentLedger } from './money-core.js';
 import { employeeJobTime } from './employee-job-time.js';
+import { paidBreak } from './break-pay.js';
 import { denverToday, validDate } from './dispatch-time.js';
 import { timecardPayState } from './timesheet-week.js';
 import { assignmentKey, jobCrewNames } from './job-assignment.js';
@@ -7,7 +8,7 @@ import { assignmentKey, jobCrewNames } from './job-assignment.js';
 /**
  * Customer card tips per job, split among the crew who worked it in proportion
  * to each person's recorded job work minutes (explicit job-time segments, never
- * a legacy shift.jobId guess; paid rest breaks stay on the job, as in job
+ * a legacy shift.jobId guess; paid breaks (break-pay.js) stay on the job, as in job
  * costing). Tips are chosen by the America/Denver date they were received
  * (start inclusive, end exclusive), and each job's tips are split over all of
  * that job's work time, whatever day it was worked. Cents are split with the
@@ -133,7 +134,7 @@ export function computeTipAllocation({ jobs, timecards, start, end, now, refundR
     const note = reason => { for (const id of referenced) { tipped.get(id).reasons.add(reason); if (key) accounted.get(id).add(key); } };
     // An open shift's job time is not final yet, so it is left out and reported.
     if (state === 'open') { note('open_shifts'); continue; }
-    const summary = typeof card.id !== 'string' || !card.id || !key ? { needsReview: true } : employeeJobTime({ ...card, breaks: Array.isArray(card.breaks) ? card.breaks.filter(item => item?.kind !== 'rest') : card.breaks }, asOf);
+    const summary = typeof card.id !== 'string' || !card.id || !key ? { needsReview: true } : employeeJobTime({ ...card, breaks: Array.isArray(card.breaks) ? card.breaks.filter(item => !paidBreak(item)) : card.breaks }, asOf);
     if (summary.needsReview) { note('needs_review'); continue; }
     if (state === 'pending') note('pending_timecards');
     // Time no segment places (no job tracking, tracking begun mid-shift, or a gap) may be work on any job the card

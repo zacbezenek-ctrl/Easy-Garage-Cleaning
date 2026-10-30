@@ -116,6 +116,19 @@ test('roster whitelists identity/job fields and mappings verify confirmation, me
   await assert.rejects(f.service.roster({}), /invalid employee job/);
 });
 
+test('the Gusto sync pays a rest break and leaves out a meal break, as the payroll week does', () => {
+  // 8 h with a 10-minute paid rest break and a 30-minute unpaid meal: 7.5 hours, never 7.333.
+  const rest = { startAt: '2026-09-09T16:00:00Z', endAt: '2026-09-09T16:10:00Z', kind: 'rest' }, meal = { startAt: '2026-09-09T18:00:00Z', endAt: '2026-09-09T18:30:00Z', kind: 'meal' };
+  const shift = card({ clockOutAt: '2026-09-09T22:00:00Z', breaks: [rest, meal] });
+  assert.equal(approvedTimecard(shift).hours, 7.5);
+  assert.equal(approvedTimecard({ ...shift, breaks: [{ ...rest, kind: 'meal' }, meal] }).hours, 7.333);
+  assert.equal(approvedTimecard({ ...shift, breaks: [{ startAt: rest.startAt, endAt: rest.endAt }, meal] }).hours, 7.5, 'an unmarked 10-minute break is paid');
+  // A rest break still has to sit inside the shift, and making a break paid or unpaid changes the reviewed source.
+  assert.throws(() => approvedTimecard({ ...shift, breaks: [{ ...rest, startAt: '2026-09-09T13:00:00Z' }] }));
+  assert.notDeepEqual(approvedTimecard(shift).source, approvedTimecard({ ...shift, breaks: [{ ...rest, kind: 'meal' }, meal] }).source);
+  assert.deepEqual(approvedTimecard(card()).source.breaks, [[Date.parse('2026-09-09T18:00:00Z'), Date.parse('2026-09-09T18:30:00Z')]], 'an unpaid break keeps its reviewed source');
+});
+
 test('classification requires three finite nonnegative categories summing to the current server hours', async t => {
   const f = fixture(t);
   for (const split of [{ regular: 8, overtime: 1, doubleOvertime: 0 }, { regular: 9, overtime: -1, doubleOvertime: 0 }, { regular: '8', overtime: 0, doubleOvertime: 0 }, { regular: Infinity, overtime: 0, doubleOvertime: 0 }, { regular: 7.9999, overtime: 0.0001, doubleOvertime: 0 }, { regular: 8 }]) await assert.rejects(f.service.classify({}, { timecardId: 'shift-1', ...split }));

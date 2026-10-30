@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { authorizeTimecard, timecardHours, timecardWorkDate } from '../functions/_lib/employee-timecards.js';
+import { computeTimesheetWeek } from '../functions/_lib/timesheet-week.js';
+import { approvedTimecard } from '../functions/_lib/gusto-timecards.js';
+import { PAID_BREAK_MAX_MS, paidBreak } from '../functions/_lib/break-pay.js';
 import { createHubCredentialHash, createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { onRequestGet, onRequestPost } from '../functions/api/employee-hub.js';
 import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
@@ -39,9 +42,10 @@ test('breaks and clock-out use server instants, automatically end an open break,
   entry = update(entry, { breaks: [...entry.breaks, { startAt: '2020-01-01T00:00:00Z', endAt: '' }] }, '2026-09-22T17:45:00.000Z');
   const closed = update(entry, { clockOutAt: '2040-01-01T00:00:00Z', status: 'submitted', hours: 999, grossEstimate: 99999 });
   assert.equal(closed.clockOutAt, '2026-09-22T18:00:00.000Z'); assert.equal(closed.breaks.at(-1).endAt, closed.clockOutAt);
-  assert.equal(closed.hours, 3.25); assert.equal(closed.grossEstimate, 81.25); assert.equal(closed.approvalStatus, 'pending');
+  // The 30-minute break is unpaid; the 15-minute one is a paid rest (break-pay.js), so 4 h less 0.5 h.
+  assert.equal(closed.hours, 3.5); assert.equal(closed.grossEstimate, 87.5); assert.equal(closed.approvalStatus, 'pending');
   assert.equal(closed.locationTracking, false); assert.equal(closed.history.at(-1).action, 'clock_out');
-  assert.equal(timecardHours(closed), 3.25);
+  assert.equal(timecardHours(closed), 3.5);
 });
 
 test('crew cannot rewrite completed breaks or pay during an active shift', () => {
@@ -151,6 +155,36 @@ test('Denver work dates and elapsed hours survive midnight, DST transitions and 
   assert.equal(timecardWorkDate('2026-09-22T24:00:00Z'), '');
   assert.equal(timecardHours({ clockInAt: '2026-03-08T01:30:00-07:00', clockOutAt: '2026-03-08T03:30:00-06:00', breaks: [] }), 1);
   assert.equal(timecardHours({ clockInAt: '2026-11-01T00:30:00-06:00', clockOutAt: '2026-11-01T02:30:00-07:00', breaks: [] }), 3);
+});
+
+test('stored hours and the gross estimate pay a rest break and leave out a meal break, as the payroll week does', () => {
+  // An 8 h shift with a 10-minute paid rest break and a 30-minute unpaid meal is 7.5 paid hours (Colorado COMPS rule 5.2).
+  const breaks = [{ startAt: '2026-09-22T16:00:00.000Z', endAt: '2026-09-22T16:10:00.000Z', kind: 'rest' }, { startAt: '2026-09-22T18:00:00.000Z', endAt: '2026-09-22T18:30:00.000Z', kind: 'meal' }];
+  const shift = { id: 'shift-rest', employee: 'Crew.One', employeeName: 'Crew One', clockInAt: start, clockOutAt: '2026-09-22T22:00:00.000Z', status: 'submitted', approvalStatus: 'pending', hourlyRate: 20, breaks };
+  assert.equal(timecardHours(shift), 7.5);
+  const approved = authorizeTimecard({ session: manager, manager: true, id: shift.id, existing: shift, incoming: { approvalStatus: 'approved' }, now: '2026-09-22T23:00:00.000Z' });
+  assert.deepEqual([approved.hours, approved.grossEstimate], [7.5, 150]);
+  const week = computeTimesheetWeek({ timecards: [approved], pto: [], policy: 'colorado', weekStart: '2026-09-21', now: '2026-09-23T00:00:00.000Z' });
+  assert.equal(week.employees[0].workedHours, approved.hours);
+  // Unmarked (the crew's Start break), the 10-minute break is still a paid rest and the 30-minute one unpaid; marked as
+  // meal breaks, both are unpaid.
+  assert.equal(timecardHours({ ...shift, breaks: breaks.map(({ kind, ...item }) => item) }), 7.5);
+  assert.equal(timecardHours({ ...shift, breaks: breaks.map(item => ({ ...item, kind: 'meal' })) }), 7.333);
+});
+
+test('an unmarked break of 20 minutes or less is paid and a longer one is not, the same in payroll, saved hours and Gusto; a manager\'s marking wins', () => {
+  const minutes = (n, kind) => ({ startAt: '2026-09-22T16:00:00.000Z', endAt: new Date(Date.parse('2026-09-22T16:00:00.000Z') + n * 60000).toISOString(), ...(kind ? { kind } : {}) });
+  const shift = breaks => ({ id: 'shift-default', employee: 'Crew.One', employeeName: 'Crew One', clockInAt: start, clockOutAt: '2026-09-22T22:00:00.000Z', status: 'submitted', approvalStatus: 'approved', hourlyRate: 20, breaks });
+  const hours = breaks => {
+    const card = shift(breaks), week = computeTimesheetWeek({ timecards: [card], pto: [], policy: 'colorado', weekStart: '2026-09-21', now: '2026-09-23T00:00:00.000Z' });
+    return [week.employees[0].workedHours, timecardHours(card), approvedTimecard(card).hours];
+  };
+  assert.equal(PAID_BREAK_MAX_MS, 20 * 60000);
+  assert.deepEqual(hours([minutes(20)]), [8, 8, 8], 'an unmarked 20-minute break is a paid rest');
+  assert.deepEqual(hours([minutes(21)]), [7.65, 7.65, 7.65], 'an unmarked 21-minute break is an unpaid meal period');
+  assert.deepEqual(hours([minutes(10, 'meal')]), [7.833, 7.833, 7.833], 'a short break a manager marked unpaid stays unpaid');
+  assert.deepEqual(hours([minutes(45, 'rest')]), [8, 8, 8], 'a long break a manager marked paid stays paid');
+  assert.deepEqual([paidBreak(minutes(20)), paidBreak(minutes(21)), paidBreak({ kind: 'rest' }), paidBreak({ kind: 'meal', ...minutes(5) }), paidBreak({ startAt: start })], [true, false, true, false, false]);
 });
 
 const hash = await createHubCredentialHash('Synthetic timecard test password 904!');

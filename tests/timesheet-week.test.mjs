@@ -53,12 +53,15 @@ test('consecutive hours crossing the workweek boundary are attributed to the lat
   assert.deepEqual([second.workedHours, second.overtimeHours, second.overtimeBasis], [8, 1.833, 'daily']);
 });
 
-test('paid rest breaks count as work while meal and legacy breaks are unpaid, without double counting daily and consecutive time', () => {
+test('paid rest breaks count as work while meal breaks and unmarked breaks over 20 minutes are unpaid, without double counting daily and consecutive time', () => {
   const breaks = [{ startAt: at('2026-09-21', '09:00'), endAt: at('2026-09-21', '09:10'), kind: 'rest' }, { startAt: at('2026-09-21', '12:00'), endAt: at('2026-09-21', '12:30'), kind: 'meal' }, { startAt: at('2026-09-21', '15:00'), endAt: at('2026-09-21', '15:10'), kind: 'rest' }];
   const paid = only(week([day('rest', '2026-09-21', '06:00', '19:00', { breaks })]));
   assert.deepEqual([paid.workedHours, paid.overtimeHours, paid.timecards[0].paidRestHours, paid.timecards[0].unpaidBreakHours], [12.5, 0.5, 0.333, 0.5]);
+  // Unmarked, the two 10-minute breaks are still paid rests and the 30-minute one is unpaid (break-pay.js).
   const legacy = only(week([day('legacy', '2026-09-21', '06:00', '19:00', { breaks: breaks.map(({ kind, ...item }) => item) })]));
-  assert.deepEqual([legacy.workedHours, legacy.overtimeHours], [12.167, 0.167]);
+  assert.deepEqual([legacy.workedHours, legacy.overtimeHours, legacy.timecards[0].paidRestHours], [12.5, 0.5, 0.333]);
+  const meals = only(week([day('meals', '2026-09-21', '06:00', '19:00', { breaks: breaks.map(item => ({ ...item, kind: 'meal' })) })]));
+  assert.deepEqual([meals.workedHours, meals.overtimeHours], [12.167, 0.167]);
   assert.deepEqual(timecardWorkIntervals(day('x', '2026-09-21', '06:00', '07:00', { breaks: [{ startAt: at('2026-09-21', '06:00'), endAt: at('2026-09-21', '07:00') }] })), { reason: 'no_work_time' });
 });
 

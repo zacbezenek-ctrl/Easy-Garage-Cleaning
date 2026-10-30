@@ -1,4 +1,5 @@
 import { employeeJobTime } from './employee-job-time.js';
+import { paidBreak } from './break-pay.js';
 import { addDays, validDate } from './dispatch-time.js';
 import { COVERAGE_REASONS, PAY_REVIEW_REASONS, computeTimesheetWeeks, denverWorkDate, payRate, resolveOvertimePolicy, timecardPayState, timesheetWeekStart } from './timesheet-week.js';
 
@@ -70,8 +71,8 @@ export function computeJobLaborCost({ timecards = [], policy = 'colorado', start
     if (referenced.length) { if (!touched.has(weekStart)) touched.set(weekStart, new Set()); touched.get(weekStart).add(personKey(card.employee)); }
     if (state === 'open') { for (const id of referenced) job(id).openShifts++; continue; }
     const week = { approved: approvedWeeks.get(weekStart), projected: projectedWeeks.get(weekStart) };
-    // Paid rest breaks stay on the job they interrupted; meal and legacy breaks are unpaid.
-    const summary = typeof card.id !== 'string' || !card.id || !personKey(card.employee) || week.projected.review.has(card.id) ? { needsReview: true } : employeeJobTime({ ...card, breaks: Array.isArray(card.breaks) ? card.breaks.filter(item => item?.kind !== 'rest') : card.breaks }, now);
+    // Paid breaks (break-pay.js) stay on the job they interrupted; meal breaks and longer unmarked breaks are unpaid.
+    const summary = typeof card.id !== 'string' || !card.id || !personKey(card.employee) || week.projected.review.has(card.id) ? { needsReview: true } : employeeJobTime({ ...card, breaks: Array.isArray(card.breaks) ? card.breaks.filter(item => !paidBreak(item)) : card.breaks }, now);
     if (summary.needsReview) { for (const id of referenced) job(id).needsReviewCount++; continue; }
     if (wanted(card.jobId) && (!summary.recorded || summary.partialHistory)) job(card.jobId).legacyAssociationOnlyCount++;
     const key = personKey(card.employee), hourly = payRate(card.hourlyRate);

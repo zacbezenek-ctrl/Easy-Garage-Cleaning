@@ -117,8 +117,8 @@ test('a correction sets clock-in, clock-out and breaks inside a real shift, reco
   const corrected = save(approved, body);
   assert.deepEqual([corrected.clockInAt, corrected.clockOutAt, corrected.approvalStatus, corrected.approvedBy, corrected.approvedAt], [iso(at('2026-09-21', '06:30')), iso(at('2026-09-21', '16:30')), 'pending', '', '']);
   assert.deepEqual(plain(corrected.breaks), [{ startAt: iso(at('2026-09-21', '10:00')), endAt: iso(at('2026-09-21', '10:15')), kind: 'rest' }, { startAt: at('2026-09-21', '12:00'), endAt: iso(at('2026-09-21', '12:45')) }]);
-  // Hours on the card count every break out (as before); payroll pays the rest break (timesheet-week.js).
-  assert.equal(corrected.hours, 9);
+  // Hours on the card pay the 15-minute rest break and leave out the 45-minute lunch, as payroll does (timesheet-week.js).
+  assert.equal(corrected.hours, 9.25);
   const entry = corrected.history.at(-1);
   assert.deepEqual([entry.action, entry.reason, Object.keys(entry.changes).sort()], ['manager_time_correction', 'Started early; lunch ran long', ['approvalStatus', 'approvedAt', 'approvedBy', 'breaks', 'clockInAt', 'clockOutAt']]);
   // NO-SELF-APPROVAL follow-up: the audit also records the approver being cleared as the card returns to pending.
@@ -413,7 +413,8 @@ test('with staff roles on, a sales business user’s own card is saved as before
     staff = authorizeTimecard({ session: sales, manager: true, id, incoming, existing: staff, now, env: on });
     assert.deepEqual(plain(staff), plain(legacy));
   }
-  assert.deepEqual([staff.clockOutAt, staff.status, staff.approvalStatus, staff.hours], [at('2026-09-22', '12:00'), 'submitted', 'pending', 4.75]);
+  // The 15-minute break is a paid rest (break-pay.js): 5 hours.
+  assert.deepEqual([staff.clockOutAt, staff.status, staff.approvalStatus, staff.hours], [at('2026-09-22', '12:00'), 'submitted', 'pending', 5]);
   assert.strictEqual(authorizeTimecard({ session: sales, manager: true, id, incoming: steps[3][1], existing: staff, now: at('2026-09-22', '12:05'), env: on, queued: true }), staff, 'a queued clock-out replay changes nothing');
   // Moving one's own card onto someone else makes it theirs, so that needs time.approve too.
   assert.throws(() => authorizeTimecard({ session: sales, manager: true, id, incoming: { employee: 'crew.static' }, existing: staff, now: at('2026-09-22', '12:05'), env: on }), refused(403, 'EMPLOYEE_TIMECARD_INVALID', /another employee/));
@@ -481,7 +482,8 @@ test('HTTP: with staff roles on, the sales business user still clocks in, takes 
   const clockOut = await on('AlexK', id, { clockOutAt: now(), status: 'submitted', approvalStatus: 'pending', hours: 3.75, grossEstimate: 0, locationTracking: false, locationStatus: 'stopped', updatedAt: now() });
   assert.equal(clockOut.status, 200, clockOut.error);
   const card = await read(id);
-  assert.deepEqual([card.employee, card.clockOutAt, card.status, card.approvalStatus, card.hours, card.breaks.length], ['alexk', iso(at('2026-09-22', '12:00')), 'submitted', 'pending', 3.75, 1]);
+  // The 15-minute break is a paid rest (break-pay.js): 4 hours.
+  assert.deepEqual([card.employee, card.clockOutAt, card.status, card.approvalStatus, card.hours, card.breaks.length], ['alexk', iso(at('2026-09-22', '12:00')), 'submitted', 'pending', 4, 1]);
 });
 
 test('HTTP: with staff roles off (the default), the same sales-stored business user closes and approves another employee’s card as before', async t => {
