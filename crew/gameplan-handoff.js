@@ -218,6 +218,8 @@
       // is a separate explicit action only after the original save is confirmed.
       const revise=document.createElement('button');revise.type='button';revise.textContent='Start a signed revision';
       revise.onclick=()=>{client.release(saved);invalidateAcceptance();save();render();};status.appendChild(revise);
+      // GUARD-SELL: offer Garage Guard now the job is signed (crew/guard-sell.js: public plan prices, a QR code the customer pays from).
+      if(window.EGCGuardSell)status.appendChild(window.EGCGuardSell.button(()=>({channel:'walkthrough',jobId:S.handoffJobId||'',customerId:S.customerId||'',customer:{name:S.name,email:S.email,address:S.address}}),{label:'Offer Garage Guard'}));
     } catch(error) {
       button.disabled=false;button.textContent=saved?'Retry synchronization':error.refused?'Save brief + schedule':'Retry original save';
       status.textContent=(saved?'The signed Hub job is saved. '+(saved.arrivalNotice?saved.arrivalNotice+' ':''):'')+(error.message || 'The request could not be verified. Keep this form and retry.');

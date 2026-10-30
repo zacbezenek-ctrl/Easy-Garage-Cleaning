@@ -73,6 +73,7 @@
 import { CHECKOUT_KINDS, customerTipsEnabled, findStripeCheckoutByPaymentIntent, readStripeCheckout, recordCrewStripePayment, recordCustomerStripePayment } from '../_lib/customer-payments.js';
 import { applyGarageGuardEvent, claimGarageGuardAlert, expireGarageGuardAlert, garageGuardEvent, garageGuardMembershipSyncEnabled, membershipStorage, settleGarageGuardAlert } from '../_lib/garage-guard-membership.js';
 import { garageGuardBilling, garageGuardLedgerStore, garageGuardVisitTrackingEnabled } from '../_lib/garage-guard-ledger.js';
+import { guardSaleFromMetadata } from '../_lib/garage-guard-sales.js';
 
 const MAX_BODY = 256 * 1024;
 const TOLERANCE_SECONDS = 300;
@@ -147,6 +148,7 @@ function summarize(event, { membership = false, hubLink = '' } = {}) {
   if (event.type === 'checkout.session.completed' || (membership && event.type === 'checkout.session.async_payment_succeeded')) {
     const details = obj.customer_details || {};
     const addressField = (obj.custom_fields || []).find((f) => f.key === 'service_address');
+    const sale = guardSaleFromMetadata(obj.metadata);
     return {
       ...base,
       alert: 'New Garage Guard member — schedule their first visit',
@@ -156,6 +158,8 @@ function summarize(event, { membership = false, hubLink = '' } = {}) {
       customer_phone: String(details.phone || ''),
       service_address: String((addressField && addressField.text && addressField.text.value) || ''),
       amount_total: obj.amount_total != null ? (obj.amount_total / 100).toFixed(2) : '',
+      // GUARD-SELL: a sign-up a staff member started names who sold it (no commission is paid for Garage Guard).
+      ...(sale ? { sold_by: sale.staffKey, sales_channel: sale.channel } : {}),
     };
   }
   if (event.type === 'invoice.payment_failed') {

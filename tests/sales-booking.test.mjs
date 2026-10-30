@@ -300,9 +300,10 @@ const EMPLOYEE_VIEWS = ['my_day', 'my_shifts', 'open_shifts', 'earnings', 'crew_
 // Recorded from the suite before SALES-BOOKING (merge base b04a617) with tests/helpers/hub-dom.mjs.
 // WP14c added the business Purchase list screen (RUN THE BUSINESS) after it; D6b added every viewer's My commission (MY EGC).
 // Job actuals (business, RUN THE BUSINESS) joins before Review queues, and Open quotes (business) after it.
+// GUARD-SELL: Garage Guard sales (business, CLIENT WORK) joins after Customer visit requests.
 const BASE_NAV = {
-  owner: [...EMPLOYEE_VIEWS, 'today', 'action_center', 'schedule', 'timesheets', 'people', 'walkthroughs', 'delivery', 'dispatch_rules', 'job_actuals', 'crew_performance', 'open_quotes', 'reviews', 'staff', 'customers', 'finance', 'communications', 'invoicing', 'business_requests', 'customer_visit_requests', 'pipeline', 'scorecard', 'proof', 'playbook', 'ad_spend', 'settings', 'followup_settings', 'catalog', 'message_templates', 'stocked_costs', 'purchase_list'],
-  manager: [...EMPLOYEE_VIEWS, 'today', 'action_center', 'schedule', 'timesheets', 'people', 'walkthroughs', 'delivery', 'job_actuals', 'crew_performance', 'open_quotes', 'reviews', 'staff', 'customers', 'finance', 'communications', 'invoicing', 'business_requests', 'customer_visit_requests', 'pipeline', 'scorecard', 'proof', 'playbook', 'settings', 'message_templates', 'stocked_costs', 'purchase_list'],
+  owner: [...EMPLOYEE_VIEWS, 'today', 'action_center', 'schedule', 'timesheets', 'people', 'walkthroughs', 'delivery', 'dispatch_rules', 'job_actuals', 'crew_performance', 'open_quotes', 'reviews', 'staff', 'customers', 'finance', 'communications', 'invoicing', 'business_requests', 'customer_visit_requests', 'guard_sales', 'pipeline', 'scorecard', 'proof', 'playbook', 'ad_spend', 'settings', 'followup_settings', 'catalog', 'message_templates', 'stocked_costs', 'purchase_list'],
+  manager: [...EMPLOYEE_VIEWS, 'today', 'action_center', 'schedule', 'timesheets', 'people', 'walkthroughs', 'delivery', 'job_actuals', 'crew_performance', 'open_quotes', 'reviews', 'staff', 'customers', 'finance', 'communications', 'invoicing', 'business_requests', 'customer_visit_requests', 'guard_sales', 'pipeline', 'scorecard', 'proof', 'playbook', 'settings', 'message_templates', 'stocked_costs', 'purchase_list'],
   employee: EMPLOYEE_VIEWS,
 };
 const PROFILES = {

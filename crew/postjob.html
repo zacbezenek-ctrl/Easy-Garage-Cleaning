@@ -77,6 +77,7 @@
   .copybtn{margin-top:10px;background:var(--orange);border:none;color:#fff;font-family:'Oswald';font-weight:600;
            font-size:13px;letter-spacing:.06em;text-transform:uppercase;padding:10px 16px;border-radius:9px;cursor:pointer}
   .guardrow{margin:4px 0 16px}
+  .guardrow .guardsell{margin-top:12px;width:100%;justify-content:center}
   .guardlbl{font-family:'Oswald';font-weight:600;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--khaki);margin:0 0 8px}
   .gchips{display:flex;flex-wrap:wrap;gap:8px}
   .gchip{border:1.5px solid var(--line);background:var(--paper);border-radius:99px;padding:11px 16px;font:inherit;font-size:14.5px;
@@ -162,6 +163,7 @@
 </div>
 <script src="/crew/hub-auth.js?v=20261021refbiz"></script>
 <script src="/customer-tip.js?v=20260928tips"></script>
+<script src="/crew/guard-sell.js?v=20261030guard1"></script>
 <script>
 let resolveCrewAuthentication;
 const crewAuthenticationReady = new Promise(resolve => { resolveCrewAuthentication = resolve; });
@@ -295,8 +297,8 @@ const SECTIONS = [
       "“Anyone else on the street with a garage like yours used to be? We're already here with the truck. If a neighbor books off your word, there's an EGC thank-you gift card in it for you.”"
     ]},
     script2:{h:"Garage Guard — open at the top, step down only", p:[
-      "“Guard Black — $2,500/yr: monthly whole-property visits, free monthly single-item pickup, annual deep clean, front-of-line scheduling. Only 5 memberships in Fort Collins.”",
-      "<i>On hesitation →</i> “Garage Guard — $800/yr: four visits a year, up to 5 cubic yards hauled each, unused visits convert to $100 gift cards.”",
+      "“Guard Black — $2,500/yr: monthly whole-property visits, free monthly single-item pickup, annual deep clean, front-of-line scheduling.”",
+      "<i>On hesitation →</i> “Garage Guard — $800/yr: four visits a year, up to 5 cubic yards hauled each visit.”",
       "<i>Save →</i> “Guard Lite — $450/yr.”"
     ]},
     guard:true
@@ -506,6 +508,11 @@ async function mountRef(){
   importantEl.innerHTML=`${notes?`<div class="important-notes"><strong>Protection notes</strong><span>${esc(notes)}</span></div>`:`<div class="important-notes missing"><strong>No protection notes attached</strong><span>Ask the customer and document anything important before final sign-off.</span></div>`}<div class="important-count">${important.length} protected-item photo${important.length===1?'':'s'} attached</div><div class="photostrip"><label class="padd important-add"><span>+</span>Add photo<input type="file" accept="image/*" capture="environment" style="display:none" onchange="onActPhoto(this,'important')"></label>${important.map((p,i)=>`<div class="pthumb"><img src="${p.dataUrl}" alt="Important item reference photo ${i+1}" width="1200" height="900" role="button" tabindex="0" onclick="viewPhoto(this.src)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();viewPhoto(this.src)}"></div>`).join("")}</div>`;
 }
 function setGuard(v){GUARD=(GUARD===v?"":v);render();saveAll();}
+// GUARD-SELL: sign the customer up on the spot (crew/guard-sell.js): plan, a QR code they scan to pay on their own phone,
+// Copy link. It shows the public plan prices only, never this job's. A paid sign-up marks the Garage Guard result.
+function openGuardSale(){if(!window.EGCGuardSell){alert('Garage Guard sign-up needs a connection. Reload this page with signal.');return}
+  EGCGuardSell.open({channel:'postjob',jobId:ACTIVE.jobId||CENTRAL_JOB_ID||'',customerId:ACTIVE.customerId||'',customer:{name:ACTIVE.name||document.getElementById('j_name').value,email:ACTIVE.email||'',address:ACTIVE.addr||''},
+    onClose:result=>{if(result.member&&GUARD_OPTS.includes(result.plan)&&GUARD!==result.plan){GUARD=result.plan;render();saveAll();}}});}
 function saveAll(){
   try{const f={};FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el)f[id]=el.value;});
     localStorage.setItem(saveKey(),JSON.stringify({state:state,clientState:clientState,fields:f,guard:GUARD}));}catch(e){}
@@ -540,7 +547,8 @@ function render(){
       </div>`:""}
       ${sec.script2?`<div class="script"><h4>${sec.script2.h}</h4>${guardYearOneFree()?`<p style="background:#e8581c;color:#fff;border-radius:8px;padding:8px 11px;font-size:13.5px;margin-bottom:8px"><b>This package already includes Garage Guard year one free.</b> Don't cold-sell — frame it as “here's what kicks in after your free year,” or pitch the Guard Black upgrade.</p>`:""}${sec.script2.p.map(p=>`<p>${p}</p>`).join("")}</div>`:""}
       ${sec.guard?`<div class="guardrow"><div class="guardlbl">Garage Guard result</div>
-        <div class="gchips" role="group" aria-label="Garage Guard result">${GUARD_OPTS.map(g=>`<button type="button" class="gchip ${GUARD===g?'on':''} ${g==='Not today'?'no':''}" aria-pressed="${GUARD===g}" onclick="setGuard('${g}')">${g}</button>`).join("")}</div></div>`:""}
+        <div class="gchips" role="group" aria-label="Garage Guard result">${GUARD_OPTS.map(g=>`<button type="button" class="gchip ${GUARD===g?'on':''} ${g==='Not today'?'no':''}" aria-pressed="${GUARD===g}" onclick="setGuard('${g}')">${g}</button>`).join("")}</div>
+        <button type="button" class="actbtn alt guardsell" onclick="openGuardSale()">Sign them up now</button></div>`:""}
     </section>`;
   }).join("");
   setTimeout(mountActions,0);

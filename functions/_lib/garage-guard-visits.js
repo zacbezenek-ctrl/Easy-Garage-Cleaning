@@ -460,6 +460,8 @@ function membershipView(row, account, money) {
     churn: plain(row.churn) ? { class: row.churn.class || null, source: text(row.churn.source, 40), reason: row.churn.reason || null, at: text(row.churn.at, 40) || null } : null,
     manualEdit: flag ? { status: 'open', fields: list(flag.fields), rewritten: flag.rewritten === true, observed: flag.observed || null, expected: flag.expected || null, firstDetectedAt: flag.firstDetectedAt || null, detectedAt: flag.detectedAt || null, stored: row.manualEdit?.status === 'open' } : null,
     ledgerError: plain(row.ledgerError) ? { eventId: text(row.ledgerError.eventId, 200), at: text(row.ledgerError.at, 40), code: text(row.ledgerError.code, 80) } : null,
+    // GUARD-SELL: who sold it through the staff sales tool (garage-guard-membership.js soldBy); absent for a public-page sign-up.
+    ...(plain(row.soldBy) && text(row.soldBy.staffKey, 64) ? { soldBy: { staffKey: text(row.soldBy.staffKey, 64), channel: text(row.soldBy.channel, 20), jobId: text(row.soldBy.jobId, 128) || null, customerId: text(row.soldBy.customerId, 128) || null, at: text(row.soldBy.recordedAt, 40) || null } } : {}),
     openPeriod: open ? { id: text(open.id, 200), periodStart: open.periodStart || null, periodEnd: open.periodEnd || null, visitsIncluded: count(open.visitsIncluded), visitsUsed: count(open.visitsUsed) ?? 0, visitsTracked: open.visitsTracked === true, ...(money ? { paidCents: cents(open.paidCents), recognizedCents: cents(open.recognizedCents) } : {}) } : null,
     // Closed years whose breakage waits on member visits: count each in its year (visit.apply) or settle it (visits.reconcile jobIds);
     // jobIds null means the visits were never listed, and any visits.reconcile lists them again.

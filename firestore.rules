@@ -473,6 +473,10 @@ service cloud.firestore {
     match /garage_guard_operations/{documentId} {
       allow read, write: if false;
     }
+    // GUARD-SELL: the one-text-per-sign-up claims of the staff Garage Guard sales tool (/api/garage-guard-sell).
+    match /guard_sale_texts/{documentId} {
+      allow read, write: if false;
+    }
     // Confirmed crew card charges the webhook held off their job for a manager.
     match /payment_reviews/{documentId} {
       allow read, write: if false;

@@ -221,7 +221,15 @@ function saleCard(sale, commission) {
     sale.status === 'booked' ? kv('Refund window', windowOpen ? `Open until ${dateLabel(sale.cancelDeadlineDate)}, midnight` : 'Closed', { style: windowOpen ? { color: 'var(--warning)' } : null }) : null,
     kv('Your commission', commissionText, { style: commission?.state === 'earned' ? { color: 'var(--success)' } : null }),
     // KNOCK-BRIDGE: where the Hub booked the job (day, time and crew), as the server answered it.
-    bookingLine(sale.hubJob || app.bookingFor(sale.id)));
+    bookingLine(sale.hubJob || app.bookingFor(sale.id)),
+    // GUARD-SELL: offer this customer a Garage Guard membership (crew/knock-guard.js), pre-filled from the sale.
+    app.sellGuard && sale.status !== 'cancelled' ? h('button', { type: 'button', class: 'btn btn--quiet btn--block', onclick: () => app.sellGuard(guardCustomer(sale), { jobId: sale.handoff?.job?.jobId || '', customerId: sale.handoff?.job?.customerId || '' }) }, 'Offer Garage Guard') : null);
+}
+
+// GUARD-SELL: the sale's customer for the Garage Guard sheet: name, email and the house address with its town.
+function guardCustomer(sale) {
+  const a = sale.address || {}, street = [a.number, a.street, a.unit].filter(Boolean).join(' ');
+  return { name: sale.customer?.name || '', email: sale.customer?.email || '', address: [street, sale.city || a.city || ''].filter(Boolean).join(', ') };
 }
 
 const BOOKING_BADGE = { booked: ['Booked', 'success', 'check'], needs_crew: ['Crew to confirm', 'warning', 'clock'], requested: ['Office sets the time', 'warning', 'clock'], review: ['Office books it', 'warning', 'clock'], pending: ['Booking…', '', 'clock'],
@@ -274,6 +282,10 @@ export function install(appApi) {
   app.fixers.sale = fixSale;
   app.registerScreen('mysales', mySalesScreen, { title: 'My sales', back: 'more' });
   app.moreLinks.push({ route: 'mysales', label: 'My sales', icon: 'dollar', order: 20, hint: 'Bookings, deposits and refund windows' });
+  // GUARD-SELL: More > Sell Garage Guard and the Offer Garage Guard button on a sale (crew/knock-guard.js). It needs a
+  // connection like the sheet itself, so a phone that cannot load it simply goes without.
+  import('./knock-guard.js').then(guard => { guard.install(app); if (['guard', 'more', 'mysales'].includes(app.S.route?.name)) app.render(); })
+    .catch(error => console.warn('EGC Knock: Garage Guard selling failed to load.', error));
 }
 
 export { saleForm, timeLabel };

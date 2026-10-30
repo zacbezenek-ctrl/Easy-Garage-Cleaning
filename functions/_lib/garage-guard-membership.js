@@ -4,6 +4,7 @@ import { dispatchStorage } from './dispatch-storage.js';
 import { resolveDispatchLineage } from './dispatch-lineage.js';
 import { matchCustomerIdentity } from './customer-resolution.js';
 import { denverToday } from './dispatch-time.js';
+import { guardSaleFromMetadata } from './garage-guard-sales.js';
 
 /**
  * Garage Guard memberships from verified Stripe events.
@@ -70,8 +71,11 @@ export function garageGuardEvent(event) {
     if (object.mode !== 'subscription' || !plan || !subscriptionId) return null;
     const details = plain(object.customer_details) ? object.customer_details : {};
     const address = (Array.isArray(object.custom_fields) ? object.custom_fields : []).find(field => field?.key === 'service_address');
+    // GUARD-SELL: a sign-up a staff member started names its seller in the session metadata (garage-guard-sales.js).
+    const sale = guardSaleFromMetadata(object.metadata), checkoutSessionId = stripeId(object.id, 'cs');
     return { ...base, action: 'checkout', subscriptionId, plan, paid: ['paid', 'no_payment_required'].includes(object.payment_status),
-      identity: { customerEmail: text(details.email || object.customer_email, 254).toLowerCase(), phone: text(details.phone, 40), customerName: text(details.name, 200), serviceAddress: text(address?.text?.value, 1000) } };
+      identity: { customerEmail: text(details.email || object.customer_email, 254).toLowerCase(), phone: text(details.phone, 40), customerName: text(details.name, 200), serviceAddress: text(address?.text?.value, 1000) },
+      ...(sale ? { sale: { ...sale, checkoutSessionId } } : {}) };
   }
   if (['invoice.paid', 'invoice.payment_failed'].includes(event.type)) {
     // Only invoices whose subscription carries a Garage Guard plan are memberships.
@@ -95,6 +99,9 @@ function nextMembership(current, input, now) {
   // The checkout collects the garage address, so its contact details win; other events only fill gaps.
   for (const [key, value] of Object.entries(input.identity)) if (value && (input.action === 'checkout' || !membership[key])) membership[key] = value;
   if (input.stripeCustomerId && !membership.stripeCustomerId) membership.stripeCustomerId = input.stripeCustomerId;
+  // GUARD-SELL: who sold it (staff key, channel, job, customer), kept from the first checkout that names a seller. No
+  // commission rule exists for Garage Guard: this records the sale for the owner and pays nothing.
+  if (input.action === 'checkout' && input.sale && !plain(membership.soldBy)) membership.soldBy = { ...input.sale, recordedAt: now };
   Object.assign(membership, { plan, visitsIncluded });
   const previousStatus = membership.status, status = { checkout: input.paid ? 'active' : 'pending', paid: 'active', payment_failed: 'past_due', cancelled: 'cancelled' }[input.action];
   // Cancellation is terminal. Otherwise an older event delivered late cannot

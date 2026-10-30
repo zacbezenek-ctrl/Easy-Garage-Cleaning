@@ -11,6 +11,8 @@ const KIT={js:'employee-ui-kit.js',css:'employee-ui-kit.css',v:'20260929mobilehu
 // open_quotes (Open quotes) is the office's read-only board of sent, unapproved estimator quotes and close rates; its
 // API (/api/open-quotes) refuses anyone without business access, so the capability here only hides the nav.
 // my_commission (My commission, D6b) is the signed-in employee's own estimator 7%, read only; empty for anyone who sells no walkthroughs.
+// guard_sales (Garage Guard sales, GUARD-SELL) sells Garage Guard from the Hub (crew/guard-sell.js) and lists who sold each
+// membership; its member list (/api/garage-guard-members) answers dispatchers only.
 // Capabilities come from the signed-in server profile (businessAccess and the owner flag), never a client staff list.
 // Group and label are plain text (the shell escapes them, so 'Estimates & payments' is fine); angle brackets,
 // backticks and control characters are refused. An invalid line is skipped with a console warning.
@@ -40,6 +42,7 @@ const MANIFEST=[
 {id:'customer_visit_requests',group:'CLIENT WORK',label:'Customer visit requests',capability:'business',load:{js:'employee-customer-requests.js',v:'20261024requests1'},module:'EGCCustomerRequests'},
 {id:'walkthroughs',group:'RUN THE BUSINESS',label:'Walkthroughs',iconPath:'M9 4h6l1 2h3v14H5V6h3zM9 13l2 2 4-4',capability:'business',load:{js:'employee-walkthroughs.js',css:'employee-walkthroughs.css',v:'20260929hubready1'},module:'EGCWalkthroughs'},
 {id:'purchase_list',group:'RUN THE BUSINESS',label:'Purchase list',iconPath:'M3 4h2l2.4 11h11.2L21 7H6.2M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM18 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',capability:'business',load:{js:'employee-purchase-list.js',css:'employee-purchase-list.css',v:'20261017purchase'},module:'EGCPurchaseList'},
+{id:'guard_sales',group:'CLIENT WORK',label:'Garage Guard sales',iconPath:'M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z',capability:'business',load:{js:'employee-guard-sales.js',css:'employee-guard-sales.css',v:'20261030guard1'},module:'EGCGuardSales'},
 {id:'customer_messages',group:'CLIENT WORK',label:'Customer messages',iconPath:'M4 5h16v11H9l-5 4zM8 9h8M8 12h5',capability:'customer_contact',load:{js:'employee-customer-messages.js',css:'employee-customer-messages.css',v:'20261021inbox4'},module:'EGCCustomerMessages'},
 ];
 // Home widgets, one line each: {id, label, homes:['today'|'my_day',...], capability:'business'|'owner' or crewVisible:true, quiet?:true, module:'EGCName', load?:{js, css, v}}.

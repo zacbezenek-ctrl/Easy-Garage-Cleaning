@@ -312,6 +312,14 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       code: [...code('functions/_lib/ghl-messenger.js', 'ghl_message_send', 'ghl_contact_write'), ...code('functions/_lib/knock-handoff.js', 'hub_send_helper_call')], evidence: ['functions/_lib/knock-handoff.js', 'docs/knock-canvassing.md'],
       notes: 'KNOCK: one text per sale, ever (a knock_receipts claim before HighLevel is called; an unclear answer is never retried), only with the customer\'s consent recorded at the door, only when settings.integrations.text is highlevel and the HighLevel key and location are set, and never to a contact on Do Not Disturb or tagged egc-no-sms-consent. The contact is upserted from the sale first (contact:upsert). Without a deposit link it says "Your deposit is $[DEPOSIT]." There is no bulk send.',
       ownerCheck: 'Before switching integrations.text to highlevel, confirm no Contact Created workflow would also text a new canvassing customer (ghl.contact_change_workflows).' }),
+    // GUARD-SELL: the staff Garage Guard sales tool's one text (off unless EGC_GUARD_SALES_TEXT_ENABLED=true).
+    entry({ id: 'hub.guard_sale_link_text', name: 'Garage Guard sign-up link text (HighLevel SMS)', system: 'hub', trigger: 'A staff member taps "Text it to the customer" on the Garage Guard sales sheet (crew/guard-sell.js); POST /api/garage-guard-sell action text renders it from the open Stripe checkout session',
+      audience: 'customer', channel: 'SMS', contentSource: 'fixed_template', classification: 'human_approved', disposition: 'approved_human', sendsToday: 'no', speedToLead: 'none',
+      templateText: 'Easy Garage Cleaning: here is your [PLAN] sign-up link ([PRICE] a year, paid securely through Stripe): [LINK] Questions? Reply here.',
+      templateHash: '80a2b75885bc4ddb5354bbbec878449894411d6c16c6e0944e07fceee92bf5c9',
+      code: [...code('functions/_lib/customer-messaging.js', 'ghl_message_send', 'hub_send_helper_call'), ...code('functions/api/garage-guard-sell.js', 'hub_send_helper_call')], evidence: ['functions/_lib/garage-guard-sales.js', 'functions/api/garage-guard-sell.js'],
+      notes: 'GUARD-SELL: only with EGC_GUARD_SALES_TEXT_ENABLED exactly "true" (off by default; the sheet then only shows the QR code and Copy link). One text per Stripe checkout session, ever (a guard_sale_texts claim before HighLevel is called; an unclear answer is never resent), only for a sale started from a job, by its seller (or a dispatcher) who works on that job, to the job\'s linked HighLevel contact after the DND and egc-no-sms-consent checks; never creates a contact. [PLAN] and [PRICE] are the public plan name and yearly price, [LINK] the signed /api/garage-guard-link.',
+      ownerCheck: 'Approve this exact text before setting EGC_GUARD_SALES_TEXT_ENABLED=true.' }),
     entry({ id: 'hub.portal_invitation', name: 'Accepted-quote portal invitation (SMS)', system: 'hub', trigger: 'A recorded approval (estimate-approved) or a signed walkthrough sync requests it; staff retry definite failures and a manager Hub refresh retries them',
       audience: 'customer', channel: 'SMS', contentSource: 'fixed_template', classification: 'owner_automation', disposition: 'approved_automatic', sendsToday: 'yes', speedToLead: 'none', msgCoreKind: 'portal_invitation_adapter',
       templateText: '{{opening}} quote is approved. Here is your private Easy Garage Cleaning project portal for job details, messages, and payments: {{portalLink}}',
@@ -506,6 +514,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     // FUN-03: a replayed portal approval (same request_id) re-runs the idempotent sales-exit sync, so the portal calls it twice plus its message delivery.
     'functions/api/customer-portal.js': { hub_send_helper_call: 3 },
     'functions/api/email-confirmation.js': { emailjs_send: 1 },
+    // GUARD-SELL: the Garage Guard sign-up link text (deliverHighLevelMessage), off unless EGC_GUARD_SALES_TEXT_ENABLED=true.
+    'functions/api/garage-guard-sell.js': { hub_send_helper_call: 1 },
     // GHL-TRACK-1: tags, the contact upsert and completeAppointment go through functions/_lib/highlevel-tags.js (five addTags calls).
     'functions/api/highlevel.js': { ghl_tag_helper_call: 5, ghl_contact_write: 1, ghl_note_task_write: 4, ghl_opportunity_write: 3, ghl_appointment_write: 2, hub_send_helper_call: 3 },
     'functions/api/integration-status.js': { zapier_hook: 5 },

@@ -17,6 +17,8 @@ export const STAFF_GATED_PATHS = Object.freeze([
   '/crew/schedule*',
   // LANE catalog: the crew hub's read-only "What we sell" page and its script.
   '/crew/menu*',
+  // GUARD-SELL: the Garage Guard sales sheet (script and stylesheet) the crew pages, Knock and the Hub load.
+  '/crew/guard-sell*',
 ]);
 
 // Staff-adjacent files that stay reachable signed out: the sign-in pages and their scripts, and the crew app shell. The
