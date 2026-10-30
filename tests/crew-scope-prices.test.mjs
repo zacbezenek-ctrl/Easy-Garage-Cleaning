@@ -9,6 +9,7 @@ import { storage } from './helpers/field-fixture.mjs';
 import { hasCrewMoney, signedBriefJob, stripCrewMoney, stripCrewMoneyDeep } from '../functions/_lib/crew-money.js';
 import { normalizeHandoffPlan, saveWalkthroughHandoff, stripCrewMoney as handoffStrip } from '../functions/_lib/walkthrough-handoff.js';
 import { fieldCommand, fieldCompletionMissing, fieldJobProjection } from '../functions/_lib/field-execution.js';
+import { fieldVisitProjection } from '../functions/_lib/field-execution-visits.js';
 import { crewJobProjection, CREW_PROJECTION_FIELDS } from '../functions/_lib/crew-job-projection.js';
 import { crewJobsHandlers, CREW_LISTING_FIELDS } from '../functions/api/crew-jobs.js';
 import { handoffHandlers } from '../functions/api/walkthrough-handoff.js';
@@ -78,6 +79,44 @@ test('stripCrewMoney removes every currency form and leaves times, quantities an
   assert.equal(stripCrewMoney(untouched), untouched);
   for (const value of [null, undefined, 42, ['$5']]) assert.deepEqual(stripCrewMoney(value), value);
   assert.deepEqual(stripCrewMoneyDeep({ a: ['Pest waste (+$200)', 3], b: { c: 'USD 5 fee', n: 250 }, d: null }), { a: ['Pest waste', 3], b: { c: 'fee', n: 250 }, d: null });
+});
+
+// QA found amounts typed without a $ reaching crew on signed jobs ("balance 937.50", "Venmo me 50"), other currencies,
+// and amounts cut in half ("$1 250" -> "250"). A number beside a money word is an amount; what crew need stays.
+test('stripCrewMoney removes amounts written beside a money word and keeps counts, times, dates, codes and addresses', () => {
+  const strip = [
+    ['customer paid 312.50 deposit, balance 937.50 on job day', 'customer paid deposit, balance on job day'],
+    ['total 1,250.00', 'total'], ['25% deposit paid', 'deposit paid'], ['Venmo me 50', 'Venmo me'], ['price: 1500', 'price:'],
+    ['Haul fee 250 bucks', 'Haul fee'], ['fee: 1,000.00', 'fee:'], ['Labor @ 45/hr', 'Labor @'], ['1k total', 'total'],
+    ['Quoted twelve fifty', 'Quoted'], ['two hundred fifty dollars', ''], ['twenty bucks extra', 'extra'],
+    ['£900', ''], ['€1,250 balance', 'balance'], ['1.250,00 € paid', 'paid'], ['＄1,250', ''], ['$１２５０', ''],
+    ['$1 250', ''], ['$1 250 for the job', 'for the job'], ['$250/hr labor', 'labor'], ['$45 per man-hour', ''], ['$1000/truck', ''],
+    ['Labor 3 × 4 h @ $45/h', 'Labor 3 × 4 h @'], ['Customer owes 937.50 on job day', 'Customer owes on job day'], ['Cash app 50 tonight', 'Cash app tonight'],
+    ['Zelle 75 after', 'Zelle after'], ['tip 20 bucks for the crew', 'tip for the crew'], ['20 tip', 'tip'], ['collect 200 cash at the end', 'collect cash at the end'],
+    ['Refund 40 for the broken tote', 'Refund for the broken tote'], ['quoted 1200-1500', 'quoted'], ['quoted 1200 - 1500 range', 'quoted range'],
+    ['Balance due 937.50', 'Balance due'], ['Paid 300 by check', 'Paid by check'], ['300 by check', 'by check'], ['50 in cash', 'in cash'], ['Ttl:1250.00', 'Ttl:'],
+    ['deposit of 312.50 received', 'deposit of received'], ['Deposit: 25% ($312.50)', 'Deposit:'], ['25% down at signing', 'down at signing'],
+    ['Charge 75 for the mattress', 'Charge for the mattress'], ['pay them 50 each', 'pay them each'], ['total due 1,250', 'total due'],
+    ['1,250 due Friday', 'due Friday'], ['+200$ cash', 'cash'], ['single $64.99 / double $79.99', 'single / double'],
+  ];
+  const keep = [
+    '5 boxes', '2 trucks', '3 crew', 'Arrive 9:30', '2-4pm window', 'Job on 10/31', 'due 10/31', 'due 9:30', 'due 5pm', 'Starts 2026-11-02',
+    '1250 Elm St', 'Check 1250 Elm St first', 'Parking at 200 Bucks Rd', 'code 1234', 'gate 4321#', 'Gate code #$1234', 'Lockbox 5521, key inside',
+    'Call 970-555-0100', 'call (970) 555-0100', 'Venmo 970-555-0100', 'Shelf 36×72×24', '36 x 18 in', '36" wide shelf', '25 lb bags', '0.5 load', 'half truck load',
+    'total 5 boxes', 'Totes: 12 total', '5 total boxes', 'check 2 boxes in the corner', 'pay 2 guys', 'deposit 3 boxes at the curb', 'paid 2 visits', '2 deposit boxes',
+    'Order #200 x3', '1 charge on the card', '3 quotes sent', '12 man-hours sold (below the estimate of 14 man-hours)', 'About 2 truckloads · 2-car garage',
+    'CREW / WINDOW: Crew One · 1 crew · 08:00–13:00', 'Pay one of the crew at lunch', 'one tote, two bikes', 'twenty five boxes', 'Due in 2 days', 'Collect 4 bins',
+    'Balance 2 shelves on the wall', 'balance 2.5 hours', 'Price tags on 3 items', 'Unit 12, 2nd floor', '1.2 miles away', '5000K LED, 10,000 lm', 'a 125 in wheelbase',
+    '2026-10-30T16:00:00.000Z', '50% full', '25% of the garage', 'Paid in 2025', 'quote 4 hours', 'Due: 3', '1,250',
+  ];
+  for (const [input, expected] of strip) {
+    assert.equal(stripCrewMoney(input), expected, input);
+    assert.equal(hasCrewMoney(input), true, input);
+    assert.equal(stripCrewMoney(expected), expected, `idempotent: ${input}`);
+    assert.equal(hasCrewMoney(expected), false, expected);
+  }
+  for (const input of keep) { assert.equal(stripCrewMoney(input), input, input); assert.equal(hasCrewMoney(input), false, input); }
+  assert.ok(strip.length + keep.length >= 40);
 });
 
 test('stripCrewMoney stays linear on long blank runs, so a 20,000-character scope is never a CPU sink', () => {
@@ -320,7 +359,7 @@ test('a handoff request frozen before the page sent a crew brief is recovered un
   assert.equal(bodies[1], bodies[0], 'the original frozen request is retried byte for byte');
 });
 
-test('jobs saved before the fix stop leaking at once: crew projections strip a signed brief, staff scopes are untouched', async t => {
+test('jobs saved before the fix stop leaking at once: crew projections strip a signed brief and, by the owner decision of 2026-10-30, an office-written scope too', async t => {
   const leaked = { id: 'job-leaked', type: 'job', status: 'scheduled', pipelineStatus: 'scheduled', date: '2026-09-24', time: '08:00', endTime: '13:00', assignedCrew: ['crew.one'], customer: 'Synthetic Customer', address: '100 Fixture Lane',
     handoffVersion: 1, operationalScope: { text: LEAKED, updatedBy: 'zacb' }, jobInstructions: { customerGoal: 'Park two cars', keepItems: 'Blue bicycle', customerNotes: 'Customer adds $50 for the fridge', hazards: ['Pest waste'] },
     customerInstructions: 'Customer adds $50 for the fridge', clientChecklists: { preJob: [{ id: 'goal', label: 'Repeat the promised outcome to the crew', detail: 'Park two cars (+$0 extra)' }], postJob: [] },
@@ -333,11 +372,14 @@ test('jobs saved before the fix stop leaking at once: crew projections strip a s
   // A recurring visit copied from the job keeps the brief text but not handoffVersion.
   const copy = { ...leaked, id: 'job-copy', handoffVersion: undefined, sourceTemplateJobId: 'job-leaked' };
   assert.equal(fieldJobProjection(copy).scope, CLEAN);
-  // Staff-written scope on an ordinary job is the crew's instruction and is never rewritten.
+  // Owner decision (2026-10-30): crew never see prices on any job, so an office-written scope on an ordinary job reads
+  // without its amount too (this pinned the opposite before). The stored job keeps it; the lead's balance to collect is
+  // the field-pay screen's own number (tests/field-payments.test.mjs).
   const staff = { ...leaked, id: 'job-staff', handoffVersion: undefined, operationalScope: { text: 'Collect the $300 balance by check.' } };
   const plainProjection = fieldJobProjection(staff);
-  assert.equal(plainProjection.scope, 'Collect the $300 balance by check.');
-  assert.equal(plainProjection.customerInstructions, 'Customer adds $50 for the fridge');
+  assert.equal(plainProjection.scope, 'Collect the balance by check.');
+  assert.equal(plainProjection.customerInstructions, 'Customer adds for the fridge');
+  assert.equal(staff.operationalScope.text, 'Collect the $300 balance by check.', 'the stored scope is not rewritten');
   // /api/crew-jobs reads a masked scan: the mask carries handoffVersion, so the crew row is stripped too.
   assert.ok(CREW_PROJECTION_FIELDS.includes('handoffVersion') && CREW_LISTING_FIELDS.includes('handoffVersion'));
   const store = hubStore(); store.rows.set('jobs/job-leaked', { ...leaked, revision: 'leak-r1' });
@@ -357,7 +399,7 @@ test('jobs saved before the fix stop leaking at once: crew projections strip a s
   assert.doesNotMatch(crew, MONEY);
 });
 
-test('a signed job shows checklist labels without amounts wherever crew read them; a staff job keeps its own wording', () => {
+test('checklist labels read without amounts wherever crew read them, on a signed job and, by the owner decision of 2026-10-30, an office-written one', () => {
   const actor = { user: 'crew.one', displayName: 'Crew One' }, fee = 'Checklist: Collect the agreed disposal fee';
   // A manager-written check on a signed job (the handoff already strips the checks it writes).
   const signed = { id: 'job-fee', type: 'job', status: 'arrived', pipelineStatus: 'arrived', assignedCrew: ['crew.one'], handoffVersion: 1, operationalScope: { text: CLEAN },
@@ -379,11 +421,73 @@ test('a signed job shows checklist labels without amounts wherever crew read the
   const checked = fieldCommand(signed, actor, { action: 'checklist', itemId: 'fee', completed: true, requestId: randomUUID() }, NOW);
   assert.equal(checked.event.summary, 'Checked: Collect the agreed disposal fee');
   assert.equal(checked.patch.fieldExecution.checklistTemplate[0].label, 'Collect the agreed $75 disposal fee', 'the stored template is not rewritten');
-  // The same check on an ordinary job with a staff-written scope is the crew's instruction and keeps its amount.
+  // Owner decision (2026-10-30): crew never see prices on any job, so the same check on an ordinary job with an
+  // office-written scope reads without its amount too (this pinned the opposite before); its stored template keeps it.
   const staff = { ...signed, handoffVersion: undefined, operationalScope: { text: 'Collect the $300 balance by check.' } };
-  assert.ok(fieldCompletionMissing(staff).includes('Checklist: Collect the agreed $75 disposal fee'));
-  assert.equal(fieldCommand(staff, actor, { action: 'checklist', itemId: 'fee', completed: true, requestId: randomUUID() }, NOW).event.summary, 'Checked: Collect the agreed $75 disposal fee');
-  assert.equal(fieldJobProjection(staff, [recorded]).history[0].summary, 'Checked: Collect the agreed $75 disposal fee');
+  assert.ok(fieldCompletionMissing(staff).includes(fee));
+  const staffCheck = fieldCommand(staff, actor, { action: 'checklist', itemId: 'fee', completed: true, requestId: randomUUID() }, NOW);
+  assert.equal(staffCheck.event.summary, 'Checked: Collect the agreed disposal fee');
+  assert.equal(staffCheck.patch.fieldExecution.checklistTemplate[0].label, 'Collect the agreed $75 disposal fee', 'the stored template is not rewritten');
+  assert.equal(fieldJobProjection(staff, [recorded]).history[0].summary, 'Checked: Collect the agreed disposal fee');
+});
+
+// QA: on a signed job crew still read amounts in a note's body, an issue, a material's name, the job's title and service,
+// a status reason, photo notes and closeout notes. Each is shown without them, as the scope is; by the owner decision of
+// 2026-10-30 (crew never see prices on any job) the same holds on a job with office-written text.
+const texts = value => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(texts) : value && typeof value === 'object' ? Object.values(value).flatMap(texts) : [];
+test('every crew text reads without amounts (title, service, materials, issue, crew notes, closeout, day notes) on a signed job and, by the owner decision of 2026-10-30, an office-written one', async t => {
+  const actor = { user: 'crew.one', displayName: 'Crew One' };
+  const signed = { id: 'job-texts', type: 'job', status: 'in_progress', pipelineStatus: 'in_progress', date: '2026-09-22', time: '08:00', endTime: '13:00', assignedCrew: ['crew.one'], handoffVersion: 1,
+    customer: 'Synthetic Customer', address: '100 Fixture Lane', operationalScope: { text: CLEAN }, title: 'Garage cleanout, quoted 1,250.00', serviceType: 'Garage cleanout (balance 937.50)',
+    requiredEquipment: ['Dolly', 'Straps, cost 40'], materials: [{ id: 'm1', name: 'Shelf kit (120 bucks)', quantity: 2 }, { id: 'm2', name: 'Totes', quantity: 4 }],
+    assignmentSegments: [{ id: 'seg1', date: '2026-09-22', time: '08:00', endTime: '13:00', assignedCrew: ['crew.one'], notes: 'Customer pays 937.50 at noon' }],
+    fieldExecution: { activity: 'waiting', activityReason: 'Customer wants to pay 937.50 before we start', materialStates: { m1: { state: 'missing' } },
+      attention: { status: 'resolved', visibility: 'crew', reason: 'Customer paid 312.50 deposit, balance 937.50', resolution: 'Office refunded 40 for the broken tote', at: NOW, actorId: 'crew.one', requestId: 'issue-1' },
+      photos: [{ id: randomUUID(), fileId: 'synthetic-file', verified: true, category: 'storage', caption: 'Tip 20 bucks left on the bench', bin: 'A1', items: 'Receipts, cash 50', createdAt: NOW }],
+      completion: { completedAt: NOW, actorId: 'crew.one', notes: 'Hauled 2 loads; customer paid 937.50 in cash', hasIssues: true, issueNotes: 'Customer owes 50 for the extra mattress' },
+      visits: { '2026-09-22': { status: 'ended', endedAt: NOW, endedBy: 'crew.one', notes: 'Day one done, collected 300 cash', closures: [{ endedAt: NOW, endedBy: 'crew.one', notes: 'Venmo me 50 next time' }] } } } };
+  const events = [
+    { id: randomUUID(), state: 'applied', action: 'note', visibility: 'crew', createdAt: NOW, actorId: 'zacb', actorName: 'Owner', summary: 'Note added', body: 'Customer will Venmo me 50 tonight' },
+    { id: randomUUID(), state: 'applied', action: 'note', visibility: 'management', createdAt: NOW, actorId: 'zacb', actorName: 'Owner', summary: 'Note added', body: 'Balance 937.50 by check' },
+  ];
+  const crew = fieldJobProjection(signed, events, { viewer: 'crew.one' }), manager = fieldJobProjection(signed, events, { manager: true });
+  assert.equal(crew.serviceType, 'Garage cleanout (balance)');
+  assert.equal(crewJobProjection(signed, { viewer: 'crew.one' }).title, 'Garage cleanout, quoted');
+  assert.equal(crew.statusReason, 'Customer wants to pay before we start');
+  assert.equal(crew.assignmentSegments[0].notes, 'Customer pays at noon');
+  assert.deepEqual(crew.requiredEquipment, ['Dolly', 'Straps, cost']);
+  assert.deepEqual(crew.materials.map(item => item.name), ['Shelf kit', 'Totes']);
+  assert.ok(crew.completionMissing.includes('Document the missing materials as an issue: Shelf kit.'));
+  assert.deepEqual([crew.attention.reason, crew.attention.resolution], ['Customer paid deposit, balance', 'Office refunded for the broken tote']);
+  assert.deepEqual([crew.photos[0].caption, crew.photos[0].items], ['Tip left on the bench', 'Receipts, cash']);
+  assert.deepEqual(crew.history.map(event => event.body), ['Customer will Venmo me tonight']);
+  assert.deepEqual([crew.completion.notes, crew.completion.issueNotes], ['Hauled 2 loads; customer paid in cash', 'Customer owes for the extra mattress']);
+  const days = fieldVisitProjection(signed, { today: '2026-09-22', viewer: 'crew.one', assignedToday: true }).days;
+  assert.deepEqual([days[0].notes, days[0].earlierEnds[0].notes], ['Day one done, collected cash', 'Venmo me next time']);
+  for (const view of [crew, crewJobProjection(signed, { viewer: 'crew.one' }), days]) for (const text of texts(view)) assert.equal(hasCrewMoney(text), false, text);
+  // A management-only note keeps its wording for the managers who alone read it; the crew-visible issue reads as crew see it.
+  assert.equal(manager.history.find(event => event.visibility === 'management').body, 'Balance 937.50 by check');
+  assert.equal(manager.attention.reason, 'Customer paid deposit, balance');
+  // Recording a material's state writes a price-free history entry.
+  assert.equal(fieldCommand(signed, actor, { action: 'material', materialId: 'm1', state: 'loaded', requestId: randomUUID() }, NOW).event.summary, 'Shelf kit: loaded');
+  // Through the real crew-session GET /api/field-jobs.
+  const { crew: response } = await crewAndManagerReads(t, signed);
+  for (const text of texts(JSON.parse(response).job)) assert.equal(hasCrewMoney(text), false, text);
+  // Owner decision (2026-10-30): crew never see prices on any job, so an ordinary job with an office-written scope reads
+  // the same (this pinned the opposite before). Management-only notes and issues, and the stored job, keep their wording.
+  const staff = { ...signed, id: 'job-staff-texts', handoffVersion: undefined, operationalScope: { text: 'Collect the $300 balance by check.' } };
+  const plainView = fieldJobProjection(staff, events, { viewer: 'crew.one' }), plainManager = fieldJobProjection(staff, events, { manager: true });
+  assert.equal(plainView.scope, 'Collect the balance by check.');
+  assert.equal(plainView.serviceType, 'Garage cleanout (balance)');
+  assert.equal(crewJobProjection(staff, { viewer: 'crew.one' }).title, 'Garage cleanout, quoted');
+  assert.deepEqual([plainView.materials[0].name, plainView.attention.reason, plainView.history[0].body], ['Shelf kit', 'Customer paid deposit, balance', 'Customer will Venmo me tonight']);
+  assert.equal(fieldVisitProjection(staff, { today: '2026-09-22', manager: true }).days[0].notes, 'Day one done, collected cash');
+  for (const view of [plainView, crewJobProjection(staff, { viewer: 'crew.one' })]) for (const text of texts(view)) assert.equal(hasCrewMoney(text), false, text);
+  assert.equal(plainManager.history.find(event => event.visibility === 'management').body, 'Balance 937.50 by check');
+  const managementIssue = { ...staff, fieldExecution: { ...staff.fieldExecution, attention: { ...staff.fieldExecution.attention, visibility: 'management' } } };
+  assert.equal(fieldJobProjection(managementIssue, [], { manager: true }).attention.reason, 'Customer paid 312.50 deposit, balance 937.50');
+  assert.equal(fieldJobProjection(managementIssue, [], { viewer: 'crew.one' }).attention, null, 'crew never see a management-only issue');
+  assert.deepEqual([staff.title, staff.operationalScope.text], ['Garage cleanout, quoted 1,250.00', 'Collect the $300 balance by check.'], 'the stored job is not rewritten');
 });
 
 // Backfill: rows as the masked scan returns them.

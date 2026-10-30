@@ -1,6 +1,7 @@
 import { fieldJobProjection } from './field-execution.js';
 import { segmented } from './dispatch-segments.js';
 import { walkthroughStatusFields } from './walkthrough-state.js';
+import { stripCrewMoney } from './crew-money.js';
 
 const text = (value, max=1000) => typeof value === 'string' ? value.slice(0,max) : '';
 /** Every stored field crewJobProjection and fieldJobProjection read (id and
@@ -46,7 +47,8 @@ export function crewJobProjection(job, options = {}) {
     // is that visit (its date and time are the job's, visitRow in employee-arrival-deadline.js) gets it, so crew home never
     // pairs it with a later day, or a later visit the same day.
     arrivalWindow:split&&!(field.date===text(job.date,10)&&field.time===text(job.time,8))?'':field.arrivalWindow,
-    assignedTo:field.assignedCrew.join(' + '),title:text(job.title,300),
+    // The job title reads without amounts, as its scope does (field-execution.js; owner decision, 2026-10-30).
+    assignedTo:field.assignedCrew.join(' + '),title:stripCrewMoney(text(job.title,300)),
     durationMin:Number.isFinite(Number(job.durationMin))?Number(job.durationMin):null,
     // Dispatch clears a saved length with null; that reads as no estimate, not 0.
     estimatedDurationMin:job.estimatedDurationMin!==null&&Number.isFinite(Number(job.estimatedDurationMin))?Number(job.estimatedDurationMin):null,
