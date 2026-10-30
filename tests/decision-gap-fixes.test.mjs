@@ -343,7 +343,8 @@ test('the public FAQ, the prep guide and the business rate card state the 25% de
   // its kept copy still states these terms for when the owner turns it on.
   assert.equal(accountView(account, { id: 'b'.repeat(32), name: 'Synthetic Admin', role: 'admin', status: 'active' }, []).rates, null);
   const terms = partnerRateCard().terms;
-  assert.equal(terms[1], 'Full-service projects: your quote states the deposit and when each payment is due. A walkthrough quote takes a 25% deposit when it is signed or approved and the remaining 75% on the job day. Credit terms require a written agreement.');
+  // Owner decision 2026-10-30: the 75% is due when the job is complete (was "on the job day").
+  assert.equal(terms[1], 'Full-service projects: your quote states the deposit and when each payment is due. A walkthrough quote takes a 25% deposit when it is signed or approved and the remaining 75% when the job is complete. Credit terms require a written agreement.');
   assert.doesNotMatch(terms.join(' '), /50%|on completion/);
   for (const copy of [faq, guide, terms.join(' ')]) assert.doesNotMatch(copy, /seven days|7 days|by the date on|on completion/i, 'no seven-day or completion deposit is promised');
 });

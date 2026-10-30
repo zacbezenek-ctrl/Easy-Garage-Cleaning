@@ -126,10 +126,12 @@ and say why in the PR.
 
 Each rule is an owner decision recorded in the code. Changing one needs the owner, not an agent.
 
-- **Deposit 25% / 75%.** A quote signed on the walkthrough takes 25% on the signing day and 75% on the job day
-  (`SIGNED_25_75`); a sent quote takes 25% when the customer approves it and 75% on the job day (`SENT_25_75`).
+- **Deposit 25% / 75%.** A quote signed on the walkthrough takes 25% on the signing day and 75% when the job is
+  complete (`SIGNED_25_75`); a sent quote takes 25% when the customer approves it and 75% when the job is complete
+  (`SENT_25_75`); the saved remainder date is the job day (`remainderDueRule: 'job_day'`).
   `functions/_lib/quote-payment-policy.js` (`snapshotQuotePaymentPolicy` rejects any other split). A job keeps the
-  terms it was signed on.
+  terms it was signed on. Any other new quote or estimate, and a job with no saved deposit, asks 25% upfront too (owner
+  decision 2026-10-30; `DEFAULT_DEPOSIT_PCT` in `functions/_lib/money-core.js`).
 - **Labor line $53.00 per man-hour.** `DEFAULT_LABOR_RATE_CENTS = 5300` in `functions/_lib/composite-quote.js`. The
   owner's rate in Firestore (`pricingMenuApprovals/current` → `laborRatePerManHourCents`, set on Hub Menu prices)
   overrides it. The rate is never read from the browser; the server re-prices.

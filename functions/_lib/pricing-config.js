@@ -59,7 +59,7 @@ const PHONE_QUOTE = {
 
 // The standard B2B partner rate card, not shown to any account today (businessRateCard below). Its payment terms are the estimator quote's
 // (D-DEPOSIT, quote-payment-policy.js): a 25% deposit when the quote is signed in person (SIGNED_25_75) or approved
-// (a sent quote, SENT_25_75) and 75% on the job day. A quote sent before 2026-10-19 keeps the dates it states, and a
+// (a sent quote, SENT_25_75) and 75% when the job is complete. A quote sent before 2026-10-19 keeps the dates it states, and a
 // quote the office writes in the Hub estimate editor states its own deposit.
 const B2B_RATE_CARD = {
   cards: [
@@ -68,7 +68,7 @@ const B2B_RATE_CARD = {
   ],
   terms: [
     'Discounts do not stack. The full-service reset base has a $675 minimum after discounts; standalone services have a $99 minimum. Products, specialty handling, access charges and the fixed $139 curbside offer (when our truck is already in the area that day; otherwise the minimum pickup is $250) are excluded. Your accepted quote controls.',
-    'Full-service projects: your quote states the deposit and when each payment is due. A walkthrough quote takes a 25% deposit when it is signed or approved and the remaining 75% on the job day. Credit terms require a written agreement.',
+    'Full-service projects: your quote states the deposit and when each payment is due. A walkthrough quote takes a 25% deposit when it is signed or approved and the remaining 75% when the job is complete. Credit terms require a written agreement.',
   ],
 };
 
