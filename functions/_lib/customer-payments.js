@@ -874,9 +874,10 @@ export const checkoutFingerprint = (job, tipCents = 0, mode = 'off') => fingerpr
 
 /**
  * Closes the job's portal card checkout when it no longer charges exactly what
- * is due (a Hub change_order.void lowered the balance after it opened), so the
- * customer cannot pay the old amount; the next Pay opens one for the new
- * figure. Returns 'none' (no checkout is open), 'current' (it still charges
+ * is due (a Hub change_order.void lowered the balance after it opened, or the
+ * office recorded money by hand), so the customer cannot pay the old amount;
+ * the next Pay opens one for the new figure. Returns 'none' (no checkout is
+ * open, or the job already counts its payment), 'current' (it still charges
  * exactly what is due), 'expired' (it was closed now), 'paid' (the customer
  * already completed it; the payment webhook records it) or 'pending' (it is
  * still being created, or Stripe did not close it). Throws when storage or
@@ -888,6 +889,8 @@ export async function expireStaleCustomerCheckout(env, secret, jobId) {
   if (!state.sessionId) return 'pending';
   const job = await readJob(env, jobId);
   if (!job?.__updateTime) throw failure('Payment information is temporarily unavailable', 503);
+  // A checkout whose payment the job already counts (its return or the webhook recorded it) can charge nothing more.
+  if (knownSession(job, state.sessionId)) return 'none';
   let due = null;
   try { due = cents(payable(job, moneyTotalsMode(env)).dueNow); } catch { /* nothing may be charged now: close it */ }
   // Charging exactly what is due is harmless (a deposit checkout survives a void of a change due with the balance).

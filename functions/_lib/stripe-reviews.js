@@ -8,6 +8,7 @@ import { preconditionFetcher } from './firestore-precondition.js';
 import { CHECKOUT_KINDS, PAYMENT_REVIEW_COLLECTION, PORTAL_CHECKOUT_COLLECTION, STRIPE_API_VERSION, customerMoneyState, refundFollowUpId, stripeSecretKey } from './customer-payments.js';
 import { membershipAccount, membershipStorage, mirrorPatch } from './garage-guard-membership.js';
 import { manualCentsSince } from './money-ledger.js';
+import { customerMoneyTotals } from './money-core.js';
 
 /**
  * Manager view of the Stripe items the webhook could not settle on its own:
@@ -17,7 +18,10 @@ import { manualCentsSince } from './money-ledger.js';
  * reason: a tipped charge is never booked automatically) and
  * membership_reviews/{subscriptionId} (Garage Guard members without an exact
  * Hub customer link). Both collections are server-only; this view shows
- * managers only what they already see on jobs and customers.
+ * managers only what they already see on jobs and customers. It also lists,
+ * read-only, the jobs a card payment was recorded on above their total
+ * (overpaidJobs: paymentReviewRequired on the job, while money-core still
+ * counts it overpaid), so a balance paid twice is never left unseen.
  *
  * resolveStripeReview closes one open review in ONE commit: the review (its
  * revision), any membership link and account-job display mirror, a create-only
@@ -164,6 +168,25 @@ export function stripeReviewStorage(env, fetcher = firestoreFetch) {
       } while (token);
       return { rows, complete: true };
     },
+    /** Jobs a card payment was recorded on above their total (customer-payments.js paymentReviewRequired): one
+     * equality query (Firestore's automatic single-field index), at most `limit`; complete:false when more exist. */
+    async flaggedJobs(limit = REVIEW_LIST_LIMIT) {
+      const where = { fieldFilter: { field: { fieldPath: 'paymentReviewRequired' }, op: 'EQUAL', value: { booleanValue: true } } };
+      let response;
+      try { response = await fetcher(env, `${BASE}:runQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(20000), body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'jobs' }], where, limit: limit + 1 } }) }); }
+      catch { throw fail('storage_unavailable', 'Stripe reviews could not be loaded. Retry.'); }
+      if (!response.ok) throw fail('storage_unavailable', 'Stripe reviews could not be loaded. Retry.');
+      const results = await response.json().catch(() => null);
+      // runQuery always answers with at least a readTime; an empty array is not an empty result.
+      if (!Array.isArray(results) || results.some(result => !plain(result)) || !results.some(result => result.document !== undefined || typeof result.readTime === 'string' && result.readTime)) throw fail('storage_incomplete', 'Jobs paid above their total could not be verified. Retry.');
+      const rows = [], ids = new Set();
+      for (const { document } of results.filter(result => result.document !== undefined)) {
+        const id = String(document?.name || '').split('/documents/jobs/')[1] || '';
+        if (!id || id.includes('/') || ids.has(id) || typeof document.updateTime !== 'string' || !document.updateTime) throw fail('storage_incomplete', 'A job paid above its total had no verifiable identity. Retry.');
+        ids.add(id); rows.push({ ...decodeFirestoreFields(document.fields || {}), id, revision: document.updateTime });
+      }
+      return { rows: rows.slice(0, limit), complete: rows.length <= limit };
+    },
   };
 }
 
@@ -232,10 +255,23 @@ async function candidateCustomers(store, rows) {
   return found;
 }
 
-/** Open Stripe reviews for managers. `now` is the injected read time (a Date). */
-export async function stripeReviewOverview(store, actor, now = new Date(), { checkoutBlock = false } = {}) {
+// A job a card payment was recorded on above its total (paymentReviewRequired, written when a charge is booked) while it
+// is still paid above its total in the money totals mode, or its money cannot be read (overpaidCents null). Booking such
+// a charge never drops money: the extra is on the job until a person refunds it or the total changes, and the row then
+// leaves the list on its own. Private and non-job records are never listed.
+function overpaidJob(job, unified) {
+  if (!safeId(job?.id) || job.recordType || job.paymentReviewRequired !== true) return null;
+  const totals = customerMoneyTotals(job, { unified });
+  if (totals.overpaidCents === 0) return null;
+  return { jobId: job.id, customer: text(job.customer, 200), date: text(job.date, 10), totalCents: totals.totalCents, appliedCents: totals.appliedCents, overpaidCents: totals.overpaidCents };
+}
+
+/** Open Stripe reviews for managers. `now` is the injected read time (a Date). totalsMode is MONEY_UNIFIED_TOTALS. */
+export async function stripeReviewOverview(store, actor, now = new Date(), { checkoutBlock = false, totalsMode = 'off' } = {}) {
   requireDispatcher(actor);
-  const [payments, memberships] = await Promise.all([store.list(PAYMENT_REVIEW_COLLECTION), store.list(MEMBERSHIP_REVIEW_COLLECTION)]);
+  // overpaidJobs is null when the jobs could not be checked (shown as unchecked, never as none), without hiding the reviews.
+  const [payments, memberships, flagged] = await Promise.all([store.list(PAYMENT_REVIEW_COLLECTION), store.list(MEMBERSHIP_REVIEW_COLLECTION), typeof store.flaggedJobs === 'function' ? store.flaggedJobs().catch(() => null) : null]);
+  const overpaidJobs = flagged ? flagged.rows.map(job => overpaidJob(job, totalsMode === 'unified')).filter(Boolean).sort((a, b) => a.jobId.localeCompare(b.jobId)) : null;
   const open = rows => rows.filter(row => row.status === 'open').sort(newestFirst);
   const jobs = new Map(), paymentReviews = [];
   for (const row of open(payments.rows)) {
@@ -249,10 +285,10 @@ export async function stripeReviewOverview(store, actor, now = new Date(), { che
   return {
     ok: true, authority: 'employee_hub',
     counts: { paymentReviews: paymentReviews.length, membershipReviews: membershipReviews.length },
-    paymentReviews, membershipReviews,
+    paymentReviews, membershipReviews, overpaidJobs,
     viewer: { canRecordRefund: canRecordRefund(actor) }, checkoutBlock: checkoutBlock === true,
     reasons: { refund: REFUND_REASONS, dismiss: DISMISS_REASONS },
-    coverage: { complete: payments.complete && memberships.complete, asOf: now.toISOString() },
+    coverage: { complete: payments.complete && memberships.complete && flagged?.complete !== false, asOf: now.toISOString() },
   };
 }
 

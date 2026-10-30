@@ -29,22 +29,31 @@ function failure(error) {
 }
 
 // A portal card checkout sized before a change_order.void would still charge
-// the voided amount: close it (the portal opens a new one for the new
-// balance). Without a Stripe key no portal checkout can have opened.
+// the voided amount, and one opened before a deposit or payment was recorded
+// here by hand would charge that money again: close it (the portal opens a new
+// one for what is due now). Without a Stripe key no portal checkout can have opened.
 async function closeStaleCheckout(env, jobId) {
   const secret = stripeSecretKey(env);
   return secret ? expireStaleCustomerCheckout(env, secret, jobId) : 'none';
 }
+const CHECKOUT_ACTIONS = new Set(['change_order.void', 'deposit.record_offline', 'payment.record_offline']);
 
-// Best effort after the void is saved: staff are told when a checkout for the
-// old balance may still be paid, and never lose the saved void over it.
-async function checkoutWarnings(checkouts, env, jobId) {
+// Best effort after the change is saved: staff are told when a checkout opened
+// before it may still be paid, and never lose the saved change over it. A card
+// payment that puts the job above its total is still recorded, and the job is
+// listed in Review queues (stripe-reviews.js overpaidJobs).
+async function checkoutWarnings(checkouts, env, jobId, action) {
   let outcome = 'unknown';
   try { outcome = await checkouts(env, jobId); } catch { /* reported below */ }
-  if (outcome === 'expired') return [{ code: 'checkout_closed', message: 'The customer’s open card checkout for the old balance was closed; the portal opens a new one for the new balance.' }];
-  if (outcome === 'paid') return [{ code: 'checkout_paid', message: 'The customer already paid a card checkout opened for the old balance. It is recorded when Stripe confirms it; refund what exceeds the new total.' }];
   if (outcome === 'none' || outcome === 'current') return [];
-  return [{ code: 'checkout_open', message: 'A card checkout opened before this void may still be open for the old balance. If the customer pays it, the extra payment is flagged for review; refund the difference.' }];
+  if (action === 'change_order.void') {
+    if (outcome === 'expired') return [{ code: 'checkout_closed', message: 'The customer’s open card checkout for the old balance was closed; the portal opens a new one for the new balance.' }];
+    if (outcome === 'paid') return [{ code: 'checkout_paid', message: 'The customer already paid a card checkout opened for the old balance. It is recorded when Stripe confirms it; refund what exceeds the new total.' }];
+    return [{ code: 'checkout_open', message: 'A card checkout opened before this void may still be open for the old balance. If the customer pays it, the job is listed in Review queues as paid above its total; refund the difference.' }];
+  }
+  if (outcome === 'expired') return [{ code: 'checkout_closed', message: 'The customer’s open card checkout was closed so it cannot charge this money again; the portal opens a new one for anything still due.' }];
+  if (outcome === 'paid') return [{ code: 'checkout_paid', message: 'The customer already paid a card checkout opened before this was recorded. It is added when Stripe confirms it; if that puts the job above its total, the job is listed in Review queues: refund the extra.' }];
+  return [{ code: 'checkout_open', message: 'A card checkout the customer opened before this was recorded may still be open. If they pay it, it is added on top, and a job paid above its total is listed in Review queues: refund the extra.' }];
 }
 
 // Reads take the Date; mutations take its ISO string. Writes stay off unless
@@ -52,7 +61,7 @@ async function checkoutWarnings(checkouts, env, jobId) {
 // Labor dollars are owner-only (EGC_STAFF_PAY_OWNER_ONLY): laborCostViewer resolves
 // that from the signed session, and anyone else gets laborCents null (never 0).
 // jobberGuard is the FUN-32 billing hold on invoice.issue (EGC_JOBBER_GUARD_BILLING); checkouts closes a portal card
-// checkout sized before a change_order.void (CHANGE-ORDERS).
+// checkout sized before a change_order.void (CHANGE-ORDERS) or a deposit or payment recorded by hand.
 export function moneyHandlers({ session = getHubSession, storage = moneyStorage, now = () => new Date(), jobberGuard = (store, env, input, at) => jobberGuardInvoiceHolds(store, env, input, at, { receipts: MONEY_RECEIPTS }), checkouts = closeStaleCheckout } = {}) {
   return {
     async get({ request, env }) {
@@ -89,7 +98,7 @@ export function moneyHandlers({ session = getHubSession, storage = moneyStorage,
         const store = storage(env), at = now().toISOString(), guard = await jobberGuard(store, env, input, at);
         if (guard.holds.length) return reply(409, { ok: false, code: 'money_jobber_billing_hold', error: jobberGuardBillingError(guard.holds), details: { checkedAt: guard.state.checkedAt, findings: guard.holds.slice(0, 10).map(jobberGuardHoldView) } });
         const result = await mutateMoney(store, actor, input, at);
-        if (input.action === 'change_order.void') result.warnings = [...(result.warnings || []), ...await checkoutWarnings(checkouts, env, input.jobId)];
+        if (CHECKOUT_ACTIONS.has(input.action)) result.warnings = [...(result.warnings || []), ...await checkoutWarnings(checkouts, env, input.jobId, input.action)];
         return reply(200, result);
       } catch (error) { return failure(error); }
     },

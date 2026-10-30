@@ -84,12 +84,16 @@ function rows(results){
   const out=[],value=key=>results[key]?.status==='fulfilled'?results[key].value:null,failed=key=>results[key]?.status==='rejected'&&![401,403].includes(Number(results[key].reason?.status));
   const stripe=value('stripe'),sends=value('sends'),insurance=value('insurance');
   if(stripe&&Array.isArray(stripe.paymentReviews)&&stripe.paymentReviews.length)out.push([plural(stripe.paymentReviews.length,'card payment is','card payments are')+' held for review',paymentCopy(stripe.paymentReviews),'reviews',stripe.paymentReviews.length]);
+  // Jobs a card payment was recorded on above their total (a balance paid twice): the extra is refunded or the job corrected.
+  const overpaid=stripe&&Array.isArray(stripe.overpaidJobs)?stripe.overpaidJobs.length:0;
+  if(overpaid)out.push([plural(overpaid,'job is','jobs are')+' paid above the total','A card payment was recorded on top of money already on '+(overpaid===1?'the job':'each job')+'. Refund the extra in Stripe or correct the job.','reviews',overpaid]);
   if(stripe&&Array.isArray(stripe.membershipReviews)&&stripe.membershipReviews.length)out.push([plural(stripe.membershipReviews.length,'Garage Guard member needs','Garage Guard members need')+' a customer link','Choose the matching Hub customer or close the review.','reviews',stripe.membershipReviews.length]);
   // A send still inside its delivery window may yet reach HighLevel; it is not waiting for a person.
   const unknown=sends&&Array.isArray(sends.sends)?sends.sends.filter(row=>row?.inFlight!==true).length:0;
   if(unknown)out.push([plural(unknown,'message has','messages have')+' an unknown outcome','Check HighLevel, then mark each delivered or not delivered. Nothing is resent while its outcome is unknown.','reviews',unknown]);
   if(insurance?.insurance&&INSURANCE[insurance.insurance.state])out.push([INSURANCE[insurance.insurance.state],insurance.insurance.state==='expiring_soon'?'Upload the renewed certificate before it lapses so customers can keep downloading it.':'Customers cannot download it from their portal until a current certificate is uploaded.','settings',1]);
-  if(['stripe','sends','insurance'].some(failed))out.push(['Review queues could not be checked','Open Review queues to retry. Nothing is shown as clear until it loads.','reviews',0]);
+  // Jobs paid above their total that could not be checked (overpaidJobs null) are never shown as clear either.
+  if(['stripe','sends','insurance'].some(failed)||stripe?.overpaidJobs===null)out.push(['Review queues could not be checked','Open Review queues to retry. Nothing is shown as clear until it loads.','reviews',0]);
   return out;
 }
 function render(){

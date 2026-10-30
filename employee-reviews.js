@@ -26,7 +26,7 @@ const plural=(count,word)=>count+' '+word+(count===1?'':'s');
 const list=value=>Array.isArray(value)?value:null;
 // Anything but the documented shape is "unverified", never an empty queue.
 const VALID={
-  stripe:data=>Boolean(list(data.paymentReviews)&&list(data.membershipReviews)&&data.coverage&&typeof data.coverage.complete==='boolean'&&data.paymentReviews.every(row=>typeof row.sessionId==='string'&&typeof row.revision==='string')&&data.membershipReviews.every(row=>typeof row.subscriptionId==='string'&&typeof row.revision==='string'&&list(row.candidates))),
+  stripe:data=>Boolean(list(data.paymentReviews)&&list(data.membershipReviews)&&data.coverage&&typeof data.coverage.complete==='boolean'&&data.paymentReviews.every(row=>typeof row.sessionId==='string'&&typeof row.revision==='string')&&(data.overpaidJobs==null||list(data.overpaidJobs)&&data.overpaidJobs.every(row=>typeof row?.jobId==='string'))&&data.membershipReviews.every(row=>typeof row.subscriptionId==='string'&&typeof row.revision==='string'&&list(row.candidates))),
   sends:data=>Boolean(list(data.sends)&&data.coverage&&typeof data.coverage.complete==='boolean'&&data.sends.every(row=>typeof row.id==='string'&&typeof row.revision==='string')&&(data.lateResults===undefined||list(data.lateResults)&&data.lateResults.every(row=>typeof row.id==='string'&&row.lateResult&&typeof row.lateResult==='object'))),
   insurance:data=>Boolean(data.insurance&&STATES.includes(data.insurance.state)),
 };
@@ -371,6 +371,19 @@ function paymentCard(row,canRefund){
     canReconcile||canRefund?h('div',{class:'hub-actions rv-actions'},canReconcile?button('Mark reconciled',()=>reconcilePayment(row),refunded?'':'primary'):null,canRefund?button('Record refund',()=>refundPayment(row),refunded?'primary':''):null):null,
     canRefund?null:h('p',{class:'rv-muted'},refunded?'Stripe shows a refund on this charge, so only the owner settles it by recording the refund.':'Only the owner records refunds.'));
 }
+// A job a card payment was recorded on above its total (read-only): the extra stays on the job until a person refunds it
+// or corrects the job, and the job then leaves this list on its own.
+function overpaidCard(row){
+  const {h,money}=kit(),known=whole(row.overpaidCents);
+  return h('article',{class:'hub-card rv-card'},
+    h('div',{class:'rv-card-head'},h('h3',{},(known?money(row.overpaidCents)+' over':'Amount unreadable')+' · '+(row.customer||'Customer not named')),h('span',{class:'rv-badge warn'},'Paid above total')),
+    h('p',{class:'rv-reason'},known?'A card payment was recorded on top of money already on this job, for example a check recorded while the customer’s card checkout was still open.':'A card payment was recorded above this job’s total, and its money cannot be read now.'),
+    h('dl',{class:'rv-facts'},
+      h('div',{},h('dt',{},'Job'),h('dd',{},row.jobId)),
+      h('div',{},h('dt',{},'Job date'),h('dd',{},dateLabel(row.date)||'Unknown')),
+      h('div',{},h('dt',{},'Paid'),h('dd',{},whole(row.appliedCents)&&whole(row.totalCents)?money(row.appliedCents)+' of '+money(row.totalCents):'Unknown'))),
+    h('p',{class:'rv-muted'},'Refund the extra in Stripe, or correct the job’s total or payments under Estimates & payments. The job leaves this list once it is no longer paid above its total.'));
+}
 function memberCard(row){
   const {h,button}=kit(),name=row.customerName||row.customerEmail||row.phone||row.subscriptionId;
   const candidates=row.candidates.length?h('ul',{class:'rv-candidates','aria-label':'Matching customers'},row.candidates.map(candidate=>h('li',{},
@@ -412,10 +425,13 @@ function stripeSections(){
   const partial=data.coverage.complete?null:h('p',{class:'hub-notice warning'},'Showing the first reviews only; more are waiting. Resolve these, then refresh.');
   const payments=data.paymentReviews.length?h('div',{class:'rv-list'},data.paymentReviews.map(row=>paymentCard(row,data.viewer?.canRecordRefund===true))):h('p',{class:'rv-empty'},'No card payments are held for review.');
   const members=data.membershipReviews.length?h('div',{class:'rv-list'},data.membershipReviews.map(memberCard)):h('p',{class:'rv-empty'},'Every Garage Guard member is linked or closed.');
+  // null: the jobs could not be checked, never shown as none; absent: a server from before this list.
+  const overpaid=data.overpaidJobs===null?h('p',{class:'hub-notice warning',role:'alert'},'Jobs paid above their total could not be checked. Refresh to try again.'):list(data.overpaidJobs)?(data.overpaidJobs.length?h('div',{class:'rv-list'},data.overpaidJobs.map(overpaidCard)):h('p',{class:'rv-empty'},'No job is paid above its total.')):null;
   return[
     section('payments','Held card payments',data.paymentReviews.length,[partial,payments],paymentNote(data)),
+    overpaid?section('overpaid','Jobs paid above their total',list(data.overpaidJobs)?data.overpaidJobs.length:null,overpaid):null,
     section('members','Garage Guard member matches',data.membershipReviews.length,members),
-  ];
+  ].filter(Boolean);
 }
 // The block flag stops new checkouts on every job listed; a held tipped charge not on its job stops them while customer
 // tips are on, and turning tips off lifts that stop, so the owner resolves those first.
@@ -437,6 +453,7 @@ function sendSection(){
 function summary(){
   const {h}=kit(),stripe=S.data.stripe,sends=S.data.sends,parts=[];
   if(stripe)parts.push(plural(stripe.paymentReviews.length,'held payment'),stripe.membershipReviews.length+' member match'+(stripe.membershipReviews.length===1?'':'es'));
+  if(stripe&&list(stripe.overpaidJobs)&&stripe.overpaidJobs.length)parts.push(plural(stripe.overpaidJobs.length,'job')+' paid above total');
   if(sends)parts.push(plural(sends.sends.length,'unconfirmed message'));
   return parts.length?h('p',{class:'rv-summary',role:'status'},parts.join(' · ')):null;
 }
