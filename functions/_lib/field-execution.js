@@ -67,11 +67,14 @@ export function fieldChecklist(job) {
 
 // options.purchaseDetails (EGC_JOB_MATERIALS, /api/field-jobs): a buy item's store, SKU and product page (crewMaterialFields).
 export function fieldMaterials(job, { purchaseDetails = false } = {}) {
+  // FIX-CREW-PRICE-LEAK: on a signed walkthrough's job a material's name is shown without amounts wherever crew read it
+  // (the list, what is missing at completion, the history entry of a state change).
+  const crew = signedBriefJob(job) ? stripCrewMoney : value => value;
   return list(job.materials || job.requiredMaterials).slice(0, 100).map((item, index) => {
     const id = fieldText(item?.id, 100) || `material-${index}`;
     const state = job.fieldExecution?.materialStates?.[id];
     // WP14c: a structured material adds its buy/stock source and purchase state (job-materials.js); a legacy one projects as before.
-    return { id, name: fieldText(typeof item === 'string' ? item : item?.name, 200), quantity: typeof item?.quantity === 'number' && Number.isFinite(item.quantity) ? item.quantity : null, ...crewMaterialFields(item, { purchaseDetails }), state: ['required', 'loaded', 'used', 'missing'].includes(state?.state) ? state.state : 'required', updatedAt: state?.at || null, updatedBy: state?.actorName || state?.actorId || null };
+    return { id, name: crew(fieldText(typeof item === 'string' ? item : item?.name, 200)), quantity: typeof item?.quantity === 'number' && Number.isFinite(item.quantity) ? item.quantity : null, ...crewMaterialFields(item, { purchaseDetails }), state: ['required', 'loaded', 'used', 'missing'].includes(state?.state) ? state.state : 'required', updatedAt: state?.at || null, updatedBy: state?.actorName || state?.actorId || null };
   }).filter(item => item.name);
 }
 
@@ -100,8 +103,10 @@ export function fieldEventProjection(event, manager = false) {
 export function fieldAttention(job, manager = false) {
   const issue = job.fieldExecution?.attention;
   if (!issue || !manager && issue.visibility !== 'crew') return null;
+  // A crew-visible issue on a signed walkthrough's job reads without amounts, for everyone who sees it.
+  const crew = issue.visibility === 'crew' && signedBriefJob(job) ? stripCrewMoney : value => value;
   const additions = Number.isSafeInteger(issue.additions) && issue.additions > 0 ? `~${issue.additions}` : '';
-  return { id: `${issue.requestId || `${issue.at || ''}:${issue.actorId || ''}`}${additions}`, status: issue.status === 'resolved' ? 'resolved' : 'open', reason: fieldText(issue.reason), reportedAt: issue.at || null, reportedBy: fieldText(issue.actorName || issue.actorId, 200), visibility: issue.visibility === 'crew' ? 'crew' : 'management', resolvedAt: issue.resolvedAt || null, resolvedBy: fieldText(issue.resolvedByName || issue.resolvedBy, 200), resolution: fieldText(issue.resolution), canResolve: manager && issue.status !== 'resolved' };
+  return { id: `${issue.requestId || `${issue.at || ''}:${issue.actorId || ''}`}${additions}`, status: issue.status === 'resolved' ? 'resolved' : 'open', reason: crew(fieldText(issue.reason)), reportedAt: issue.at || null, reportedBy: fieldText(issue.actorName || issue.actorId, 200), visibility: issue.visibility === 'crew' ? 'crew' : 'management', resolvedAt: issue.resolvedAt || null, resolvedBy: fieldText(issue.resolvedByName || issue.resolvedBy, 200), resolution: crew(fieldText(issue.resolution)), canResolve: manager && issue.status !== 'resolved' };
 }
 
 const ownsSegment = (row, viewer) => Boolean(viewer) && row.assignedCrew.some(id => assignmentKey(id) === viewer);
@@ -167,20 +172,21 @@ export function fieldJobProjection(job, events = [], options = {}) {
   const state = job.fieldExecution || {}, stage = fieldStage(job), frozen = closed(job);
   const crewNames = options.crewNames || {};
   // FIX-CREW-PRICE-LEAK: a signed walkthrough's brief is shown without the quoted prices it
-  // carried before the fix (jobs saved earlier, and recurring visits copied from them).
+  // carried before the fix (jobs saved earlier, and recurring visits copied from them), and so is every other text crew
+  // read on it: its service, status reasons, segment notes, equipment, photo notes, crew history and completion notes.
   const signed = signedBriefJob(job), crew = value => !signed ? value : Array.isArray(value) ? value.map(stripCrewMoney).filter(Boolean) : stripCrewMoney(value);
   return {
     id: job.id, expectedRevision: job.__updateTime || job.revision || '', type: 'job',
     customer: fieldText(job.customer, 200), phone: fieldText(job.phone, 100), address: fieldText(job.address, 1000),
     date: fieldText(view.date, 10), time: fieldText(view.time, 8), endDate: fieldText(view.endDate || view.date, 10), endTime: fieldText(view.endTime, 8),
     startAt: fieldText(view.startAt, 40), endAt: fieldText(view.endAt, 40), arrivalWindow: fieldText(job.arrivalWindow || instructions.arrivalWindow, 200),
-    status: stage, fieldStatus: fieldActivity(job), statusReason: fieldActivity(job) !== stage ? fieldText(state.activityReason, 1000) : '', serviceType: fieldText(job.serviceType, 300),
+    status: stage, fieldStatus: fieldActivity(job), statusReason: fieldActivity(job) !== stage ? crew(fieldText(state.activityReason, 1000)) : '', serviceType: crew(fieldText(job.serviceType, 300)),
     assignedCrew: jobCrewNames(view), crewMembers: jobCrewNames(view).map(id => ({ id, name: crewNames[id.toLowerCase()] || id })),
     crewLead: fieldText(view.crewLead, 120), crewId: fieldText(view.crewId, 180), crewName: fieldText(view === job ? options.crewName || job.crewName : names[view.crewId], 150),
     vehicleId: fieldText(view.vehicleId, 180), vehicleName: fieldText(view === job ? options.vehicleName || job.vehicleName : names[view.vehicleId], 150),
     ...(segments ? { assignmentSegments: segments.map(row => ({ id: row.segmentId, date: fieldText(row.date, 10), time: fieldText(row.time, 8), endDate: fieldText(row.endDate, 10), endTime: fieldText(row.endTime, 8),
       startAt: fieldText(row.startAt, 40), endAt: fieldText(row.endAt, 40), crewMembers: row.assignedCrew.map(id => ({ id, name: crewNames[id.toLowerCase()] || id })), crewLead: fieldText(row.crewLead, 120),
-      vehicleId: fieldText(row.vehicleId, 180), vehicleName: fieldText(names[row.vehicleId], 150), notes: fieldText(row.segmentNotes, 2000) })) } : {}),
+      vehicleId: fieldText(row.vehicleId, 180), vehicleName: fieldText(names[row.vehicleId], 150), notes: crew(fieldText(row.segmentNotes, 2000)) })) } : {}),
     crewNeeded: Number(job.crewNeeded || job.requiredCrewSize || job.crewSize || 1),
     scope: crew(fieldText(typeof job.operationalScope?.text === 'string' ? job.operationalScope.text : instructionText || instructions.operationalScope || (typeof job.scope === 'string' ? job.scope : '') || job.scopeOfWork, 20000)),
     customerGoal: crew(fieldText(instructions.customerGoal || job.discovery?.success, 4000)),
@@ -195,13 +201,14 @@ export function fieldJobProjection(job, events = [], options = {}) {
     // EGC_WALKTHROUGH_NOTES: the walkthrough notes the estimator confirmed for the crew (never the transcript), cleaned again.
     visitNotes: crewVisitNotes(job.visitNotes),
     customerInstructions: crew(fieldText(job.customerInstructions || instructions.customerNotes || job.customerNotesSummary)),
-    requiredEquipment: textList(job.requiredEquipment || logistics.requiredEquipment), materials: fieldMaterials(job, { purchaseDetails: options.purchaseDetails === true }),
+    requiredEquipment: crew(textList(job.requiredEquipment || logistics.requiredEquipment)), materials: fieldMaterials(job, { purchaseDetails: options.purchaseDetails === true }),
     checklist: fieldChecklist(job),
-    photos: fieldPhotos(job).map(photo => ({ id: photo.id, category: photo.category, caption: fieldText(photo.caption, 500), ...(photo.category === 'storage' ? { bin: fieldText(photo.bin, 24), items: fieldText(photo.items, 500) } : {}), createdAt: photo.createdAt, actorName: photo.actorName, bytes: photo.bytes, url: `/api/field-jobs?jobId=${encodeURIComponent(job.id)}&photoId=${encodeURIComponent(photo.id)}` })),
-    history: events.map(event => fieldEventProjection(event, options.manager)).filter(Boolean).map(event => signed ? { ...event, summary: stripCrewMoney(event.summary) } : event),
+    photos: fieldPhotos(job).map(photo => ({ id: photo.id, category: photo.category, caption: crew(fieldText(photo.caption, 500)), ...(photo.category === 'storage' ? { bin: fieldText(photo.bin, 24), items: crew(fieldText(photo.items, 500)) } : {}), createdAt: photo.createdAt, actorName: photo.actorName, bytes: photo.bytes, url: `/api/field-jobs?jobId=${encodeURIComponent(job.id)}&photoId=${encodeURIComponent(photo.id)}` })),
+    // A management-only note keeps its wording for the managers who alone read it.
+    history: events.map(event => fieldEventProjection(event, options.manager)).filter(Boolean).map(event => signed ? { ...event, summary: stripCrewMoney(event.summary), ...(event.visibility === 'crew' ? { body: stripCrewMoney(event.body) } : {}) } : event),
     attention: fieldAttention(job, options.manager === true), canAddManagementNote: options.manager === true,
     jobTime: fieldJobTime(job, options.now),
-    completion: state.completion ? { completedAt: state.completion.completedAt, completedBy: state.completion.actorName || state.completion.actorId, notes: fieldText(state.completion.notes), hasIssues: state.completion.hasIssues === true, issueNotes: fieldText(state.completion.issueNotes) } : null,
+    completion: state.completion ? { completedAt: state.completion.completedAt, completedBy: state.completion.actorName || state.completion.actorId, notes: crew(fieldText(state.completion.notes)), hasIssues: state.completion.hasIssues === true, issueNotes: crew(fieldText(state.completion.issueNotes)) } : null,
     completionSync: job.fieldCompletionSync ? { status: job.fieldCompletionSync.status, message: fieldText(job.fieldCompletionSync.message, 600), attemptedAt: job.fieldCompletionSync.attemptedAt || null, syncedAt: job.fieldCompletionSync.syncedAt || null, canRetry: options.manager === true && job.fieldCompletionSync.status !== 'synced' } : null,
     startedAt: job.startedAt || null, completedAt: job.completedAt || null,
     completionMissing: frozen ? [] : fieldCompletionMissing(job),

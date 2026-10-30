@@ -3,6 +3,7 @@ import { segmented, jobSegments, segmentDays } from './dispatch-segments.js';
 import { addDays, denverToday, occupiedDays, validDate } from './dispatch-time.js';
 import { advanceFieldTime, fieldJobTime } from './field-execution-time.js';
 import { fieldCommand, fieldFailure, fieldStage, fieldTapStamps, fieldText } from './field-execution.js';
+import { signedBriefJob, stripCrewMoney } from './crew-money.js';
 
 /** Multi-day visits (FIELD-MULTIDAY). With FIELD_MULTIDAY_VISITS=true a job
  * keeps one visit per Denver day in the optional map
@@ -143,11 +144,13 @@ export function fieldVisitCommand(job, actor, input, now = new Date().toISOStrin
 export function fieldVisitProjection(job, { today, manager = false, viewer = '', assignedToday = false } = {}) {
   const stage = fieldStage(job), days = fieldJobDays(job), finalDay = days.at(-1) || '', multiDay = days.length > 1, visits = visitsOf(job);
   const scheduled = manager ? days : viewerDays(job, viewer), working = manager || assignedToday === true;
+  // A signed walkthrough's job shows each day's notes without amounts, as its history does (field-execution.js).
+  const crew = signedBriefJob(job) ? stripCrewMoney : value => value;
   const dates = [...new Set([...scheduled, ...Object.keys(visits).filter(date => validDate(date) && readable(visits[date]))])].sort().slice(-VISIT_LIMIT);
   const entries = dates.map(date => {
     const visit = readable(visits[date]);
-    return { date, scheduled: scheduled.includes(date), status: visit?.status || 'not_started', startedAt: instantText(visit?.startedAt), endedAt: instantText(visit?.endedAt), endedBy: fieldText(visit?.endedByName || visit?.endedBy, 200), notes: fieldText(visit?.notes, 4000),
-      endedLate: visit?.endedLate === true, reopenedAt: instantText(visit?.reopenedAt), earlierEnds: closuresOf(visit).map(end => ({ endedAt: instantText(end.endedAt), endedBy: fieldText(end.endedByName || end.endedBy, 200), notes: fieldText(end.notes, 1000) })) };
+    return { date, scheduled: scheduled.includes(date), status: visit?.status || 'not_started', startedAt: instantText(visit?.startedAt), endedAt: instantText(visit?.endedAt), endedBy: fieldText(visit?.endedByName || visit?.endedBy, 200), notes: crew(fieldText(visit?.notes, 4000)),
+      endedLate: visit?.endedLate === true, reopenedAt: instantText(visit?.reopenedAt), earlierEnds: closuresOf(visit).map(end => ({ endedAt: instantText(end.endedAt), endedBy: fieldText(end.endedByName || end.endedBy, 200), notes: crew(fieldText(end.notes, 1000)) })) };
   });
   const beforeFinal = multiDay && today < finalDay, todayVisit = readable(visits[today]);
   return { today, finalDay, multiDay, assignedToday: working, days: entries,
