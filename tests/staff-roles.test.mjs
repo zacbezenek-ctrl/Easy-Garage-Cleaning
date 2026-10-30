@@ -18,22 +18,25 @@ import { staffRolesHandlers } from '../functions/api/staff-roles.js';
 import { staffDirectoryHandlers } from '../functions/api/staff-directory.js';
 import { vaultFirestore, staffEnv, cookieFor, seedAccount, login, jsonRequest, PASSWORD } from './helpers/vault-fixture.mjs';
 
-const MANAGER = ['dispatch.write', 'time.approve', 'customer.send', 'followups.own', 'quotes.author', 'mcp.write', 'b2b.manage'];
+// OFFICE (owner request 2026-10-30): quotes.removal (the Hub's Photo quote) joins the manager's list after quotes.author.
+const MANAGER = ['dispatch.write', 'time.approve', 'customer.send', 'followups.own', 'quotes.author', 'quotes.removal', 'mcp.write', 'b2b.manage'];
 // Today's hard-coded checks, independent of staff-roles.js. requireDispatcher now
 // delegates to can(session, 'dispatch.write'), so the dispatcher rule is written out
 // here and requireDispatcher is checked against it below.
 const dispatcher = session => hasBusinessAccess(session) && ['owner', 'manager'].includes(session.role);
 const requiresDispatcher = session => { try { requireDispatcher(session); return true; } catch { return false; } };
-const legacy = (session, capability) => OWNER_CAPABILITIES.includes(capability) ? isHubOwner(session) : capability === 'dispatch.write' ? dispatcher(session) : hasBusinessAccess(session);
+// OFFICE: quotes.removal follows the dispatcher rule (only a dispatcher authors a quote in the Photo quote screen).
+const legacy = (session, capability) => OWNER_CAPABILITIES.includes(capability) ? isHubOwner(session) : ['dispatch.write', 'quotes.removal'].includes(capability) ? dispatcher(session) : hasBusinessAccess(session);
 
 test('capability matrix: roles map only to known capabilities and owner-only capabilities stay with the owner role', () => {
-  // TEAM-LEAD (owner decision D6, 2026-10-17) adds team_lead between manager and crew_lead.
-  assert.deepEqual(STAFF_ROLES, ['owner', 'manager', 'team_lead', 'crew_lead', 'crew', 'sales', 'phone']);
+  // TEAM-LEAD (owner decision D6, 2026-10-17) adds team_lead between manager and crew_lead; OFFICE (owner request
+  // 2026-10-30) adds office last.
+  assert.deepEqual(STAFF_ROLES, ['owner', 'manager', 'team_lead', 'crew_lead', 'crew', 'sales', 'phone', 'office']);
   assert.deepEqual(OWNER_CAPABILITIES, ['pay.manage', 'accounts.approve', 'money.refund', 'money.charge_stored_card', 'catalog.manage', 'settings.manage']);
   assert.deepEqual(Object.keys(ROLE_CAPABILITIES), STAFF_ROLES);
   assert.deepEqual(ROLE_CAPABILITIES, {
     owner: STAFF_CAPABILITIES, manager: MANAGER, team_lead: [], crew_lead: [], crew: [],
-    sales: ['customer.send', 'followups.own', 'quotes.author'], phone: ['customer.send', 'followups.own'],
+    sales: ['customer.send', 'followups.own', 'quotes.author'], phone: ['customer.send', 'followups.own'], office: ['customer.send', 'quotes.removal'],
   });
   for (const [role, capabilities] of Object.entries(ROLE_CAPABILITIES)) {
     assert.ok(capabilities.every(capability => STAFF_CAPABILITIES.includes(capability)), role);
@@ -66,7 +69,7 @@ test('with EGC_STAFF_ROLE_PERMISSIONS off, can() reproduces today\'s access for 
   const caps = Object.fromEntries(sessions.map(session => [session.user, staffCapabilities(session, env)]));
   assert.deepEqual(caps.ZacB, [...STAFF_CAPABILITIES]);
   assert.deepEqual(caps.TylerG, MANAGER);
-  assert.deepEqual(caps.AlexK, MANAGER.filter(capability => capability !== 'dispatch.write'), 'business access without a dispatcher role');
+  assert.deepEqual(caps.AlexK, MANAGER.filter(capability => !['dispatch.write', 'quotes.removal'].includes(capability)), 'business access without a dispatcher role');
   for (const user of ['Crew.Static', 'Crew.Account', 'Sales.Account', 'Forged.Sales']) assert.deepEqual(caps[user], [], user);
   assert.equal(can(sessions[0], 'time.approve'), true, 'env defaults to legacy');
 });
@@ -224,7 +227,7 @@ test('team_lead: schedule.view with or without any role flag, nothing else, and 
   assert.deepEqual(VIEW_CAPABILITIES, ['schedule.view']);
   assert.deepEqual(Object.keys(ROLE_ACCESS_CAPABILITIES), STAFF_ROLES);
   assert.deepEqual(Object.keys(ROLE_VIEW_CAPABILITIES), STAFF_ROLES);
-  assert.deepEqual(Object.fromEntries(STAFF_ROLES.map(role => [role, ROLE_VIEW_CAPABILITIES[role].includes('schedule.view')])), { owner: true, manager: true, team_lead: true, crew_lead: false, crew: false, sales: false, phone: false });
+  assert.deepEqual(Object.fromEntries(STAFF_ROLES.map(role => [role, ROLE_VIEW_CAPABILITIES[role].includes('schedule.view')])), { owner: true, manager: true, team_lead: true, crew_lead: false, crew: false, sales: false, phone: false, office: false });
   assert.deepEqual(ROLE_ACCESS_CAPABILITIES.team_lead, []);
   assert.deepEqual(ROLE_ACCESS_CAPABILITIES.sales, ['schedule.book', 'walkthrough.perform'], 'sales keeps exactly its booking and walkthrough rights');
   const flagSets = [{}, PERMISSIONS, ACCESS, { EGC_STAFF_ROLE_ACCESS: 'TRUE' }, { EGC_STAFF_ROLE_ACCESS: '1' }, { EGC_STAFF_ROLE_ACCESS: 'false', EGC_STAFF_ROLE_PERMISSIONS: 'true' }];

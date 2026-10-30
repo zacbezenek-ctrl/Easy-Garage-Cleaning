@@ -42,7 +42,7 @@
 .st-chip{display:inline-flex;align-items:center;min-height:28px;padding:4px 10px;border-radius:999px;border:1px solid var(--st-line);background:#fff;font-size:13px;font-weight:600;max-width:100%}
 .st-chip.role-owner,.st-tag.role-owner{background:var(--st-navy);border-color:var(--st-navy);color:#fff}
 .st-chip.role-manager,.st-tag.role-manager{border-color:var(--st-blue);color:var(--st-blue)}
-.st-chip.role-phone,.st-chip.role-sales,.st-tag.role-phone,.st-tag.role-sales{border-color:var(--st-orange);color:var(--st-orange-ink)}
+.st-chip.role-phone,.st-chip.role-sales,.st-chip.role-office,.st-tag.role-phone,.st-tag.role-sales,.st-tag.role-office{border-color:var(--st-orange);color:var(--st-orange-ink)}
 .st-chip.level-lead{border-color:var(--st-green);color:var(--st-green)}
 .st-chip.retired{opacity:.65;text-decoration:line-through}
 .st-flag{border-left:3px solid var(--st-amber);background:#fffaf0;padding:6px 10px;font-size:13px;border-radius:4px}

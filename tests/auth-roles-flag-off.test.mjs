@@ -42,7 +42,12 @@ const STAFF_SETUP = [['"setup":{"needed":true},', ''], ['"setup":{"needed":false
 // instead of the record id, which can embed a CRM contact id (estimator-customer-access.js). Exactly that id is mapped
 // back to the one recorded for the harness's request; the masked hints and every other byte still compare.
 const ESTIMATOR_CUSTOMER_REF = ['"id":"cref_0b6f6c525a0d4d2e9a517d0e1c2a0008"', '"id":"customer_d0d9e25bbc37dfaa218c027d48844acc694ccb93"'];
-const withoutAdditions = body => [...CATALOG_ADDITIONS, SESSION_EXPIRY, ROLE_CHANGE_SESSIONS, ...STAFF_SETUP, ESTIMATOR_CUSTOMER_REF].reduce((text, [added, before]) => text.replaceAll(added, before), body);
+// OFFICE (owner request, 2026-10-30): the office role (staff-roles.js) joins the role catalog and the capability matrix every
+// staff kind reads, and quotes.removal (the Hub's Photo quote; a dispatcher's capability under the legacy checks) follows
+// quotes.author in the owner's and the managers' capability lists. Exactly those additions are taken back out; every
+// other byte still compares.
+const OFFICE_ADDITIONS = [['"quotes.author","quotes.removal",', '"quotes.author",'], ['"phone","office"]', '"phone"]'], [',"office":["customer.send","quotes.removal"]', '']];
+const withoutAdditions = body => [...CATALOG_ADDITIONS, SESSION_EXPIRY, ROLE_CHANGE_SESSIONS, ...STAFF_SETUP, ESTIMATOR_CUSTOMER_REF, ...OFFICE_ADDITIONS].reduce((text, [added, before]) => text.replaceAll(added, before), body);
 function render(matrix) {
   const bodies = new Map(), index = [];
   for (const [key, rows] of matrix) for (const [label, body] of rows) { bodies.set(sha(body), body); index.push(`${key} | ${label} | ${sha(body)}`); }

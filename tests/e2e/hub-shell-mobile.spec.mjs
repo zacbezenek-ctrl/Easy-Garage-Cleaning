@@ -2,9 +2,10 @@
 // with long-name fixtures, the clock at NOW and the Denver time zone (helpers/test.mjs and the config).
 import {test,expect,open,touch} from './helpers/test.mjs';
 import {PRIMARY_CONTROLS,assertNoHorizontalScroll,assertTapTargets} from './helpers/mobile-invariants.mjs';
-import {CREW,MANAGER,hubFixtures,hubReady} from './helpers/hub-fixture.mjs';
+import {CREW,MANAGER,OFFICE,hubFixtures,hubReady} from './helpers/hub-fixture.mjs';
 
-const VIEWS=[{name:'Command center',view:'today',profile:MANAGER},{name:'My day',view:'my_day',profile:CREW},{name:'Time approvals',view:'timesheets',profile:MANAGER},{name:'Team',view:'people',profile:MANAGER},{name:'Settings',view:'settings',profile:MANAGER}];
+// OFFICE: the office role's Photo quote screen (employee-photo-quote.js) opens on its customer step.
+const VIEWS=[{name:'Command center',view:'today',profile:MANAGER},{name:'My day',view:'my_day',profile:CREW},{name:'Time approvals',view:'timesheets',profile:MANAGER},{name:'Team',view:'people',profile:MANAGER},{name:'Settings',view:'settings',profile:MANAGER},{name:'Photo quote',view:'photo_quote',profile:OFFICE}];
 const SAMPLE=['.ops-button.primary','#ops-quick-clock','.ops-page-head .ops-eyebrow','.ops-page-head p','#ops-kicker','.ops-nav-label','.fg label','.btn-main','.login-logo .pill'];
 
 async function hub(page,view,profile){
@@ -40,6 +41,7 @@ const insetBox=(page,selector,close,submit)=>page.evaluate(([selector,close,subm
 for(const {name,view,profile} of VIEWS){
  test(`${name}: fits, keeps 44px targets and 16px fields, no public-stylesheet padding, AA contrast, honours the top inset`,async({page},info)=>{
   await hub(page,view,profile);
+  if(view==='photo_quote')await expect(page.locator('.pq h2')).toHaveText('Who is the customer?');
   await assertNoHorizontalScroll(page);
   if(touch(info))await assertTapTargets(page,PRIMARY_CONTROLS,{key:`${info.project.name} hub-shell:${name}`});
   expect(await smallFields(page),'fields under 16px').toEqual([]);

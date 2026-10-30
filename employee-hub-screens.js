@@ -11,6 +11,8 @@ const KIT={js:'employee-ui-kit.js',css:'employee-ui-kit.css',v:'20260929mobilehu
 // open_quotes (Open quotes) is the office's read-only board of sent, unapproved estimator quotes and close rates; its
 // API (/api/open-quotes) refuses anyone without business access, so the capability here only hides the nav.
 // my_commission (My commission, D6b) is the signed-in employee's own estimator 7%, read only; empty for anyone who sells no walkthroughs.
+// photo_quote (Photo quote, OFFICE) needs photo_quote: employee-suite.js adds it when the server's capability list holds
+// quotes.removal (the office role, managers and the owner); /api/quote-draft checks the removal-only rule again.
 // Capabilities come from the signed-in server profile (businessAccess and the owner flag), never a client staff list.
 // Group and label are plain text (the shell escapes them, so 'Estimates & payments' is fine); angle brackets,
 // backticks and control characters are refused. An invalid line is skipped with a console warning.
@@ -41,6 +43,7 @@ const MANIFEST=[
 {id:'walkthroughs',group:'RUN THE BUSINESS',label:'Walkthroughs',iconPath:'M9 4h6l1 2h3v14H5V6h3zM9 13l2 2 4-4',capability:'business',load:{js:'employee-walkthroughs.js',css:'employee-walkthroughs.css',v:'20260929hubready1'},module:'EGCWalkthroughs'},
 {id:'purchase_list',group:'RUN THE BUSINESS',label:'Purchase list',iconPath:'M3 4h2l2.4 11h11.2L21 7H6.2M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM18 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',capability:'business',load:{js:'employee-purchase-list.js',css:'employee-purchase-list.css',v:'20261017purchase'},module:'EGCPurchaseList'},
 {id:'customer_messages',group:'CLIENT WORK',label:'Customer messages',iconPath:'M4 5h16v11H9l-5 4zM8 9h8M8 12h5',capability:'customer_contact',load:{js:'employee-customer-messages.js',css:'employee-customer-messages.css',v:'20261021inbox4'},module:'EGCCustomerMessages'},
+{id:'photo_quote',group:'CLIENT WORK',label:'Photo quote',iconPath:'M4 7h4l2-2h4l2 2h4v12H4zM12 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',capability:'photo_quote',load:{js:'employee-photo-quote.js',css:'employee-photo-quote.css',v:'20261030photo1'},module:'EGCPhotoQuote'},
 ];
 // Home widgets, one line each: {id, label, homes:['today'|'my_day',...], capability:'business'|'owner' or crewVisible:true, quiet?:true, module:'EGCName', load?:{js, css, v}}.
 // employee-suite.js renders one #ops-home-widgets node on the Command center (today) and on My day. mountHome() gives each

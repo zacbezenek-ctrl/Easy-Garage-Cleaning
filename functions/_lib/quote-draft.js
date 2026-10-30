@@ -23,6 +23,7 @@ import { quotePaymentSchedule, requireQuotePaymentTiming, quotePaymentDates, quo
 import { prepareWalkthroughCaptureSync, walkthroughCaptureSyncView } from './walkthrough-capture-sync.js';
 import { WINTER_SALE_LINE_ID, acceptedSaleOn, winterSaleLastDay, saleChannel, saleManHours, saleTerms, winterSaleReaders, hasWinterSaleLine, isWinterSaleLine, overrideFrom, readWinterSaleSettings, saleRequest, winterSaleCap, winterSaleDecision, winterSaleEnabled, winterSaleLine, winterSalePublic, winterSaleSettingsStorage } from './winter-sale.js';
 import { isHubOwner } from './hub-session.js';
+import { officeQuoteJob } from './office-quotes.js';
 
 /**
  * P2-07 unsigned quote drafts and an explicit human send.
@@ -562,11 +563,12 @@ async function paymentScheduleFor(store, job, sending = job.estimate) {
     const amounts=quotePaymentSchedule(sending.amountCents,policy);return {...saved,depositCents:amounts.depositCents,remainderCents:amounts.remainderCents};
   }
   // SENT_25_75 dates its deposit by the approval (none yet: depositDueDate null) and its remainder by the booked job day;
-  // like every 25/75 quote it is sent for review only from a walkthrough booked in the Hub.
-  if (onApproval && !source) throw fail('payment_dates_pending', 'A quote is sent for review only from a walkthrough booked in the Hub, once its job date is booked: the 75% balance is due on the job day.');
+  // like every 25/75 quote it is sent for review only from a walkthrough booked in the Hub, except (OFFICE, owner request
+  // 2026-10-30) a photo quote: removal only from the pricing menu, with no walkthrough (office-quotes.js officeQuoteJob).
+  if (onApproval && !source && !officeQuoteJob(job)) throw fail('payment_dates_pending', 'A quote is sent for review only from a walkthrough booked in the Hub, once its job date is booked: the 75% balance is due on the job day.');
   const dates = quotePaymentDates(policy,{walkthroughDate:source?.walkthroughCompletedAt || source?.completedAt || source?.date,jobDate:job.date});
   const amounts = quotePaymentSchedule(sending.amountCents,policy);
-  return {...dates,timeZone:PAYMENT_TIME_ZONE,policyVersion:policy.version,depositCents:amounts.depositCents,remainderCents:amounts.remainderCents,sourceWalkthroughId:source.id,sourceRevision:source.revision};
+  return {...dates,timeZone:PAYMENT_TIME_ZONE,policyVersion:policy.version,depositCents:amounts.depositCents,remainderCents:amounts.remainderCents,...(source?{sourceWalkthroughId:source.id,sourceRevision:source.revision}:{})};
 }
 // The send preview's words for a schedule: a deposit due on approval says so (quote-payment-policy.js quotePaymentSummary).
 const scheduleSummary = (schedule, policy) => quotePaymentSummary(policy?.depositDueRule === 'approval_day' ? { ...schedule, depositDueOn: 'approval' } : schedule);
@@ -697,7 +699,7 @@ export async function sendQuoteDraft(store, actor, input, now = new Date().toISO
     auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via: 'hub', action: SEND_ACTION, entity: { collection: 'jobs', id: job.id }, before: moneySnapshot(job), after: moneySnapshot({ ...job, ...patch }), requestId: input.requestId, reason: `delivery:${delivery.mode}`, now }),
   ];
   if (waiver) writes.push(waiverAudit(auditWrite, waiver, { actor, jobId: job.id, requestId: input.requestId, now }));
-  if (paymentSchedule && !reusesSchedule(job, estimate)) writes.push({collection:'jobs',id:paymentSchedule.sourceWalkthroughId,revision:paymentSchedule.sourceRevision,verify:true});
+  if (paymentSchedule?.sourceWalkthroughId && !reusesSchedule(job, estimate)) writes.push({collection:'jobs',id:paymentSchedule.sourceWalkthroughId,revision:paymentSchedule.sourceRevision,verify:true});
   try { await consumeConfirmation(env, store, input.confirmToken, { actorId: actor.user, action: SEND_ACTION, entityId: `jobs/${job.id}`, payload: sendBinding({ ...job, estimate }, delivery, paymentSchedule), now, requestId: input.requestId }, writes); }
   catch (error) {
     const recovered = await replay(false).catch(problem => { if (FINAL.has(problem.code)) throw problem; return null; });

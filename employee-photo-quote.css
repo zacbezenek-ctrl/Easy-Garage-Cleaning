@@ -1,0 +1,24 @@
+/* Photo quote (employee-photo-quote.js): the kit's tokens and controls, scoped under .pq. */
+.pq .pq-card{display:grid;gap:var(--hub-space-4)}
+.pq .pq-card h2{font-size:22px}
+.pq .pq-muted{margin:0;color:var(--hub-muted);font-size:14px;line-height:1.45}
+.pq .pq-steps{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px 14px;font:700 12px/1.3 var(--hub-font);color:var(--hub-muted)}
+.pq .pq-steps li{display:flex;align-items:center;gap:6px}
+.pq .pq-steps span{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;border:1px solid var(--hub-line);background:#fff;font:700 11px/1 var(--hub-mono)}
+.pq .pq-steps li.current{color:var(--hub-navy)}
+.pq .pq-steps li.current span{background:var(--hub-orange);border-color:var(--hub-orange);color:#fff}
+.pq .pq-steps li.done span{background:var(--hub-soft);color:var(--hub-green);border-color:var(--hub-green)}
+.pq .pq-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--hub-space-2);align-items:end}
+.pq .pq-results{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.pq .pq-contact{width:100%;justify-content:flex-start;text-align:left;display:grid;gap:2px}
+.pq .pq-contact small{font-weight:500;color:var(--hub-muted);overflow-wrap:anywhere}
+.pq .pq-group{border:1px solid var(--hub-line);border-radius:var(--hub-radius);padding:var(--hub-space-3) var(--hub-space-4) var(--hub-space-4);margin:0;display:grid;gap:var(--hub-space-3);min-width:0}
+.pq .pq-group legend{font:700 12px/1.3 var(--hub-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--hub-orange-ink);padding:0 6px}
+.pq .pq-items{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:var(--hub-space-2) var(--hub-space-4)}
+.pq .pq-items .hub-field{grid-template-columns:minmax(0,1fr) 88px;align-items:center;column-gap:var(--hub-space-3)}
+.pq .pq-items .hub-field>span{font-weight:600;font-size:14px}
+.pq .pq-lines table{min-width:0}
+.pq .pq-lines td small{display:block;color:var(--hub-muted);font-size:12px;margin-top:2px}
+.pq .pq-amount{text-align:right;white-space:nowrap}
+.pq .pq-terms{margin:0;font-weight:600}
+@media (max-width:680px){.pq .pq-search{grid-template-columns:1fr}.pq .hub-actions>.hub-btn{flex:1 1 100%}}

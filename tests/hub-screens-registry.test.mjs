@@ -40,6 +40,8 @@ const TEAM_SHIPPED = ['team_directory'];
 const COMMISSION_SHIPPED = ['my_commission'];
 // PORTAL-INBOX: Customer messages needs customer_contact (employee-suite.js adds it for a server customer.send).
 const CONTACT_SHIPPED = ['customer_messages'];
+// OFFICE: Photo quote (Client work) needs photo_quote (employee-suite.js adds it for a server quotes.removal).
+const PHOTO_SHIPPED = ['photo_quote'];
 
 test('a registered screen joins the nav under its group only when the capability matches', () => {
   for (const [who, expected] of [[{}, true], [MANAGER, true], [CREW, false]]) {
@@ -303,7 +305,10 @@ test('the shipped screens register cleanly for business viewers only and lazy-lo
   vm.runInNewContext(readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8'), context, { filename: 'employee-hub-screens.js' });
   assert.deepEqual(warnings, []);
   const registry = context.EGCHubScreens;
-  assert.deepEqual([...registry.list().map(entry => entry.id)], [...CREW_SHIPPED, ...PASSWORD_SHIPPED, ...TEAM_SHIPPED, ...COMMISSION_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED, ...CONTACT_SHIPPED]);
+  assert.deepEqual([...registry.list().map(entry => entry.id)], [...CREW_SHIPPED, ...PASSWORD_SHIPPED, ...TEAM_SHIPPED, ...COMMISSION_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED, ...CONTACT_SHIPPED, ...PHOTO_SHIPPED]);
+  const photo = registry.get('photo_quote');
+  assert.deepEqual([photo.group, photo.label, photo.capability, photo.module, photo.load.js, photo.load.css], ['CLIENT WORK', 'Photo quote', 'photo_quote', 'EGCPhotoQuote', 'employee-photo-quote.js', 'employee-photo-quote.css']);
+  assert.ok(!registry.allowed(photo, ['crew', 'business', 'customer_contact']) && registry.allowed(photo, ['crew', 'photo_quote']), 'only a quotes.removal holder sees Photo quote');
   const inbox = registry.get('customer_messages');
   assert.deepEqual([inbox.group, inbox.label, inbox.capability, inbox.module, inbox.load.js, inbox.load.css], ['CLIENT WORK', 'Customer messages', 'customer_contact', 'EGCCustomerMessages', 'employee-customer-messages.js', 'employee-customer-messages.css']);
   assert.ok(!registry.allowed(inbox, ['crew', 'business']) && registry.allowed(inbox, ['crew', 'customer_contact']));

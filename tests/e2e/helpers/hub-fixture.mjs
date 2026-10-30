@@ -9,6 +9,8 @@ export const LONG_NAME='Maximiliana Van Der Westhuizen-Oyelaran Family Trust Gar
 export const LONG_ADDRESS='12345 East County Road 38 Unit 1204B, Building Seventeen, Fort Collins, CO 80525-9921';
 export const MANAGER={ok:true,user:'ZacB',displayName:'Synthetic Owner',role:'owner',businessAccess:true,payType:'owner',hourlyRate:0};
 export const CREW={ok:true,user:'Synthetic.Crew',displayName:'Synthetic Crew',role:'crew',businessAccess:false,payType:'hourly',hourlyRate:20};
+// OFFICE: an office-role account as /api/hub-auth reports it (customer messages, removal photo quotes, booking).
+export const OFFICE={ok:true,user:'Synthetic.Office',displayName:'Synthetic Office',role:'crew',businessAccess:false,payType:'hourly',hourlyRate:20,capabilities:['customer.send','quotes.removal','schedule.book'],capabilityMode:'staff_roles',roleAccess:true};
 const DONE={onboardingCompletedAt:'2026-09-01T15:00:00Z',onboardingVersion:'2026-09-location-v2'};
 
 export const JOBS=[
@@ -28,7 +30,8 @@ window.firebase={initializeApp(){},firestore:Object.assign(()=>db,{FieldValue:{s
 })();`;
 
 const collections=profile=>({
- profiles:[{id:'zacb',username:'ZacB',displayName:'Synthetic Owner',role:'owner',status:'active',hourlyRate:0,...DONE},{id:'synthetic.crew',username:'Synthetic.Crew',displayName:'Synthetic Crew',role:'crew',status:'active',hourlyRate:20,jobTitle:'Field crew',...DONE}],
+ profiles:[{id:'zacb',username:'ZacB',displayName:'Synthetic Owner',role:'owner',status:'active',hourlyRate:0,...DONE},{id:'synthetic.crew',username:'Synthetic.Crew',displayName:'Synthetic Crew',role:'crew',status:'active',hourlyRate:20,jobTitle:'Field crew',...DONE},
+  {id:'synthetic.office',username:'Synthetic.Office',displayName:'Synthetic Office',role:'crew',status:'active',hourlyRate:20,jobTitle:'Office',...DONE}],
  timeEntries:[{id:'time-1',employee:profile.user,status:'submitted',approvalStatus:'pending',clockInAt:DAY+'T14:00:00Z',clockOutAt:DAY+'T17:00:00Z',hourlyRate:20,jobLabel:LONG_NAME}],
  announcements:[{id:'announcement-1',title:'Synthetic crew update',body:'Meet at the shop at 7 with gloves and water.',priority:'normal',createdAt:'2026-09-21T15:00:00Z',createdBy:'ZacB',readBy:[],status:'active'}],
  requests:[{id:'request-1',employee:'Synthetic.Crew',type:'time_off',status:'pending',date:'2026-09-25',reason:'Synthetic appointment',createdAt:'2026-09-20T15:00:00Z'}],

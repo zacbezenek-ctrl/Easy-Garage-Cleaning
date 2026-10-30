@@ -10,10 +10,15 @@ import { configuredBusinessAccess, hasBusinessAccess, isHubOwner, staffRoleAcces
 // TEAM-LEAD (owner decision D6, 2026-10-17): team_lead sees every crew's schedule (schedule.view, below, which
 // needs no flag) and otherwise works at crew-lead level (field-permissions.js counts it as a crew lead). Estimators
 // and door-to-door reps are skills (staff-skills.js), not roles.
-export const STAFF_ROLES = Object.freeze(['owner', 'manager', 'team_lead', 'crew_lead', 'crew', 'sales', 'phone']);
-export const STAFF_CAPABILITIES = Object.freeze(['dispatch.write', 'time.approve', 'pay.manage', 'accounts.approve', 'money.refund', 'money.charge_stored_card', 'customer.send', 'followups.own', 'quotes.author', 'mcp.write', 'b2b.manage', 'catalog.manage', 'settings.manage']);
+// OFFICE (owner request 2026-10-30, "an office role to book photo-only removal"): the office role quotes removal-only
+// jobs from the customer's photos (quotes.removal: truck loads, special-handling items and access charges from the
+// pricing menu, no walkthrough; quote-permissions.js officeQuoteSession and office-quotes.js), sends them on the
+// sent-quote terms, reads customer messages (customer.send) and books visits (schedule.book, below). It never holds
+// dispatch.write, pay, money, staff or owner capabilities, and is not a walkthrough quote author.
+export const STAFF_ROLES = Object.freeze(['owner', 'manager', 'team_lead', 'crew_lead', 'crew', 'sales', 'phone', 'office']);
+export const STAFF_CAPABILITIES = Object.freeze(['dispatch.write', 'time.approve', 'pay.manage', 'accounts.approve', 'money.refund', 'money.charge_stored_card', 'customer.send', 'followups.own', 'quotes.author', 'quotes.removal', 'mcp.write', 'b2b.manage', 'catalog.manage', 'settings.manage']);
 export const OWNER_CAPABILITIES = Object.freeze(['pay.manage', 'accounts.approve', 'money.refund', 'money.charge_stored_card', 'catalog.manage', 'settings.manage']);
-const MANAGER_CAPABILITIES = Object.freeze(['dispatch.write', 'time.approve', 'customer.send', 'followups.own', 'quotes.author', 'mcp.write', 'b2b.manage']);
+const MANAGER_CAPABILITIES = Object.freeze(['dispatch.write', 'time.approve', 'customer.send', 'followups.own', 'quotes.author', 'quotes.removal', 'mcp.write', 'b2b.manage']);
 export const ROLE_CAPABILITIES = Object.freeze({
   owner: STAFF_CAPABILITIES,
   manager: MANAGER_CAPABILITIES,
@@ -22,13 +27,15 @@ export const ROLE_CAPABILITIES = Object.freeze({
   crew: Object.freeze([]),
   sales: Object.freeze(['customer.send', 'followups.own', 'quotes.author']),
   phone: Object.freeze(['customer.send', 'followups.own']),
+  office: Object.freeze(['customer.send', 'quotes.removal']),
 });
 // AUTH-ROLES: capabilities that exist only with EGC_STAFF_ROLE_ACCESS on (staffRoleAccessEnabled).
 // schedule.book books, moves, cancels, restores and marks no-shows for customer visits (jobs and
 // walkthroughs) and reads the schedule to do it; crew assignment, crews, vehicles, time off and
 // company blocks stay dispatch.write, and it carries no pay, cost or money access.
 // walkthrough.perform runs the walkthrough (gameplan, its signed handoff and customer, the visit
-// recorder). With the flag off can() answers false for them and no list reports them.
+// recorder). With the flag off can() answers false for them and no list reports them, with one
+// exception: OFFICE, the office role's schedule.book (officeBooking below).
 export const ACCESS_CAPABILITIES = Object.freeze(['schedule.book', 'walkthrough.perform']);
 export const ROLE_ACCESS_CAPABILITIES = Object.freeze({
   owner: ACCESS_CAPABILITIES,
@@ -38,6 +45,7 @@ export const ROLE_ACCESS_CAPABILITIES = Object.freeze({
   crew: Object.freeze([]),
   sales: ACCESS_CAPABILITIES,
   phone: Object.freeze(['schedule.book']),
+  office: Object.freeze(['schedule.book']),
 });
 // TEAM-LEAD: schedule.view is read only: every crew's schedule on /api/crew-schedule (scope=all), projected like a
 // crew row (first name, city, time, crew and lead), with no booking, staffing, customer contact or money. It needs no
@@ -56,6 +64,7 @@ export const ROLE_VIEW_CAPABILITIES = Object.freeze({
   crew: Object.freeze([]),
   sales: Object.freeze([]),
   phone: Object.freeze([]),
+  office: Object.freeze([]),
 });
 // STAFF-ACCESS: capabilities that exist only with EGC_STAFF_PASSWORD_RESET on (staffPasswordResetEnabled).
 // accounts.reset issues a staff member's single-use sign-in reset link; it is the owner's. password.change is
@@ -65,14 +74,14 @@ export const ROLE_VIEW_CAPABILITIES = Object.freeze({
 // never grantable). Flag off: can() answers false for these, grants are ignored and no list reports them.
 export const RESET_CAPABILITIES = Object.freeze(['accounts.reset', 'password.change']);
 export const MANAGER_GRANTABLE = Object.freeze(['accounts.reset', 'accounts.approve']);
-const ROLE_RESET_CAPABILITIES = Object.freeze({ owner: Object.freeze(['accounts.reset']), manager: Object.freeze([]), team_lead: Object.freeze([]), crew_lead: Object.freeze([]), crew: Object.freeze([]), sales: Object.freeze([]), phone: Object.freeze([]) });
+const ROLE_RESET_CAPABILITIES = Object.freeze({ owner: Object.freeze(['accounts.reset']), manager: Object.freeze([]), team_lead: Object.freeze([]), crew_lead: Object.freeze([]), crew: Object.freeze([]), sales: Object.freeze([]), phone: Object.freeze([]), office: Object.freeze([]) });
 export const staffPasswordResetEnabled = env => env?.EGC_STAFF_PASSWORD_RESET === 'true';
 export function managerGrants(env = {}) {
   if (!staffPasswordResetEnabled(env)) return [];
   const named = String(env?.EGC_STAFF_MANAGER_GRANTS ?? '').split(',').map(name => name.trim());
   return MANAGER_GRANTABLE.filter(capability => named.includes(capability));
 }
-const ROLE_PRECEDENCE = ['owner', 'manager', 'team_lead', 'crew_lead', 'sales', 'phone', 'crew'];
+const ROLE_PRECEDENCE = ['owner', 'manager', 'team_lead', 'crew_lead', 'sales', 'phone', 'office', 'crew'];
 const known = new Set(STAFF_ROLES), capabilities = new Set(STAFF_CAPABILITIES), ownerOnly = new Set(OWNER_CAPABILITIES), accessOnly = new Set(ACCESS_CAPABILITIES), resetOnly = new Set(RESET_CAPABILITIES), viewOnly = new Set(VIEW_CAPABILITIES);
 const signedProfile = session => Boolean(session) && typeof session === 'object' && !Array.isArray(session) && typeof session.user === 'string' && Boolean(session.user.trim());
 
@@ -128,10 +137,11 @@ export function primaryStaffRole(roles) {
 
 // Only the configured business users without stored roles reach the legacy
 // checks for the AUTH-ROLES capabilities: a dispatcher books, and business access
-// runs walkthroughs.
+// runs walkthroughs. OFFICE: quotes.removal (the Hub's Photo quote) is a dispatcher's too, as only a dispatcher
+// authors quotes there.
 function legacyCan(session, capability) {
   if (ownerOnly.has(capability)) return isHubOwner(session);
-  if (capability === 'dispatch.write' || capability === 'schedule.book') return hasBusinessAccess(session) && ['owner', 'manager'].includes(session.role);
+  if (capability === 'dispatch.write' || capability === 'schedule.book' || capability === 'quotes.removal') return hasBusinessAccess(session) && ['owner', 'manager'].includes(session.role);
   return hasBusinessAccess(session);
 }
 
@@ -146,6 +156,15 @@ export function capabilityMode(session, env) {
   return staffRolePermissionsEnabled(env) && signedProfile(session) && capabilityRoles(session, env) ? 'staff_roles' : 'legacy';
 }
 
+// OFFICE: a session acting on a stored office role (EGC_STAFF_ROLE_PERMISSIONS, a launch default, or
+// EGC_STAFF_ROLE_ACCESS). Its booking right (schedule.book) needs no EGC_STAFF_ROLE_ACCESS: the stored role is the
+// switch, as it is for a team lead's schedule.view, so the owner turns the office role on by saving it in the Staff
+// directory. Every other role's booking still needs that flag, and the flag's other grants (Sales walkthroughs, Phone
+// booking, stored managers' business access) stay off with it. /api/hub-auth reports roleAccess:true for such a session
+// so the Hub gates its pages on the capabilities alone, as it does for every session with the flag on.
+export const officeRole = (session, env = {}) => capabilityMode(session, env) === 'staff_roles' && capabilityRoles(session, env).includes('office');
+const officeBooking = (session, capability, env) => capability === 'schedule.book' && !staffRoleAccessEnabled(env) && officeRole(session, env);
+
 // The manager a STAFF-ACCESS grant reaches: a dispatcher under the legacy checks, or a holder of the manager role.
 const grantedManager = (session, env, legacy) => legacy ? hasBusinessAccess(session) && ['owner', 'manager'].includes(session.role) : capabilityRoles(session, env).includes('manager');
 
@@ -158,7 +177,7 @@ export function can(session, capability, env = {}) {
   }
   const access = accessOnly.has(capability), reset = resetOnly.has(capability), view = viewOnly.has(capability);
   if (!access && !reset && !view && !capabilities.has(capability)) throw new TypeError(`Unknown staff capability: ${capability}`);
-  if (!signedProfile(session) || access && !staffRoleAccessEnabled(env) || reset && !staffPasswordResetEnabled(env)) return false;
+  if (!signedProfile(session) || access && !staffRoleAccessEnabled(env) && !officeBooking(session, capability, env) || reset && !staffPasswordResetEnabled(env)) return false;
   if (view) return viewCan(session, capability, env);
   if (capability === 'password.change') return session.source === 'employee-account';
   const legacy = capabilityMode(session, env) === 'legacy';
@@ -188,7 +207,10 @@ export function capabilityMatrix(env = {}) {
 }
 
 export function staffCapabilities(session, env = {}) {
-  return capabilityNames(env).filter(capability => can(session, capability, env));
+  // OFFICE: with EGC_STAFF_ROLE_ACCESS off the office role's schedule.book is listed for its holders alone (can() grants
+  // it to nobody else then), so every other session's list stays as before.
+  const names = capabilityNames(env), office = names.includes('schedule.book') ? [] : ['schedule.book'];
+  return [...names, ...office].filter(capability => can(session, capability, env));
 }
 
 // The roles can() acts on for this session, or null when the legacy checks decide.

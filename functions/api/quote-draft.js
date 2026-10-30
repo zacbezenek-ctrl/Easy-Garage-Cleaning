@@ -1,6 +1,7 @@
 import { getHubSession, isHubOwner } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
-import { quoteAuthorAccess, requireQuoteAuthor } from '../_lib/quote-permissions.js';
+import { officeQuoteActor, officeQuoteSession, quoteAuthorAccess, requireQuoteAuthor } from '../_lib/quote-permissions.js';
+import { checkOfficeQuote, requireRemovalPricing } from '../_lib/office-quotes.js';
 import { setterChannel, selfWalkthroughSession, walkthroughRep } from '../_lib/knock-self-walkthrough.js';
 import { expireStaleCheckout, previewQuoteSend, readQuoteDraft, saveQuoteDraft, sendQuoteDraft } from '../_lib/quote-draft.js';
 import { createEstimateReadyDelivery } from '../_lib/estimate-ready.js';
@@ -54,6 +55,9 @@ async function saleTerms(env, readers) {
  *        {manHours, adjusted?, fullness?} (manHours null asks for the server's estimate of the selection; adjusted: the
  *        estimator set them by hand; fullness: the walkthrough's garage fullness) and sends draft.composite_pricing with
  *        the previewed lines. The labor rate and estimate are always the server's. Never a cost split.
+ * OFFICE (owner request 2026-10-30): an office-role session (quotes.removal) uses the builder menu, composite_preview,
+ *        save (no walkthrough), the quote read, send_preview and send for removal-only quotes alone (office-quotes.js);
+ *        everything else answers 403 quote_draft_office_removal_only. It is never a dispatcher here.
  * Retry a lost response with the SAME requestId and body. */
 const LIMIT = 64000;
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -86,11 +90,12 @@ export function quoteDraftHandlers({ session = getHubSession, storage = dispatch
           if (!quoteBuilderEnabled(env)) return reply(404, { ok: false, code: 'quote_draft_menu_disabled', error: 'The menu of what we sell is not available yet. Ask the office.' });
           return reply(200, { ok: true, authority: 'employee_hub', enabled: true, ...offeringsMenu(await compositeState(env), { prices: quoteAuthorAccess(actor, env).author === true }) });
         }
-        const builder = quoteBuilderEnabled(env) && params.get('view') === 'builder' && [...params.keys()].length === 1;
-        const access = builder && !quoteAuthorAccess(actor, env).author && await walkthroughRep(actor, env, knock(env)) ? { dispatcher: false, author: true } : null;
-        const viewer = access || builder ? actor : await ownWalkthrough(actor, env, () => storage(env), knock, params.getAll('jobId'), now());
+        const builder = quoteBuilderEnabled(env) && params.get('view') === 'builder' && [...params.keys()].length === 1, office = officeQuoteSession(actor, env);
+        const access = builder && !quoteAuthorAccess(office, env).author && await walkthroughRep(actor, env, knock(env)) ? { dispatcher: false, author: true } : null;
+        const viewer = officeQuoteActor(office) ? office : access || builder ? actor : await ownWalkthrough(actor, env, () => storage(env), knock, params.getAll('jobId'), now());
         const rights = access || requireQuoteAuthor(viewer, env);
         if ([...params.keys()].length !== new Set(params.keys()).size) return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'The quote lookup is invalid.' });
+        if (!builder && officeQuoteActor(viewer)) await checkOfficeQuote('read', Object.fromEntries(params), { store: storage(env), env, compositeState });
         if (builder) {
           return reply(200, { ok: true, authority: 'employee_hub', enabled: true, ...builderMenu(await compositeState(env), { internal: rights.dispatcher === true, canApprove: isHubOwner(actor) && actor.role === 'owner' }), ...await saleTerms(env, winterSale) });
         }
@@ -100,8 +105,8 @@ export function quoteDraftHandlers({ session = getHubSession, storage = dispatch
     async post({ request, env }) {
       if (!sameOrigin(request)) return reply(403, { ok: false, code: 'quote_draft_origin_forbidden', error: 'Open the quote in the Employee Hub before saving.' });
       try {
-        const signedIn = await session(request, env), rep = quoteAuthorAccess(signedIn, env).author ? null : await walkthroughRep(signedIn, env, knock(env));
-        if (!rep) requireQuoteAuthor(signedIn, env);
+        const signedIn = await session(request, env), office = officeQuoteSession(signedIn, env), rep = quoteAuthorAccess(office, env).author ? null : await walkthroughRep(signedIn, env, knock(env));
+        if (!rep) requireQuoteAuthor(office, env);
         if (request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'application/json') return reply(415, { ok: false, code: 'quote_draft_json_required', error: 'The quote must be sent as JSON.' });
         if (Number(request.headers.get('Content-Length')) > LIMIT) return reply(413, { ok: false, code: 'quote_draft_too_large', error: 'The quote is too large.' });
         const raw = await request.text();
@@ -109,8 +114,10 @@ export function quoteDraftHandlers({ session = getHubSession, storage = dispatch
         let body; try { body = JSON.parse(raw); } catch { return reply(400, { ok: false, code: 'quote_draft_json_invalid', error: 'The quote request is incomplete.' }); }
         if (!body || typeof body !== 'object' || Array.isArray(body)) return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'The quote request is incomplete.' });
         const { action, ...input } = body, store = storage(env), at = now().toISOString();
-        const actor = rep && MENU_ACTIONS.has(action) ? signedIn : await ownWalkthrough(signedIn, env, () => store, knock, [input.jobId, input.sourceWalkthroughId], now());
+        const actor = officeQuoteActor(office) ? office : rep && MENU_ACTIONS.has(action) ? signedIn : await ownWalkthrough(signedIn, env, () => store, knock, [input.jobId, input.sourceWalkthroughId], now());
         if (!(rep && MENU_ACTIONS.has(action))) requireQuoteAuthor(actor, env);
+        // OFFICE: removal-only quotes with no walkthrough (office-quotes.js); a save prices against the menu this check read.
+        const officeState = officeQuoteActor(actor) ? await checkOfficeQuote(action, input, { store, env, compositeState }) : undefined, menuState = officeState ? async () => officeState : compositeState;
         if (action === 'catalog_preview') {
           if (Object.keys(input).some(key => key !== 'catalogPricing')) return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'Preview one catalog selection at a time.' });
           if (!catalogQuotesEnabled(env)) return reply(404, { ok: false, code: 'quote_draft_catalog_disabled', error: 'Catalog quotes are turned off.' });
@@ -120,9 +127,10 @@ export function quoteDraftHandlers({ session = getHubSession, storage = dispatch
         if (action === 'composite_preview' && quoteBuilderEnabled(env)) {
           if (Object.keys(input).some(key => key !== 'compositePricing')) return reply(400, { ok: false, code: 'quote_draft_invalid_request', error: 'Preview one builder selection at a time.' });
           const { storedLineItems, ...priced } = priceCompositeQuote(await compositeState(env), input.compositePricing);
+          if (officeQuoteActor(actor)) requireRemovalPricing(priced);
           return reply(200, { ok: true, authority: 'employee_hub', ...priced });
         }
-        if (action === 'save') return reply(200, { ...await saveQuoteDraft(store, actor, input, at, { env, catalogState, compositeState, newQuotePaymentPolicy: SENT_25_75, winterSale, checkouts: job => expireStaleCheckout({ store, job, stripe: stripe(env), now: at, mode: moneyTotalsMode(env) }) }), captureSyncEnabled: walkthroughCaptureSyncEnabled(env) });
+        if (action === 'save') return reply(200, { ...await saveQuoteDraft(store, actor, input, at, { env, catalogState, compositeState: menuState, newQuotePaymentPolicy: SENT_25_75, winterSale, checkouts: job => expireStaleCheckout({ store, job, stripe: stripe(env), now: at, mode: moneyTotalsMode(env) }) }), captureSyncEnabled: walkthroughCaptureSyncEnabled(env) });
         if (action === 'sync_capture') {
           const sync = await syncWalkthroughCapture(store, actor, input, at, { env, ...(captureNote ? { note: captureNote } : {}) });
           return reply(200, { ...await readQuoteDraft(store, actor, { jobId: input.jobId }, { env }), captureSyncEnabled: sync.enabled });
