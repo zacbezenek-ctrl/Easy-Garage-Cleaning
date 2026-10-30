@@ -177,6 +177,64 @@ test('focusRow highlights and scrolls to the job\'s Field agenda row, retrying w
   assert.equal(focusRow('', { doc }), false);
 });
 
+// A late render (home widgets, review alerts, a refreshed agenda) that lands above the row after the first scroll used
+// to leave it off screen; the row is put back in view until the viewer scrolls, taps or types, and only for a while.
+test('focusRow keeps the row in view through later renders, but never takes the scroll back from the viewer', () => {
+  const view = { innerHeight: 800 }, queue = [], listeners = new Map();
+  const doc = { rows: [], querySelectorAll: selector => selector === '[data-agenda-job]' ? doc.rows : [],
+    addEventListener: (type, fn, options) => { assert.equal(options.capture, true); assert.equal(options.passive, true); listeners.set(type, fn); },
+    removeEventListener: (type, fn, capture) => { assert.equal(capture, true); if (listeners.get(type) === fn) listeners.delete(type); } };
+  // One rendered agenda row; scrollIntoView centers it, a re-render (a new node) can land anywhere.
+  const render = (id, top) => { const card = { top, scrolls: 0, classList: { add() {}, remove() {} }, querySelector: () => null, focus() {},
+    getBoundingClientRect() { return { top: this.top, height: 200 }; }, scrollIntoView(options) { assert.deepEqual(options, { block: 'center' }); this.scrolls += 1; this.top = 300; } };
+    return { card, row: { getAttribute: name => name === 'data-agenda-job' ? id : null, closest: () => card } }; };
+  const tick = () => { const fn = queue.shift(); assert.ok(fn, 'a check is waiting'); fn(); };
+  const wait = fn => queue.push(fn);
+
+  let first = render('late', 2400); doc.rows = [first.row];
+  assert.equal(focusRow('late', { doc, view, wait }), true);
+  assert.equal(first.card.scrolls, 1);
+  assert.deepEqual([...listeners.keys()].sort(), ['keydown', 'pointerdown', 'touchstart', 'wheel']);
+  tick();
+  assert.equal(first.card.scrolls, 1, 'in view: left alone');
+  // The agenda renders again with content above it: the new row is 700 px lower, off screen, so it is scrolled back.
+  const second = render('late', 1000); doc.rows = [second.row];
+  tick();
+  assert.equal(second.card.scrolls, 1);
+  // Half the card hanging off the top of the screen is not in view either.
+  second.card.top = -100; tick();
+  assert.equal(second.card.scrolls, 2);
+  // While the page is still moving (a smooth scroll on its way), the row is left to arrive; once it stops, it is checked.
+  second.card.top = 1200; view.scrollY = 150; tick();
+  assert.equal(second.card.scrolls, 2, 'still moving');
+  tick();
+  assert.equal(second.card.scrolls, 3);
+  // The viewer scrolls: from then on their position is theirs, even when a render moves the row away again.
+  listeners.get('wheel')();
+  assert.equal(listeners.size, 0, 'the input listeners are removed');
+  second.card.top = 1500;
+  while (queue.length) tick();
+  assert.equal(second.card.scrolls, 3);
+
+  // Left alone, the watch ends after `settle` checks.
+  first = render('late', 2400); doc.rows = [first.row];
+  focusRow('late', { doc, view, wait, settle: 3 });
+  for (let checks = 0; checks < 3; checks += 1) { first.card.top = 2400; tick(); }
+  assert.equal(first.card.scrolls, 4);
+  tick();
+  assert.equal(queue.length, 0); assert.equal(listeners.size, 0);
+  first.card.top = 2400;
+  assert.equal(first.card.scrolls, 4, 'no check is left');
+
+  // A newer alert's row takes over: the older watch stops scrolling to its row.
+  const older = render('late', 2400), newer = render('soon', 2600); doc.rows = [older.row, newer.row];
+  focusRow('late', { doc, view, wait });
+  focusRow('soon', { doc, view, wait });
+  older.card.top = 2400; newer.card.top = 2600;
+  tick(); tick();
+  assert.deepEqual([older.card.scrolls, newer.card.scrolls], [1, 2]);
+});
+
 // The Hub wiring (employee-suite.js): switch off → nothing; on → one alert per slip; a tap opens Today on the row.
 function hub({ slipAlerts = true, alerts = 'on', role = 'owner', business = true } = {}) {
   const local = storage(alerts ? { egc_browser_alerts: alerts } : {}), made = [];
