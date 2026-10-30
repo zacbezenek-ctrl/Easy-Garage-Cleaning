@@ -4,6 +4,7 @@ import vm from './helpers/vm-realm.mjs';
 import { readFileSync } from 'node:fs';
 import { builderMenu, priceCompositeQuote } from '../functions/_lib/composite-quote.js';
 import { walkthroughPricing, walkthroughServiceItems } from '../functions/_lib/pricing-config.js';
+import { PICKUP_MINIMUM_CENTS } from '../functions/_lib/pickup-minimum.js';
 
 // The walkthrough's guided builder in crew/quote-draft.js (removal, then shelving, then extra storage). The page holds
 // only the selection; prices come from GET /api/quote-draft?view=builder and every step is priced by the server.
@@ -62,27 +63,36 @@ test('the builder sends only finished steps, in order, with ids and quantities; 
   assert.deepEqual([removalOnly.steps, removalOnly.shelving, removalOnly.storage], [['removal'], [], []], 'a later step is never sent before it is finished');
   assert.ok(removalOnly.removal.every(entry => Object.keys(entry).join() === 'id,quantity'));
   assert.equal('labor' in removalOnly, false, 'a step preview carries no labor');
-  // The whole quote carries the labor: the man-hours (none yet: the server's estimate), not set by hand, and the
-  // walkthrough's garage fullness ('Full'). The crew size and the scheduled minutes are not sent, nor is any rate.
+  // The whole quote carries the labor once the estimator entered the crew (owner decision 2026-10-30: people x hours on
+  // site for the whole crew): before that it is priced without a Labor line, and a save is refused for it. The crew, its
+  // man-hours (which the server works out again), set by hand, and the walkthrough's garage fullness ('Full') are sent;
+  // never a rate or a total.
   const fullness = B.fullnessOf(plan());
   assert.equal(fullness, 'full');
   assert.deepEqual([B.fullnessOf({ scope: { fullness: 'Stuffed' } }), B.fullnessOf({})], [null, null]);
+  const unpriced = plain(B.builderDescriptor(menu, sel, 'storage', fullness));
+  assert.equal('labor' in unpriced, false, 'no crew entered yet: no labor, and no time estimate in its place');
+  assert.equal(priceCompositeQuote(state, unpriced).labor, null, 'the review prices it without a Labor line');
+  assert.throws(() => priceCompositeQuote(state, unpriced, { complete: true }), { code: 'quote_draft_composite_labor_required' }, 'a save needs the Labor line');
+  assert.equal(plain(B.runningTotals(menu, sel, fullness)).laborHours, null, 'the running total waits for the crew too');
+  sel.labor = { manHours: 6.75, adjusted: true, people: 3, hours: 2.25 };
   const all = plain(B.builderDescriptor(menu, sel, 'storage', fullness));
   assert.deepEqual(all.steps, ['removal', 'shelving', 'storage']);
   assert.deepEqual([all.menuVersion, all.settingsVersion], [menu.menuVersion, menu.settingsVersion]);
-  assert.deepEqual(all.labor, { manHours: null, adjusted: false, fullness: 'full' });
+  assert.deepEqual(all.labor, { manHours: 6.75, adjusted: true, fullness: 'full', people: 3, hours: 2.25 });
   assert.doesNotMatch(JSON.stringify(all), /rateCents|totalCents|unitCents|crewSize|onSiteMinutes/, 'no price and no time estimate of any kind leaves the browser');
-  // The server's estimate (D-JUNK): 2 x (60 base + 90 deep clean) + 2 shelving units x 60 = 420 person-minutes = 7
-  // man-hours. The 1.5 loads, the 3 special items and the stairs add none (their prices pay that time) and, with no
-  // cleaning base, neither does the fullness.
+  // 3 people x 2.25 hours on site = 6.75 man-hours x $53.00 = $357.75, kept with the crew on the saved selection.
   const priced = priceCompositeQuote(state, all, { complete: true });
-  assert.deepEqual(priced.compositePricing, { ...all, labor: { manHours: 7, adjusted: false, fullness: 'full' } }, 'the server fills in its estimate');
-  assert.deepEqual([priced.labor.manHours, priced.labor.totalCents, priced.labor.adjusted, priced.labor.estimate.personMinutes], [7, 37100, false, 420], '7 man-hours × $53.00 = $371.00');
+  assert.deepEqual(priced.compositePricing.labor, { manHours: 6.75, adjusted: true, fullness: 'full', people: 3, hours: 2.25 }, 'the selection keeps the crew');
+  assert.deepEqual([priced.labor.manHours, priced.labor.people, priced.labor.hours, priced.labor.totalCents, priced.labor.adjusted], [6.75, 3, 2.25, 35775, true]);
+  assert.deepEqual([priced.breakdown.labor.people, priced.breakdown.labor.hours], [3, 2.25], 'and so does the breakdown, for the office and dispatch');
+  // The server works the man-hours out itself: a browser number that is not people x hours, a seventh person, hours that
+  // are not quarter hours or a crew over 200 man-hours are refused.
+  for (const labor of [{ ...all.labor, manHours: 7 }, { ...all.labor, people: 7, manHours: 15.75 }, { ...all.labor, hours: 2.1, manHours: null }, { ...all.labor, people: 6, hours: 40, manHours: null }, { ...all.labor, people: 2, hours: undefined }, { ...all.labor, adjusted: false }]) {
+    assert.throws(() => priceCompositeQuote(state, { ...all, labor }, { complete: true }), { code: 'quote_draft_composite_invalid_labor' }, JSON.stringify(labor));
+  }
   const totals = plain(B.runningTotals(menu, sel, fullness));
-  assert.deepEqual([totals.labor, totals.laborHours, totals.junkOnly, B.estimateLabor(menu, sel, fullness).manHours], [37100, 7, false, 7], 'the running total estimates labor the way the server does');
-  // With a cleaning base the fullness is the garage's sorting time: 2 x 60 more for a full garage, on both sides.
-  const based = { ...sel, removal: { ...sel.removal, [byName('Two-car garage base').id]: 1 } }, basedAll = plain(B.builderDescriptor(menu, based, 'storage', fullness));
-  assert.deepEqual([B.estimateLabor(menu, based, fullness).manHours, priceCompositeQuote(state, basedAll, { complete: true }).labor.manHours], [9, 9]);
+  assert.deepEqual([totals.labor, totals.laborHours, totals.junkOnly], [35775, 6.75, false], 'the running total prices the crew as the server does');
   assert.deepEqual([totals.removal + totals.shelving + totals.storage + totals.labor, totals.total], [priced.totalCents, priced.totalCents], 'the running total matches the server price');
   assert.equal(totals.shelving, 23140);
   assert.equal(totals.drafts, Object.keys(sel.removal).length + 1 - 2, 'every selected price but the approved full truck and half load (2026-10-21) is a draft');
@@ -104,6 +114,7 @@ test('a saved selection is checked against the current menu: unknown items, wron
 test('the saved draft carries the server-priced lines and selection, the walkthrough capture and no signature or raw state', () => {
   const sel = B.selectionFromWalkthrough(plan(), menu);
   sel.storage.push({ id: menu.products.find(item => item.group === 'overhead').id, quantity: 1 });
+  sel.labor = { manHours: 5, adjusted: true, people: 2, hours: 2.5 };
   const priced = plain(priceCompositeQuote(state, plain(B.builderDescriptor(menu, sel, 'storage', B.fullnessOf(plan()))), { complete: true }));
   const { storedLineItems, ...preview } = priced;
   const draft = plain(B.compositeDraft(plan(), preview, '2026-10-31'));
@@ -111,11 +122,12 @@ test('the saved draft carries the server-priced lines and selection, the walkthr
   assert.deepEqual(draft.composite_pricing, preview.compositePricing);
   assert.equal(draft.catalog_version, menu.menuVersion);
   assert.deepEqual([draft.client.name, draft.valid_until, draft.crew_size, draft.estimated_duration_min], ['Synthetic Customer', '2026-10-31', 2, 240]);
-  // An overhead rack has no install time in the estimate (5 man-hours of set-up and cleaning): the server names it. The
-  // customer's scope and line say "Labor", never the man-hours (D-LABOR-TEXT); the selection keeps them for the staff.
+  // The estimator's crew, 2 people x 2.5 hours on site, is 5 man-hours, set by hand. The customer's scope and line say
+  // "Labor", never the man-hours (D-LABOR-TEXT); the selection keeps them, and the crew, for the staff.
   assert.match(draft.scope, /^Removal \/ cleanout: Full truck load; Half load; Mattress × 2;.*\. Extra storage: .+\. Labor\.$/);
   assert.deepEqual([draft.line_items.at(-1).id, draft.line_items.at(-1).name, draft.line_items.at(-1).description, draft.composite_pricing.labor.manHours], ['labor', 'Labor', 'Includes installing the shelving and storage.', 5]);
-  assert.deepEqual(priced.labor.estimate.installNotEstimated.map(row => row.packs), [1]);
+  assert.deepEqual([draft.composite_pricing.labor.people, draft.composite_pricing.labor.hours, draft.composite_pricing.labor.adjusted], [2, 2.5, true]);
+  assert.equal(priced.approval.blocked.some(row => row.id === 'goods-installation'), false, 'a crew set by hand covers installing the rack');
   assert.deepEqual(draft.walkthrough_capture.keepItems, 'Albums');
   assert.doesNotMatch(JSON.stringify(draft), /signature|"raw"|split|retailPerPackCents/);
 });
@@ -222,4 +234,30 @@ test('the walkthrough price answer tells the page whether the builder is on; the
   await api.load('sales.person', { fetcher: async () => servedTables({ quoteBuilder: true }) });
   fire('egc:signout');
   assert.equal(api.quoteBuilder(), false, 'sign-out forgets it with the prices');
+});
+
+// The $250 minimum to come out (owner decisions 2026-10-21 for pickups and 2026-10-30 for every quote, pickup-minimum.js):
+// the server adds a "Minimum to come out" line to any quote below $250 in all, its Labor line included, unless the
+// estimator asks for the truck-nearby waiver. The running total the estimator and homeowner watch while choosing shows
+// the same total the server's preview does; the server still adds and prices the line.
+test('the running total of any quote under $250 includes the Minimum to come out line the server adds, and drops it when the truck-nearby waiver is asked for', () => {
+  const crew = (people, hours) => ({ labor: { manHours: people * hours, adjusted: true, people, hours } });
+  const sel = (removal, extra = {}) => ({ removal: Object.fromEntries(removal.map(([name, qty]) => [byName(name).id, qty])), shelving: [], storage: [], labor: { manHours: null, adjusted: false }, ...extra });
+  const nearby = { nearbyTruck: { reason: 'Synthetic job 12 on the same street' } };
+  for (const [label, selection, minimum] of [
+    ['one mattress and one person for an hour', sel([['Mattress', 1]], crew(1, 1)), true],
+    ['one mattress before the crew is entered', sel([['Mattress', 1]]), true],
+    ['one mattress, truck already nearby', sel([['Mattress', 1]], { ...crew(1, 1), ...nearby }), false],
+    ['stairs and two people for an hour: over $250', sel([['Stairs', 1]], crew(2, 1)), false],
+    ['a quarter load: junk only, at $250', sel([['Quarter load', 1]]), false],
+    ['one shelving unit installed in half an hour: garage work under $250', sel([], { shelving: [{ id: shelf.id, quantity: 1 }], ...crew(1, 0.5) }), true],
+    ['a mattress with a garage base: well over $250', sel([['Two-car garage base', 1], ['Mattress', 1]], crew(2, 3)), false],
+  ]) {
+    const priced = priceCompositeQuote(state, plain(B.builderDescriptor(menu, selection, 'storage', 'medium')));
+    const totals = plain(B.runningTotals(menu, selection, 'medium'));
+    assert.equal(totals.total, priced.totalCents, `${label}: the running total is the server's total`);
+    assert.equal(totals.pickup, priced.pickup.minimumCents, `${label}: the minimum line`);
+    assert.equal(totals.pickup > 0, minimum, label);
+    if (minimum) assert.equal(totals.total, PICKUP_MINIMUM_CENTS, `${label}: raised to the minimum`);
+  }
 });

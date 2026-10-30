@@ -46,7 +46,10 @@ test('a quote of special items or access charges alone is not junk-only: it need
   const sel = removal => ({ removal, shelving: [], storage: [], labor: { manHours: null, adjusted: false } });
   assert.equal(B.junkOnly(view, sel({ [id('Mattress')]: 1 })), false);
   assert.equal(B.junkOnly(view, sel({ [id('Mattress')]: 1, [id('Quarter load')]: 1 })), true);
-  assert.equal(B.runningTotals(view, sel({ [id('Stairs')]: 1 }), 'medium').laborHours, 2);
+  // The builder no longer shows the time estimate (owner decision 2026-10-30): the running total has no Labor until the
+  // estimator enters the crew, people x hours on site.
+  assert.equal(B.runningTotals(view, sel({ [id('Stairs')]: 1 }), 'medium').laborHours, null);
+  assert.equal(B.runningTotals(view, { ...sel({ [id('Stairs')]: 1 }), labor: { manHours: 2, adjusted: true, people: 2, hours: 1 } }, 'medium').laborHours, 2);
 });
 
 // The customer signs and reads exactly what is priced: a builder quote's scope is its lines (compositeScope), the same

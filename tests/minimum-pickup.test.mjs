@@ -1,5 +1,6 @@
 // Minimum pickup (owner decision 2026-10-21: "minimum pickup should be 250, unless they are booking when a truck is
-// nearby"): functions/_lib/pickup-minimum.js. Synthetic data only.
+// nearby"), widened on 2026-10-30 to the $250 minimum to come out on every builder quote, its line named "Minimum to come
+// out": functions/_lib/pickup-minimum.js. The truck-nearby waiver is unchanged. Synthetic data only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -46,13 +47,13 @@ async function save(f, actor, q, { extra = {}, jobId = null, pickup = nearby(), 
 }
 const preview = (f, q, jobId, actor = estimator, pickup = nearby()) => previewQuoteSend(f.store, actor, { jobId, expectedRevision: f.job(jobId).revision }, NOW, { env: ON, compositeState: async () => q.state, winterSale: saleReaders, pickup });
 
-test('a single $70 sofa quotes at the $250 minimum: a visible Minimum pickup line, Labor kept, never junk-only', () => {
+test('a single $70 sofa quotes at the $250 minimum: a visible Minimum to come out line, Labor kept, never junk-only', () => {
   const { priced } = quote(SOFA());
   const sofa = priced.lineItems.find(line => line.id === 'removal-special'), labor = priced.lineItems.find(line => line.kind === 'labor'), minimum = priced.lineItems.find(line => line.id === PICKUP_MINIMUM_LINE_ID);
   assert.equal(sofa.totalCents, 7000);
   // Special items without a truck keep their Labor line (D-JUNK): the minimum raises sofa and Labor together to $250.
   assert.ok(labor, 'the Labor line stays');
-  assert.deepEqual([minimum.name, minimum.kind, minimum.totalCents], ['Minimum pickup', 'fee', PICKUP_MINIMUM_CENTS - 7000 - labor.totalCents]);
+  assert.deepEqual([minimum.name, minimum.kind, minimum.totalCents], ['Minimum to come out', 'fee', PICKUP_MINIMUM_CENTS - 7000 - labor.totalCents]);
   assert.equal(priced.totalCents, PICKUP_MINIMUM_CENTS);
   assert.equal(estimateTotals(priced.lineItems).totalCents, PICKUP_MINIMUM_CENTS);
   assert.equal(priced.lineItems.at(-1).kind, 'labor', 'Labor stays the last line');
@@ -60,16 +61,22 @@ test('a single $70 sofa quotes at the $250 minimum: a visible Minimum pickup lin
   assert.equal(priced.breakdown.lines.some(line => line.id === PICKUP_MINIMUM_LINE_ID), false, 'not a menu line: junkOnly and the approvals read only the menu lines');
 });
 
-test('loads at or above $250 and any garage work are unchanged; a junk-only pickup below it stays junk-only', () => {
+test('quotes at or above $250 are unchanged; garage work below it is topped up too (2026-10-30); a junk-only pickup below it stays junk-only', () => {
   const half = quote(selection({ removal: [{ id: id('Half load'), quantity: 1 }], shelving: [], storage: [] })).priced;
   assert.deepEqual([half.totalCents, half.junkOnly, half.lineItems.some(line => line.id === PICKUP_MINIMUM_LINE_ID)], [50000, true, false]);
   const quarter = quote(selection({ removal: [{ id: id('Quarter load'), quantity: 1 }], shelving: [], storage: [] })).priced;
   assert.deepEqual([quarter.totalCents, quarter.lineItems.some(line => line.id === PICKUP_MINIMUM_LINE_ID)], [25000, false], 'exactly $250 needs no line');
   const full = quote(selection({ removal: [{ id: id('Full truck load'), quantity: 1 }], shelving: [], storage: [] })).priced;
   assert.equal(full.totalCents, 100000);
-  // A sofa with a garage cleaning base is garage work: no minimum, whatever the total.
+  // A sofa with a garage cleaning base is well above $250: no line.
   const garage = quote(selection({ removal: [{ id: id('Two-car garage base'), quantity: 1 }, { id: id('Sofa / loveseat'), quantity: 1 }], shelving: [], storage: [], labor: { manHours: 0.5, fullness: 'light' } })).priced;
   assert.equal(garage.lineItems.some(line => line.id === PICKUP_MINIMUM_LINE_ID), false);
+  // Since 2026-10-30 the minimum is every quote's, not only a pickup's: one shelving unit installed by one person in half an
+  // hour (people x hours, D12) is garage work below $250, so it is raised to $250 with the Labor line kept last.
+  const shelf = quote(selection({ removal: [], shelving: [{ id: 'hd-100006678', quantity: 1 }], storage: [], labor: { manHours: null, people: 1, hours: 0.5 } })).priced;
+  const shelfMinimum = shelf.lineItems.find(line => line.id === PICKUP_MINIMUM_LINE_ID);
+  assert.deepEqual([shelf.pickup.haulingOnly, shelf.labor.manHours, shelf.labor.totalCents, shelf.totalCents], [false, 0.5, 2650, PICKUP_MINIMUM_CENTS]);
+  assert.deepEqual([shelfMinimum.name, shelfMinimum.totalCents, shelf.lineItems.at(-1).kind], ['Minimum to come out', PICKUP_MINIMUM_CENTS - 11570 - 2650, 'labor']);
   // A junk-only quote the owner priced below $250 (synthetic quarter-load price): topped up, still junk-only, no Labor.
   const cheap = quote(selection({ removal: [{ id: id('Quarter load'), quantity: 1 }], shelving: [], storage: [] }), cheaper('Quarter load', 20000)).priced;
   assert.deepEqual([cheap.junkOnly, cheap.labor, cheap.lineItems.some(line => line.kind === 'labor'), cheap.totalCents, cheap.lineItems.find(line => line.id === PICKUP_MINIMUM_LINE_ID)?.totalCents], [true, null, false, 25000, 5000]);
@@ -101,8 +108,8 @@ test('the winter sale runs first on the pickup total and never takes it below $2
   const cap = { known: true, capCents: 40000 };
   assert.equal(winterSaleDecision({ beforeCents: 31600, today: '2026-10-17', cap, minimumCents: 25000 }).amountCents, 6600);
   assert.equal(winterSaleDecision({ beforeCents: 31600, today: '2026-10-17', cap: { known: true, capCents: 0 }, override: { reason: 'Owner call' }, ownerOverride: true, minimumCents: 25000 }).amountCents, 6600);
-  assert.deepEqual(winterSaleDecision({ beforeCents: 25000, today: '2026-10-17', cap, minimumCents: 25000 }), { eligible: false, code: 'at_minimum', reason: 'Not eligible: a pickup never goes below the $250 minimum pickup.', overridden: false, amountCents: 0 });
-  // A sofa quote at the minimum: the Minimum pickup line, no sale line.
+  assert.deepEqual(winterSaleDecision({ beforeCents: 25000, today: '2026-10-17', cap, minimumCents: 25000 }), { eligible: false, code: 'at_minimum', reason: 'Not eligible: a quote never goes below the $250 minimum to come out.', overridden: false, amountCents: 0 });
+  // A sofa quote at the minimum: the Minimum to come out line, no sale line.
   const f = fixture(ON), atMinimum = await save(f, estimator, quote(SOFA()), { extra: { winter_sale: { apply: true } } }), lines = f.job(atMinimum.job.id).estimate.lineItems;
   assert.deepEqual([lines.some(line => line.id === PICKUP_MINIMUM_LINE_ID), lines.some(line => line.id === WINTER_SALE_LINE_ID), atMinimum.job.winterSale.code], [true, false, 'at_minimum']);
   // Three single items (above $250 with their Labor): the sale takes it down to exactly $250, never below.
@@ -126,7 +133,7 @@ test('a waiver on a booked job: refused with no nearby job, accepted with one (a
   const q = quote(SOFA({ nearbyTruck: NEARBY }));
   const booked = async () => { const f = fixture(ON), first = await save(f, estimator, quote(SOFA())); Object.assign(f.job(first.job.id), { date: DAY, address: ZIP_ADDRESS }); return { f, jobId: first.job.id }; };
   const none = await booked();
-  await assert.rejects(save(none.f, estimator, q, { jobId: none.jobId }), { code: 'quote_draft_pickup_waiver_unconfirmed', status: 409, message: `No other job is booked on ${DAY} in this job's ZIP code, so the truck-nearby waiver can't apply. Remove the waiver (the $250 minimum pickup applies) or ask the owner.` });
+  await assert.rejects(save(none.f, estimator, q, { jobId: none.jobId }), { code: 'quote_draft_pickup_waiver_unconfirmed', status: 409, message: `No other job is booked on ${DAY} in this job's ZIP code, so the truck-nearby waiver can't apply. Remove the waiver (the $250 minimum to come out applies) or ask the owner.` });
   const yes = await booked();
   await save(yes.f, estimator, q, { jobId: yes.jobId, pickup: nearby([NEIGHBOUR]) });
   const job = yes.f.job(yes.jobId);
@@ -169,7 +176,7 @@ test('signed in person: the waiver is checked for the booked day and the signed 
 });
 
 test('quotes already sent keep their saved prices; an unsent pickup saved before the rule is saved again first', async t => {
-  // A sofa pickup sent before the minimum existed: its saved lines have no Minimum pickup line.
+  // A sofa pickup sent before the minimum existed: its saved lines have no minimum line.
   const q = quote(SOFA()), f = fixture(ON), saved = await save(f, estimator, q), jobId = saved.job.id, job = f.job(jobId);
   const before = job.estimate.lineItems.filter(line => line.id !== PICKUP_MINIMUM_LINE_ID), oldTotal = sum(before);
   Object.assign(job.estimate, { lineItems: before, amountCents: oldTotal, amount: oldTotal / 100 });
@@ -183,7 +190,7 @@ test('quotes already sent keep their saved prices; an unsent pickup saved before
   assert.equal(view.status, 200, JSON.stringify(view.body));
   const shown = view.body.estimate;
   assert.equal(Math.round(shown.amount * 100), oldTotal, 'the saved price, below the minimum');
-  assert.equal(shown.lineItems.some(line => line.name === 'Minimum pickup'), false);
+  assert.equal(shown.lineItems.some(line => line.id === PICKUP_MINIMUM_LINE_ID || line.name === 'Minimum to come out'), false);
   const approved = await portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: shown.revision, amount_cents: oldTotal, estimate_fingerprint: shown.fingerprint, terms_version: shown.termsVersion, request_id: randomUUID() }, portalEnv);
   assert.equal(approved.status, 200, JSON.stringify(approved.body));
 });
@@ -224,9 +231,14 @@ test('every public page that names the $139 curbside price names the $250 minimu
   assert.deepEqual(unconditionedCurbside('<p>Set it at the curb for a flat $139 for up to 4 cubic yards, no walkthrough needed.</p>').length, 1, 'the check finds an unconditioned price');
 });
 
-test('a sale draft saved before the minimum is checked against it at send (no floor key: still a pickup)', async () => {
-  assert.equal(pickupFloorCents({ lines: [{ section: 'removal', group: 'junk' }] }), PICKUP_MINIMUM_CENTS, 'all hauling, no pickup facts: a pickup');
-  assert.equal(pickupFloorCents({ lines: [{ section: 'removal', group: 'cleaning-base' }] }), 0);
+test('a sale draft saved before the minimum is checked against it at send (no floor key: still floored)', async () => {
+  assert.equal(pickupFloorCents({ lines: [{ section: 'removal', group: 'junk' }] }), PICKUP_MINIMUM_CENTS, 'all hauling, no pickup facts: floored');
+  // Since 2026-10-30 the sale never takes any builder quote below $250 (garage work too); only a waived one has no floor,
+  // and a quote without a builder breakdown keeps its own rules.
+  assert.equal(pickupFloorCents({ lines: [{ section: 'removal', group: 'cleaning-base' }] }), PICKUP_MINIMUM_CENTS);
+  assert.equal(pickupFloorCents({ lines: [{ section: 'removal', group: 'cleaning-base' }], pickup: { haulingOnly: false, minimumCents: 0, waived: false, waivedCents: 0 } }), PICKUP_MINIMUM_CENTS);
+  assert.equal(pickupFloorCents({ lines: [{ section: 'removal', group: 'special' }], pickup: { haulingOnly: true, minimumCents: 0, waived: true, waivedCents: 8000 } }), 0);
+  assert.equal(pickupFloorCents(undefined), 0);
   // A $500 half load saved with $400 off before deploy: its breakdown has no pickup facts.
   const q = quote(selection({ removal: [{ id: id('Half load'), quantity: 1 }], shelving: [], storage: [] })), f = fixture(ON), saved = await save(f, estimator, q, { extra: { winter_sale: { apply: true } } }), jobId = saved.job.id, job = f.job(jobId);
   const old = [...job.estimate.lineItems.filter(line => line.id !== WINTER_SALE_LINE_ID), { ...job.estimate.lineItems.find(line => line.id === WINTER_SALE_LINE_ID), unitCents: -40000, totalCents: -40000, amount: -400 }];

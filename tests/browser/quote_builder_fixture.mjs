@@ -49,7 +49,7 @@ const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
     if (url.pathname === '/__state') {
-      const jobs = [...f.rows.entries()].filter(([key, row]) => key.startsWith('jobs/') && row.quoteDraft).map(([, row]) => ({ id: row.id, estimate: row.estimate, quoteDraft: { compositePricing: row.quoteDraft.compositePricing, breakdown: row.quoteDraft.breakdown } }));
+      const jobs = [...f.rows.entries()].filter(([key, row]) => key.startsWith('jobs/') && row.quoteDraft).map(([, row]) => ({ id: row.id, crewNeeded: row.crewNeeded, estimatedDurationMin: row.estimatedDurationMin, estimate: row.estimate, quoteDraft: { compositePricing: row.quoteDraft.compositePricing, breakdown: row.quoteDraft.breakdown } }));
       response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ jobs })); return;
     }
     if (url.pathname === '/api/hub-auth' || url.pathname === '/api/firebase-session') { response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(url.pathname === '/api/hub-auth' ? PROFILE : { ok: true, token: 'synthetic' })); return; }
