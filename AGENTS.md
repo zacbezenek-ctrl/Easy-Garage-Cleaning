@@ -31,7 +31,7 @@ Run what your change touches before pushing. Recent `main` run times are given b
 **Root CI** (`egc-root-ci.yml`, always runs, about 2–3 min):
 ```sh
 npm install --ignore-scripts --no-audit --no-fund
-node --test tests/*.test.mjs              # ~5,300 tests, about 100 s locally; same as `npm test`
+node --test tests/*.test.mjs              # ~6,000 tests, about 3 min locally; same as `npm test`
 shopt -s globstar nullglob; for f in *.js crew/*.js functions/**/*.js; do node --check "$f"; done
 node scripts/render-before-after.mjs --check
 node scripts/funnel-definitions.mjs --check
@@ -51,8 +51,13 @@ EGC_FIREBASE_EMULATOR_TEST=1 node scripts/emulator-exec.mjs --project demo-egc-f
   'node --test --test-concurrency=1 tests/firestore-emulator*.test.mjs'
 FIELD_PLAYWRIGHT_MODULE=$PWD/node_modules/playwright/index.mjs node tests/field-execution.browser.mjs
 ```
-The workflow also runs `tests/dispatch-field.browser.mjs`, `field-multiday.browser.mjs`, `knock-emulator.test.mjs` and
-`knock.browser.mjs`; copy the exact lines from the workflow.
+The workflow also runs `tests/dispatch-field.browser.mjs`, `field-multiday.browser.mjs`,
+`team-lead-job-operations.browser.mjs`, `knock-emulator.test.mjs` and `knock.browser.mjs`; copy the exact lines from the
+workflow, except dispatch-field, which the workflow starts on the fixed field-day port. Run that one parallel-safe:
+```sh
+FIELD_PLAYWRIGHT_MODULE=$PWD/node_modules/playwright/index.mjs node scripts/emulator-exec.mjs \
+  --project demo-egc-dispatch-day --config firebase.field-day.json 'node tests/dispatch-field.browser.mjs'
+```
 
 **Mobile device e2e** (`egc-mobile-e2e.yml`, about 3–5 min). Never add Playwright to `package.json`:
 ```sh
@@ -65,7 +70,7 @@ npx --no-install playwright test -c tests/e2e/playwright.config.mjs
 accessibility ≥ 0.9. **Platform** (`egc-platform-ci.yml`): `pnpm install --frozen-lockfile && pnpm typecheck && pnpm test && pnpm build`.
 
 In a Claude Code container, Chromium is at `/opt/pw-browsers`; follow "Container recipe" in `docs/testing.md`
-(build-1243 symlinks, per-agent Postgres cluster). Never run `playwright install` there.
+(Python browser tests, per-agent Postgres cluster). Never run `playwright install` there.
 
 **Known flaky spots**, all with fixes already in place; do not paper over a new failure as "flaky":
 - Emulator port races: `emulator-exec.mjs` claims each run's ports under a cross-process lock, and retries once with fresh ports when firebase exits before the command starts.
