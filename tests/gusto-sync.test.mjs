@@ -122,7 +122,7 @@ test('the Gusto sync pays a rest break and leaves out a meal break, as the payro
   const shift = card({ clockOutAt: '2026-09-09T22:00:00Z', breaks: [rest, meal] });
   assert.equal(approvedTimecard(shift).hours, 7.5);
   assert.equal(approvedTimecard({ ...shift, breaks: [{ ...rest, kind: 'meal' }, meal] }).hours, 7.333);
-  assert.equal(approvedTimecard({ ...shift, breaks: [{ startAt: rest.startAt, endAt: rest.endAt }, meal] }).hours, 7.333);
+  assert.equal(approvedTimecard({ ...shift, breaks: [{ startAt: rest.startAt, endAt: rest.endAt }, meal] }).hours, 7.5, 'an unmarked 10-minute break is paid');
   // A rest break still has to sit inside the shift, and making a break paid or unpaid changes the reviewed source.
   assert.throws(() => approvedTimecard({ ...shift, breaks: [{ ...rest, startAt: '2026-09-09T13:00:00Z' }] }));
   assert.notDeepEqual(approvedTimecard(shift).source, approvedTimecard({ ...shift, breaks: [{ ...rest, kind: 'meal' }, meal] }).source);

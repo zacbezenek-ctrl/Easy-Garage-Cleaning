@@ -2,6 +2,7 @@ import { activeTimecard } from './employee-timecards.js';
 import { NO_CLOCK_IN_FIX, employeeJobTime } from './employee-job-time.js';
 import { addDays, validDate } from './dispatch-time.js';
 import { ptoPaidDays } from './pto-pay.js';
+import { paidBreak } from './break-pay.js';
 
 export const TIMESHEET_TIME_ZONE = 'America/Denver';
 const HOUR = 3600000;
@@ -11,7 +12,8 @@ const HOUR = 3600000;
 // Rule 4.1.1 requires time and one-half of the regular rate for work over 40 hours per workweek, over 12 hours
 // per workday, or over 12 consecutive hours without regard to the start and end of the workday (excluding
 // duty-free meal periods), "whichever calculation results in the greater payment of wages" - daily and weekly
-// overtime are never added together. Rule 5.2 paid rest periods count as time worked; duty-free meal periods do not.
+// overtime are never added together. Rule 5.2 paid rest periods count as time worked; duty-free meal periods do not
+// (which breaks are paid: break-pay.js, an unmarked break of 20 minutes or less is a paid rest).
 // Source to confirm: https://cdle.colorado.gov/dlss (Colorado Division of Labor Standards and Statistics).
 // Neither Colorado nor the FLSA requires double time, so doubleTime is always 0 and exists only for Gusto parity.
 // EGC interpretations the owner must confirm: the workday is the Denver calendar day of clock-in, so a shift is paid
@@ -82,8 +84,8 @@ export function timecardPayState(card) {
   return card.approvalStatus === 'approved' ? 'approved' : 'pending';
 }
 
-/** Worked intervals are the shift minus unpaid breaks. Rest breaks (kind 'rest') are paid time worked;
- * meal and legacy breaks without a kind stay unpaid. Invalid records are returned for manager review. */
+/** Worked intervals are the shift minus unpaid breaks. Paid breaks (break-pay.js: kind 'rest', or unmarked and 20 minutes
+ * or less) are time worked; meal breaks and longer unmarked breaks are unpaid. Invalid records are returned for manager review. */
 export function timecardWorkIntervals(card) {
   const start = instant(card?.clockInAt), end = instant(card?.clockOutAt);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end - start > 31 * 86400000) return { reason: 'invalid_shift_times' };
@@ -94,7 +96,7 @@ export function timecardWorkIntervals(card) {
     const from = instant(item.startAt), to = instant(item.endAt);
     if (!Number.isFinite(from) || !Number.isFinite(to) || from < previousEnd || to < from || to > end) return { reason: 'invalid_breaks' };
     previousEnd = to;
-    if (item.kind === 'rest') { restMs += to - from; continue; }
+    if (paidBreak(item, from, to)) { restMs += to - from; continue; }
     if (from > cursor) intervals.push({ start: cursor, end: from });
     cursor = to; unpaidMs += to - from;
   }
@@ -144,7 +146,7 @@ const group = (map, key, item) => { if (!map.has(key)) map.set(key, []); map.get
  * its first segment, say) is not split by job at all: its worked time is "Job time needs manager review", as the Hub
  * shows it. That label is only in the Job time text, never a review flag, and it changes no hour or pay column. */
 function cardJobTime(card, workedMs) {
-  const summary = employeeJobTime({ ...card, breaks: Array.isArray(card.breaks) ? card.breaks.filter(item => item?.kind !== 'rest') : card.breaks }, card.clockOutAt);
+  const summary = employeeJobTime({ ...card, breaks: Array.isArray(card.breaks) ? card.breaks.filter(item => !paidBreak(item)) : card.breaks }, card.clockOutAt);
   if (summary.needsReview) return { jobs: [], generalMs: 0, untrackedMs: 0, reviewMs: workedMs };
   return { jobs: summary.jobs, generalMs: summary.generalMs, untrackedMs: summary.untrackedMs, reviewMs: 0 };
 }

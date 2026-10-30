@@ -2,6 +2,7 @@
 // https://docs.gusto.com/app-integrations/reference/post-companies-company_uuid-time_tracking-time_sheets
 // https://docs.gusto.com/app-integrations/reference/put-time_tracking-time_sheets-time_sheet_uuid
 // A successful sheet write makes hours available in Gusto; it does not run payroll.
+import { paidBreak } from './break-pay.js';
 const ZONE = 'America/Denver';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const encoder = new TextEncoder();
@@ -36,8 +37,8 @@ export function approvedTimecard(raw) {
   const breaks = (raw.breaks || []).map(item => {
     const from = instant(item?.startAt), to = instant(item?.endAt);
     if (!Number.isFinite(from) || !Number.isFinite(to) || to < from || from < start || to > end) throw gustoTimecardError('Review this timecard’s incomplete or invalid break before syncing.');
-    // A rest break is paid time worked; meal breaks and breaks with no kind are unpaid (timesheet-week.js).
-    return item.kind === 'rest' ? [from, to, 'rest'] : [from, to];
+    // A paid break (break-pay.js: a rest break, or an unmarked one of 20 minutes or less) is time worked.
+    return paidBreak(item, from, to) ? [from, to, 'paid'] : [from, to];
   }).sort((a, b) => a[0] - b[0]);
   if (breaks.some((item, index) => index && item[0] < breaks[index - 1][1])) throw gustoTimecardError('Review overlapping breaks before syncing.');
   const hours = rounded((end - start - breaks.reduce((sum, [from, to, paid]) => paid ? sum : sum + to - from, 0)) / 3600000);

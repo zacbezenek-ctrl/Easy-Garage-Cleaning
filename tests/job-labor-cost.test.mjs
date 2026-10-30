@@ -124,8 +124,11 @@ test('paid rest breaks stay on the interrupted job while meal breaks are unpaid;
   const breaks = [{ startAt: at('2026-09-21', '10:00'), endAt: at('2026-09-21', '10:10'), kind: 'rest' }, { startAt: at('2026-09-21', '11:00'), endAt: at('2026-09-21', '11:30'), kind: 'meal' }];
   const rest = byJob(cost([tracked('rest', '2026-09-21', '08:00', '12:00', [['work', 'job-a', '08:00']], { breaks })]))['job-a'];
   assert.deepEqual([rest.approved.workHours, rest.approved.cost], [3.5, 70]);
+  // Unmarked, the 10-minute break is still paid and the 30-minute one is not (break-pay.js); both marked meal are unpaid.
   const legacy = byJob(cost([tracked('legacy', '2026-09-21', '08:00', '12:00', [['work', 'job-a', '08:00']], { breaks: breaks.map(({ kind, ...item }) => item) })]))['job-a'];
-  assert.deepEqual([legacy.approved.workHours, legacy.approved.cost], [3.333, 66.67]);
+  assert.deepEqual([legacy.approved.workHours, legacy.approved.cost], [3.5, 70]);
+  const meals = byJob(cost([tracked('meals', '2026-09-21', '08:00', '12:00', [['work', 'job-a', '08:00']], { breaks: breaks.map(item => ({ ...item, kind: 'meal' })) })]))['job-a'];
+  assert.deepEqual([meals.approved.workHours, meals.approved.cost], [3.333, 66.67]);
   const unratedResult = cost([tracked('unrated', '2026-09-21', '08:00', '12:00', [['work', 'job-a', '08:00']], { hourlyRate: undefined })]), unrated = byJob(unratedResult)['job-a'];
   assert.deepEqual([unrated.approved.cost, unrated.missingRateCount, unratedResult.coverage.reasons], [0, 1, ['missing_rate']]);
   assert.equal(byJob(cost([tracked('typed', '2026-09-21', '08:00', '12:00', [['work', 'job-a', '08:00']], { hourlyRate: '25' })]))['job-a'].approved.cost, 100);

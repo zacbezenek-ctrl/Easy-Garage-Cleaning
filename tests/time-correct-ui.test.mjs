@@ -313,6 +313,29 @@ test('a timecard row on Time approvals pays its rest break and leaves out its me
   assert.equal(rowOf(main, 'rested').querySelector('strong').textContent, '7.50');
 });
 
+test('an unmarked break of 20 minutes or less is paid on the row and in Correct time; unticking it saves it as an unpaid meal break', async () => {
+  // 07:00 to 15:00 with a crew-tapped 15-minute break (no kind): a paid rest, so 8.00 h on the row.
+  const short = card('short', 'Crew.One', at('2026-09-21', '07:00'), at('2026-09-21', '15:00'), { approvalStatus: 'pending', breaks: [{ startAt: at('2026-09-21', '10:00'), endAt: at('2026-09-21', '10:15') }] });
+  const screen = hub({ timecards: [short] }), { page, server, dialog, input, submit } = screen, main = await show(screen, 'timesheets');
+  assert.equal(rowOf(main, 'short').querySelector('strong').textContent, '8.00');
+  tap(page, buttonOf(main, 'short', 'Correct time'));
+  const box = dialog().querySelector('.tc-break input[type="checkbox"]'), preview = () => dialog().querySelector('.tc-preview').textContent;
+  assert.equal(box.checked, true);
+  assert.equal(preview(), '8.00 h paid time over a 8.00 h shift, including 0.25 h of paid rest breaks.');
+  // Unmarked, it follows its length: over 20 minutes it is unpaid.
+  input('break-0-end', '2026-09-21T10:30');
+  assert.deepEqual([box.checked, preview()], [false, '7.50 h paid time over a 8.00 h shift with 0.50 h unpaid breaks.']);
+  input('break-0-end', '2026-09-21T10:15');
+  assert.equal(box.checked, true);
+  box.checked = false;
+  box.dispatchEvent({ type: 'change', target: box });
+  assert.equal(preview(), '7.75 h paid time over a 8.00 h shift with 0.25 h unpaid breaks.');
+  input('reason', 'Lunch was off the clock');
+  await submit();
+  assert.deepEqual(server.posts[0].data.breaks.map(item => item.kind), ['meal'], 'the manager\'s marking is saved');
+  assert.equal(server.timecards[0].hours, 7.75);
+});
+
 test('Correct time on a shift still running says so, and with a paid rest break the preview counts it in the paid time', async () => {
   const screen = hub({ timecards: WEEK }), { page, dialog, input } = screen, main = await show(screen, 'timesheets');
   tap(page, buttonOf(main, 'today', 'Correct time'));

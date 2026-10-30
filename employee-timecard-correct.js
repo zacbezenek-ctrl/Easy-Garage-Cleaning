@@ -33,7 +33,11 @@ const dayLabel=value=>{const at=Date.parse(value||'');return Number.isFinite(at)
 const hours=ms=>(ms/3600000).toFixed(2);
 const rateText=value=>value===undefined||value===null||value===''?'':String(value);
 
-const breakDraft=item=>({start:shown(item.startAt)?.wall||'',end:shown(item.endAt)?.wall||'',kind:item.kind==='rest'||item.kind==='meal'?item.kind:'',origStart:shown(item.startAt),origEnd:shown(item.endAt),origKind:item.kind==='meal'?'meal':''});
+// Which breaks are paid, by the server's rule (functions/_lib/break-pay.js): a manager's marking ('rest' paid, 'meal' unpaid)
+// wins, and an unmarked break is paid at 20 minutes or less.
+const paidBreak=(kind,ms)=>kind==='rest'||kind!=='meal'&&ms<=20*60000;
+const draftMs=item=>{try{return Date.parse(instantOf(item.end,item.origEnd,'break end'))-Date.parse(instantOf(item.start,item.origStart,'break start'));}catch{return NaN;}};
+const breakDraft=item=>{const kind=item.kind==='rest'||item.kind==='meal'?item.kind:'';return{start:shown(item.startAt)?.wall||'',end:shown(item.endAt)?.wall||'',kind,origStart:shown(item.startAt),origEnd:shown(item.endAt),origKind:kind};};
 function draftFor(entry,kind,options){
   const breaks=(Array.isArray(entry.breaks)?entry.breaks:[]).filter(Boolean).map(breakDraft);
   return{clockIn:shown(entry.clockInAt)?.wall||'',clockOut:shown(entry.clockOutAt)?.wall||'',origIn:shown(entry.clockInAt),origOut:shown(entry.clockOutAt),breaks,jobId:String(entry.jobId||''),
@@ -81,13 +85,13 @@ function body(strict=true){
   if(d.rate!==null&&d.rate.trim()!==d.origRate){if(!/^\d+(?:\.\d{1,2})?$/.test(d.rate.trim())||Number(d.rate)>1000)throw new Error('Enter an hourly rate such as 22 or 22.50.');out.hourlyRate=Number(d.rate.trim());}
   return out;
 }
-// Paid time the correction would save: the shift less its unpaid (meal) breaks. Rest breaks are paid, on the timecard's
-// row on Time approvals and in payroll alike.
+// Paid time the correction would save: the shift less its unpaid breaks. Paid breaks count, on the timecard's row on Time
+// approvals and in payroll alike.
 function preview(){
   try{
     const data=body(false),start=Date.parse(data.clockInAt||S.entry.clockInAt),end=Date.parse(data.clockOutAt);
     const breaks=data.breaks||(Array.isArray(S.entry.breaks)?S.entry.breaks.map(item=>item?.endAt?item:{...item,endAt:data.clockOutAt}):[]);
-    let unpaid=0,rest=0;for(const item of breaks){const ms=Math.max(0,Date.parse(item?.endAt)-Date.parse(item?.startAt))||0;if(item?.kind==='rest')rest+=ms;else unpaid+=ms;}
+    let unpaid=0,rest=0;for(const item of breaks){const ms=Math.max(0,Date.parse(item?.endAt)-Date.parse(item?.startAt))||0;if(paidBreak(item?.kind,ms))rest+=ms;else unpaid+=ms;}
     return`${hours(end-start-unpaid)} h paid time over a ${hours(end-start)} h shift${unpaid?` with ${hours(unpaid)} h unpaid breaks`:''}${rest?`, including ${hours(rest)} h of paid rest breaks`:''}.`;
   }catch{return'Enter the times to see the corrected hours.';}
 }
@@ -96,7 +100,7 @@ function field(label,control,help){return h('div',{class:'tc-field'},h('label',{
 function bind(key,props={},target=()=>S.draft){const input=h(props.tag||'input',{...props,tag:undefined,value:target()[key]??''});input.addEventListener('input',()=>{target()[key]=input.value;S.edited=true;update();});return input;}
 function breakRow(item,index){
   const own=()=>S.draft.breaks[index];
-  const paid=h('input',{type:'checkbox',checked:item.kind==='rest',onchange:event=>{own().kind=event.target.checked?'rest':own().origKind;S.edited=true;update();}});
+  const paid=h('input',{type:'checkbox',checked:paidBreak(item.kind,draftMs(item)),onchange:event=>{const b=own(),want=event.target.checked;b.kind=paidBreak(b.origKind,draftMs(b))===want?b.origKind:want?'rest':'meal';S.edited=true;update();}});
   return h('fieldset',{class:'tc-break'},h('legend',{},`Break ${index+1}`),
     h('div',{class:'tc-pair'},field('Start (Denver)',bind('start',{type:'datetime-local',name:`break-${index}-start`,required:true},own)),field('End (Denver)',bind('end',{type:'datetime-local',name:`break-${index}-end`,required:true},own))),
     h('div',{class:'tc-break-foot'},h('label',{class:'tc-check'},paid,'Paid rest break'),h('button',{type:'button',class:'tc-button',disabled:S.busy,onclick:()=>{S.draft.breaks.splice(index,1);S.edited=true;render();}},'Remove break')));
@@ -127,7 +131,9 @@ function fields(){
 }
 const retrying=()=>Boolean(S.pending&&S.errorKind==='unknown'&&!S.edited);
 const primaryLabel=()=>retrying()?'Retry the same save':S.kind==='close'?'Close shift':'Save correction';
-function update(){const node=S.dialog?.querySelector('.tc-preview');if(node)node.textContent=preview();const button=S.dialog?.querySelector('.tc-actions .primary');if(button&&!S.busy)button.textContent=primaryLabel();}
+function update(){const node=S.dialog?.querySelector('.tc-preview');if(node)node.textContent=preview();
+  // An unmarked break's paid box follows its length as the times are edited.
+  [...(S.dialog?.querySelectorAll('.tc-break input[type="checkbox"]')||[])].forEach((box,index)=>{const item=S.draft?.breaks?.[index];if(item)box.checked=paidBreak(item.kind,draftMs(item));});const button=S.dialog?.querySelector('.tc-actions .primary');if(button&&!S.busy)button.textContent=primaryLabel();}
 function render(){
   const dialog=S.dialog;if(!dialog)return;
   const [kicker,title]=TITLES[S.kind],e=S.entry;

@@ -413,7 +413,8 @@ test('with staff roles on, a sales business user’s own card is saved as before
     staff = authorizeTimecard({ session: sales, manager: true, id, incoming, existing: staff, now, env: on });
     assert.deepEqual(plain(staff), plain(legacy));
   }
-  assert.deepEqual([staff.clockOutAt, staff.status, staff.approvalStatus, staff.hours], [at('2026-09-22', '12:00'), 'submitted', 'pending', 4.75]);
+  // The 15-minute break is a paid rest (break-pay.js): 5 hours.
+  assert.deepEqual([staff.clockOutAt, staff.status, staff.approvalStatus, staff.hours], [at('2026-09-22', '12:00'), 'submitted', 'pending', 5]);
   assert.strictEqual(authorizeTimecard({ session: sales, manager: true, id, incoming: steps[3][1], existing: staff, now: at('2026-09-22', '12:05'), env: on, queued: true }), staff, 'a queued clock-out replay changes nothing');
   // Moving one's own card onto someone else makes it theirs, so that needs time.approve too.
   assert.throws(() => authorizeTimecard({ session: sales, manager: true, id, incoming: { employee: 'crew.static' }, existing: staff, now: at('2026-09-22', '12:05'), env: on }), refused(403, 'EMPLOYEE_TIMECARD_INVALID', /another employee/));
@@ -481,7 +482,8 @@ test('HTTP: with staff roles on, the sales business user still clocks in, takes 
   const clockOut = await on('AlexK', id, { clockOutAt: now(), status: 'submitted', approvalStatus: 'pending', hours: 3.75, grossEstimate: 0, locationTracking: false, locationStatus: 'stopped', updatedAt: now() });
   assert.equal(clockOut.status, 200, clockOut.error);
   const card = await read(id);
-  assert.deepEqual([card.employee, card.clockOutAt, card.status, card.approvalStatus, card.hours, card.breaks.length], ['alexk', iso(at('2026-09-22', '12:00')), 'submitted', 'pending', 3.75, 1]);
+  // The 15-minute break is a paid rest (break-pay.js): 4 hours.
+  assert.deepEqual([card.employee, card.clockOutAt, card.status, card.approvalStatus, card.hours, card.breaks.length], ['alexk', iso(at('2026-09-22', '12:00')), 'submitted', 'pending', 4, 1]);
 });
 
 test('HTTP: with staff roles off (the default), the same sales-stored business user closes and approves another employee’s card as before', async t => {
