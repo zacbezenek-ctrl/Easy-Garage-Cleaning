@@ -201,6 +201,21 @@ test('the money API commit, receipt, audit and ledger contracts hold on real Fir
     assert.deepEqual([receipt.scope, receipt.targets.map(row => row.id)], ['numberless_invoice_backfill', [madeUp]]);
     assert.equal((await runNumberlessInvoiceBackfill(strict, { apply: true, now: NOW })).writes.planned, 0, 'a rerun finds 0');
   });
+
+  await t.test('Review queues find the jobs a card payment was recorded on above their total with one query on real Firestore', async () => {
+    const { stripeReviewOverview, stripeReviewStorage } = await import('../functions/_lib/stripe-reviews.js');
+    const quoted = { type: 'job', customerId: `cust-${run}`, customer: 'Synthetic Customer', date: '2026-09-24', status: 'completed', pipelineStatus: 'completed', total: 1000, estimate: { amount: 1000, status: 'accepted' }, customerApproval: { status: 'approved', amount: 1000 } };
+    const over = `money-over-${run}`, corrected = `money-corrected-${run}`, unflagged = `money-unflagged-${run}`;
+    await store.commit([
+      { collection: 'jobs', id: over, patch: { ...quoted, payment: { amount: 1750, verified: true }, paymentReviewRequired: true } },
+      { collection: 'jobs', id: corrected, patch: { ...quoted, payment: { amount: 1000, verified: true }, paymentReviewRequired: true } },
+      { collection: 'jobs', id: unflagged, patch: { ...quoted, payment: { amount: 1200, verified: true } } },
+    ]);
+    const reviews = stripeReviewStorage({}, fetcher), flagged = await reviews.flaggedJobs();
+    assert.deepEqual([flagged.rows.map(row => row.id).sort(), flagged.complete], [[corrected, over].sort(), true], 'only flagged jobs are read');
+    const view = await stripeReviewOverview(reviews, owner, new Date(NOW));
+    assert.deepEqual(view.overpaidJobs.map(row => [row.jobId, row.overpaidCents]), [[over, 75000]], 'only a job still paid above its total is listed');
+  });
 });
 
 // TIPS: a tipped charge with no review is booked in ONE commit, the job update plus a precondition-only delete of

@@ -2,7 +2,8 @@
  * GET /api/stripe-reviews — managers (requireDispatcher) see the Stripe items
  * the webhook held for a person: confirmed crew charges that could not be
  * applied to their job (payment_reviews) and Garage Guard members without an
- * exact Hub customer link (membership_reviews). No query params.
+ * exact Hub customer link (membership_reviews), and the jobs a card payment was
+ * recorded on above their total (overpaidJobs, read-only). No query params.
  * POST /api/stripe-reviews {action, requestId, reviewId, expectedRevision, ...}
  * resolves one open review: payment.reconcile {note} (checked against Stripe,
  * read-only: a charge Stripe shows refunded is never reconciled; managers get
@@ -64,7 +65,7 @@ export function stripeReviewHandlers({ session = getHubSession, storage = stripe
         const actor = await session(request, env);
         requireDispatcher(actor, env);
         if ([...new URL(request.url).searchParams.keys()].length) return reply(400, { ok: false, code: 'stripe_review_invalid_query', error: 'Stripe reviews take no query parameters.' });
-        return reply(200, await stripeReviewOverview(storage(env), actor, now(), { checkoutBlock: paymentReviewCheckoutBlockEnabled(env) }));
+        return reply(200, await stripeReviewOverview(storage(env), actor, now(), { checkoutBlock: paymentReviewCheckoutBlockEnabled(env), totalsMode: moneyTotalsMode(env) }));
       } catch (error) {
         if (/^(stripe_review_|dispatch_)/.test(String(error?.code || ''))) return reply(error.status || 503, { ok: false, code: error.code, error: error.message });
         return reply(503, { ok: false, code: 'stripe_review_unavailable', error: 'Stripe reviews could not be loaded. Retry.' });
