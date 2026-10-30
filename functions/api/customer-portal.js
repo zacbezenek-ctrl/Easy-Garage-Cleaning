@@ -326,7 +326,7 @@ function customerExperience(job, owner = true, { billing = false, now = '' } = {
       preferredCrew: Boolean(request.preferredCrew), notes: safe(request.notes, 600), status: safe(request.status || 'pending', 30), requestedAt: safe(request.requestedAt, 50),
     })).sort((a, b) => String(b.requestedAt).localeCompare(String(a.requestedAt))),
     giftWallet: {
-      cards: cards.slice(0, 20).map(card => ({ id: id(card.id, 'credit'), label: safe(card.label || 'EGC service credit', 120), issuedAmount: Math.max(0, amount(card.issuedAmount)), remainingAmount: Math.max(0, amount(card.remainingAmount)), source: safe(card.source, 100), issuedAt: safe(card.issuedAt, 50) })),
+      cards: cards.slice(0, 20).map(card => ({ id: id(card.id, 'credit'), label: safe(card.label || 'EGC service credit', 120), issuedAmount: Math.max(0, amount(card.issuedAmount)), remainingAmount: Math.max(0, Math.round(amount(card.remainingAmount) * 100) / 100), source: safe(card.source, 100), issuedAt: safe(card.issuedAt, 50) })),
       available: cards.reduce((sum, card) => sum + Math.max(0, amount(card.remainingAmount)), 0),
       applied: redemptions.reduce((sum, redemption) => sum + Math.max(0, amount(redemption.amount)), 0),
     },
@@ -777,6 +777,10 @@ async function handlePost({ request, env, waitUntil }, { clock, read, alerts, li
   }
 
   if (body.action === 'apply_gift_credit') {
+    // The browser sends dollars. Like a tip, credit is taken only in whole cents (binary noise such as 16.670000000000002
+    // is a whole cent, 33.333 is not), and anything else is refused before anything is written.
+    const requestedCents = typeof body.amount === 'number' ? Math.round(body.amount * 100) : NaN;
+    if (!Number.isSafeInteger(requestedCents) || requestedCents < 1 || Math.abs(body.amount * 100 - requestedCents) > 1e-6) return reply(400, { ok: false, code: 'CUSTOMER_PORTAL_CREDIT_INVALID', error: 'Choose a credit amount in whole dollars and cents.' });
     if (unsentQuoteDraft(result.job)) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE', error: 'Your estimate is being updated. Credits can be applied once you review and approve it.' });
     if (customerPaymentNeedsReview(result.job)) return reply(409, { ok: false, error: 'A recorded payment needs team verification before applying another payment or credit' });
     // finance is what payment.amount is written from; served is the balance the credit is capped at and answered with
@@ -794,15 +798,14 @@ async function handlePost({ request, env, waitUntil }, { clock, read, alerts, li
     const cardId = id(body.card_id, 'credit');
     const card = cards.find(item => item.id === cardId);
     if (!card || amount(card.remainingAmount) < .01) return reply(409, { ok: false, error: 'That credit is no longer available' });
-    const requested = Math.max(.01, amount(body.amount));
-    const applied = Math.min(requested, amount(card.remainingAmount), served.balance);
-    const updatedCards = cards.map(item => item.id === cardId ? { ...item, remainingAmount: Math.max(0, amount(item.remainingAmount) - applied), updatedAt: now } : item);
+    const remainingCents = Math.round(amount(card.remainingAmount) * 100), appliedCents = Math.min(requestedCents, remainingCents, Math.round(served.balance * 100)), applied = appliedCents / 100;
+    const updatedCards = cards.map(item => item.id === cardId ? { ...item, remainingAmount: Math.max(0, remainingCents - appliedCents) / 100, updatedAt: now } : item);
     // Unified: payment.amount keeps every recorded dollar (an older tip inside it included) plus the credit, which is
     // already capped at the unified balance; capping it at today's total would drop the credit above today's balance.
-    const paidTotal = served === finance ? Math.min(finance.total, finance.paid + applied) : (Math.round(finance.paid * 100) + Math.round(applied * 100)) / 100;
-    let balance = Math.max(0, finance.total - paidTotal), shown = { total: finance.total, paid: paidTotal };
+    const paidTotal = served === finance ? Math.min(Math.round(finance.total * 100), Math.round(finance.paid * 100) + appliedCents) / 100 : (Math.round(finance.paid * 100) + appliedCents) / 100;
+    let balance = Math.max(0, Math.round(finance.total * 100) - Math.round(paidTotal * 100)) / 100, shown = { total: finance.total, paid: paidTotal };
     if (served !== finance) {
-      const totalCents = Math.round(served.total * 100), paidCents = Math.min(totalCents, Math.round(served.paid * 100) + Math.round(applied * 100));
+      const totalCents = Math.round(served.total * 100), paidCents = Math.min(totalCents, Math.round(served.paid * 100) + appliedCents);
       shown = { total: served.total, paid: paidCents / 100 }; balance = (totalCents - paidCents) / 100;
     }
     const redemption = { id: newId('redemption'), requestId, cardId, amount: applied, appliedAt: now, jobId: result.session.jobId };
@@ -812,7 +815,7 @@ async function handlePost({ request, env, waitUntil }, { clock, read, alerts, li
     // issued, or numbered and live, as before the flag) and never writes one on a job no one invoiced.
     const touchInvoice = !moneyInvoiceStateEnabled(env) || invoiceTakesPayment(result.job.invoice);
     const jobPatch = {
-      payment: { ...(result.job.payment || {}), amount: paidTotal, giftCreditApplied: amount(result.job.payment?.giftCreditApplied) + applied, lastAmount: applied, lastReceivedAt: now, method: finance.paid > 0 ? 'mixed_with_gift_credit' : 'gift_credit', verified: true },
+      payment: { ...(result.job.payment || {}), amount: paidTotal, giftCreditApplied: (Math.round(amount(result.job.payment?.giftCreditApplied) * 100) + appliedCents) / 100, lastAmount: applied, lastReceivedAt: now, method: finance.paid > 0 ? 'mixed_with_gift_credit' : 'gift_credit', verified: true },
       ...(touchInvoice ? { invoice: { ...(result.job.invoice || {}), amount: shown.total, paid: shown.paid, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now } } : {}), updatedAt: now,
     };
     try {

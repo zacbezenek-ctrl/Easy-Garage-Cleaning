@@ -224,6 +224,36 @@ test('server-issued credits and decisions work unchanged in the customer portal:
   assert.equal(portal.calls.every(call => call.host === 'firestore.googleapis.com'), true); assert.ok(portalEnv.CUSTOMER_PORTAL_SECRET);
 });
 
+test('the portal applies credit only in whole cents: a part-cent or non-number amount is refused with 400 and nothing is written', async t => {
+  for (const mode of [{}, { MONEY_UNIFIED_TOTALS: 'true' }]) {
+    const testEnv = { ...portalEnv, ...mode }, label = mode.MONEY_UNIFIED_TOTALS ? 'unified' : 'off';
+    const job = { type: 'job', customerId: 'c1', customer: 'Synthetic Customer', date: '2026-09-24', status: 'in_progress', customerPortalLinkVersion: 0, ...PAID,
+      giftWallet: { cards: [{ id: 'credit-1', label: 'Synthetic credit', issuedAmount: 50, issuedAmountCents: 5000, remainingAmount: 50 }] } };
+    const portal = portalStore(t, { 'job-gift': job }), handlers = portalHandlers(NOW), cookie = await portalCookie('job-gift');
+    for (const [n, amount] of [33.333, 0.005, 10.999, -10, 0, '25', null, undefined].entries()) {
+      const refused = await portalPost(handlers, cookie, { action: 'apply_gift_credit', card_id: 'credit-1', amount, request_id: `credit-bad-${n}` }, testEnv);
+      assert.deepEqual([refused.status, refused.body.code], [400, 'CUSTOMER_PORTAL_CREDIT_INVALID'], `${label}: ${JSON.stringify(amount)}`);
+    }
+    assert.equal(portal.writes.length + portal.commits.length, 0, `${label}: a refused amount writes nothing`);
+    assert.deepEqual([portal.job('job-gift').payment.amount, portal.job('job-gift').giftWallet.cards[0].remainingAmount], [700, 50]);
+    const applied = await portalPost(handlers, cookie, { action: 'apply_gift_credit', card_id: 'credit-1', amount: 33.33, request_id: 'credit-whole-1' }, testEnv);
+    assert.deepEqual([applied.status, applied.body.applied, applied.body.balance], [200, 33.33, 666.67], label);
+    let saved = portal.job('job-gift');
+    assert.deepEqual([saved.payment.amount, saved.giftWallet.cards[0].remainingAmount, saved.giftWallet.redemptions[0].amount], [733.33, 16.67, 33.33], `${label}: whole cents are stored`);
+    // What the browser sends for the rest of a card carries binary noise (50 - 33.33 in floating point); it is still whole cents.
+    const rest = await portalPost(handlers, cookie, { action: 'apply_gift_credit', card_id: 'credit-1', amount: 50 - 33.33, request_id: 'credit-whole-2' }, testEnv);
+    assert.deepEqual([rest.status, rest.body.applied, rest.body.balance], [200, 16.67, 650], label);
+    saved = portal.job('job-gift');
+    assert.deepEqual([saved.payment.amount, saved.giftWallet.cards[0].remainingAmount, saved.payment.giftCreditApplied], [750, 0, 50], label);
+    // A card an earlier part-cent redemption left at $16.667 is shown in whole cents, and what the browser sends for it is taken.
+    portal.edit('job-gift', { giftWallet: { ...saved.giftWallet, cards: [...saved.giftWallet.cards, { id: 'credit-2', label: 'Synthetic credit', issuedAmount: 50, remainingAmount: 16.667 }] } });
+    const shown = (await portalView(handlers, cookie, testEnv)).body.experience.giftWallet.cards.find(card => card.id === 'credit-2');
+    assert.equal(shown.remainingAmount, 16.67, label);
+    const old = await portalPost(handlers, cookie, { action: 'apply_gift_credit', card_id: 'credit-2', amount: Math.min(shown.remainingAmount, applied.body.balance), request_id: 'credit-whole-3' }, testEnv);
+    assert.deepEqual([old.status, old.body.applied, portal.job('job-gift').giftWallet.cards[1].remainingAmount, portal.job('job-gift').payment.amount], [200, 16.67, 0, 766.67], label);
+  }
+});
+
 test('lifecycle receipts, the gift-card sales ledger and its reference claims are explicitly server-only in firestore.rules', async () => {
   const { readFileSync } = await import('node:fs');
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
