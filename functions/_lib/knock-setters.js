@@ -2,12 +2,13 @@
 // Reads canonical close/payment evidence; never creates an appointment or payout.
 import { knockFailure, write } from './knock-store.js';
 import { dispatchStorage } from './dispatch-storage.js';
-import { customerMoneyTotals, paymentLedger, refundsRecorded } from './money-core.js';
+import { customerMoneyTotals, moneyCents, paymentLedger, refundsRecorded } from './money-core.js';
 import { walkthroughStatus } from './walkthrough-state.js';
 import { commissionAllocations } from './knock-allocations.js';
 import { builderLaborLine, included } from './quote-model.js';
 import { isOwner, repKeyFor } from './knock-access.js';
-import { CHANNEL_PERCENTS } from '../../crew/knock-money.js';
+import { CHANNEL_PERCENTS, ONLINE_APPROVAL_DAYS, SETTER_CONTRACT_V1 } from '../../crew/knock-money.js';
+import { addDays, validDate, zonedDate } from '../../crew/knock-time.js';
 
 const ID = /^[A-Za-z0-9_-]{1,120}$/, STAFF_KEY = /^[a-z0-9._-]{1,64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -17,27 +18,44 @@ export const SETTER_JOB_FIELDS = Object.freeze(['type', 'status', 'pipelineStatu
   'payment', 'deposit', 'invoice', 'refunds', 'changeOrders', 'giftWallet',
   // The approved setter terms read the signed handoff's evidence (signedGarageHandoff: its lines, else its finish scope)
   // and when a cancelled job was cancelled (adjustmentHold).
-  'handoffVersion', 'handoffRequestId', 'serviceType', 'scope.finish', 'cancelledAt']);
+  'handoffVersion', 'handoffRequestId', 'serviceType', 'scope.finish', 'cancelledAt',
+  // knock-setter-v2: when the job was completed (jobCompletedAt), the quote a walkthrough saved (approvedWalkthroughQuote)
+  // and who did the walkthrough (walkthroughEstimator).
+  'completedAt', 'fieldExecution.completion.completedAt', 'quoteDraft.sourceWalkthroughId', 'walkthroughVisit.startedBy']);
 const FIELDS = SETTER_JOB_FIELDS;
 
 // Owner decision 2026-10-17: a D2D-set walkthrough pays 13% to the setter plus 7% to the
-// estimator, 20% total of the full garage job including goods (was 12% + 7%).
+// estimator, 20% total of the full garage job including goods (was 12% + 7%). Owner decision 2026-10-30
+// (knock-setter-v2): earned when the job is completed and paid in full.
 export const setterPolicy = Object.freeze({ channel: 'appointment_setter', rate: CHANNEL_PERCENTS.setter / 100, estimatorRate: CHANNEL_PERCENTS.estimator / 100,
   totalRate: (CHANNEL_PERCENTS.setter + CHANNEL_PERCENTS.estimator) / 100,
-  earningTrigger: 'closed_and_collected', payoutCadence: 'biweekly',
-  approval: 'unconfigured', gaps: ['recipient_verification', 'calculation_base', 'payroll_cycle_anchor', 'partial_collections', 'refund_clawbacks'] });
+  earningTrigger: 'completed_and_collected', payoutCadence: 'biweekly',
+  approval: 'unconfigured', gaps: ['recipient_verification', 'calculation_base', 'payroll_cycle_anchor', 'partial_collections'] });
+
+/* The jobs saved from these walkthroughs (quote-draft.js createDraft: sourceWalkthroughId), masked like the rest, 30
+   walkthroughs a query: Map walkthroughId -> [jobs]. Only knock-setter-v2 reads them (approvedWalkthroughQuote). */
+const quoteJobsFor = store => async ids => {
+  const unique = [...new Set(ids.filter(id => ID.test(String(id || ''))))], found = new Map();
+  if (typeof store.walkthroughJobs !== 'function') return found;
+  for (let at = 0; at < unique.length; at += 30) for (const job of await store.walkthroughJobs(unique.slice(at, at + 30), [...FIELDS])) {
+    if (!found.has(job.sourceWalkthroughId)) found.set(job.sourceWalkthroughId, []);
+    found.get(job.sourceWalkthroughId).push(job);
+  }
+  return found;
+};
 
 // Walkthroughs and jobs by id, masked to what the setter and estimator projections read, from a dispatch store, a batch
 // of up to 100 per request (one or two requests for a page of setter records, not two per record): Map id -> row.
-export const setterBatchReaderFor = store => async ids => {
+// Its quoteJobs reads the jobs saved from walkthroughs that never converted (quoteJobsFor).
+export const setterBatchReaderFor = store => Object.assign(async ids => {
   const unique = [...new Set(ids.filter(id => ID.test(String(id || ''))))], rows = [];
   for (let at = 0; at < unique.length; at += 100) rows.push(...await store.readMany('jobs', unique.slice(at, at + 100), [...FIELDS]));
   return new Map(rows.map(row => [row.id, row]));
-};
+}, { quoteJobs: quoteJobsFor(store) });
 
 export function setterJobReader(env) {
   const store = dispatchStorage(env);
-  return async id => (await store.readMany('jobs', [id], FIELDS))[0] || null;
+  return Object.assign(async id => (await store.readMany('jobs', [id], FIELDS))[0] || null, { quoteJobs: quoteJobsFor(store) });
 }
 
 const same = (a, b) => ['walkthroughId', 'setterKey', 'serviceClassification', 'classificationReference', 'estimatorKey', 'estimatorReference'].every(key => a?.[key] === b?.[key]);
@@ -120,9 +138,50 @@ export const firstHandoffSigner = job => {
   const key = String(job?.acceptance?.firstRecordedBy || job?.acceptance?.recordedBy || '').trim().toLowerCase();
   return STAFF_KEY.test(key) ? key : '';
 };
-// The staff key must be the setter's own (repKeyFor), so a visit an estimator was given can never pay the rep 25%.
-export const repRanWalkthrough = (record, job) => record?.selfRun === true && STAFF_KEY.test(String(record.repStaffKey || '')) && repKeyFor(record.repStaffKey) === record.setterKey &&
-  firstHandoffSigner(job) === record.repStaffKey;
+// The staff key must be the setter's own (repKeyFor), so a visit an estimator was given can never pay the rep 25%. A quote
+// saved from the walkthrough and approved (ONLINE-APPROVAL, visit given) has no signer: whoever did the walkthrough.
+export const repRanWalkthrough = (record, job, visit = null) => record?.selfRun === true && STAFF_KEY.test(String(record.repStaffKey || '')) && repKeyFor(record.repStaffKey) === record.setterKey &&
+  (firstHandoffSigner(job) || (visit && approvedWalkthroughQuote(job) ? walkthroughEstimator(visit) : '')) === record.repStaffKey;
+
+/* ONLINE-APPROVAL (owner decision 2026-10-30, knock-setter-v2): a quote saved from a walkthrough (quote-draft.js
+   createDraft: sourceWalkthroughId on the job and on its quoteDraft) and approved by the customer in the portal or as the
+   office recorded it (customer-portal.js, money-service.js estimate.record_approval), never signed on site. It never
+   converts the walkthrough (only a signed handoff sets convertedJobId), so the ledgers find it by its walkthrough. Approved
+   within ONLINE_APPROVAL_DAYS of the walkthrough it pays exactly as a signed one: its garage evidence is the approved
+   quote's (approvedGarageQuote, as signedGarageHandoff), its estimator the one who did the walkthrough
+   (walkthroughEstimator, as the handoff's signer), never whoever recorded or sent the quote. Approved later, it pays
+   nothing (approved_after_30_days). A web or phone lead with no walkthrough has nothing to pay. */
+const ONLINE_SOURCES = ['customer_portal', 'employee_recorded'];
+export const approvedWalkthroughQuote = job => job?.type === 'job' && ID.test(String(job.sourceWalkthroughId || '')) && job.quoteDraft?.sourceWalkthroughId === job.sourceWalkthroughId &&
+  job.customerApproval?.status === 'approved' && ONLINE_SOURCES.includes(job.customerApproval.source) && job.estimate?.acceptanceMethod !== 'in_person_signature' && job.handoffVersion !== 1;
+export const approvedGarageQuote = job => approvedWalkthroughQuote(job) && job.serviceType === 'Garage transformation' && signedGarageWork(job);
+// Who did the walkthrough: the staff key that finished it (walkthrough-visit.js), else the one that started it.
+export const walkthroughEstimator = visit => {
+  const key = String(visit?.walkthroughOutcome?.performedBy || visit?.walkthroughVisit?.startedBy || '').trim().toLowerCase();
+  return STAFF_KEY.test(key) ? key : '';
+};
+// 'within' ONLINE_APPROVAL_DAYS of the walkthrough (Denver dates: the day it was finished, else its booked day), 'after',
+// or 'unverified' when either date cannot be read. The approval is the one collectionEvidence closes the job with.
+export function approvalWindow(visit, job) {
+  const done = [visit?.walkthroughCompletedAt, visit?.walkthroughOutcome?.finishedAt].find(value => typeof value === 'string' && Number.isFinite(Date.parse(value)));
+  const from = done ? zonedDate(Date.parse(done)) : validDate(visit?.date) ? visit.date : null, at = Date.parse(job?.estimate?.acceptedAt || job?.customerApproval?.approvedAt || '');
+  if (!from || !Number.isFinite(at)) return 'unverified';
+  return zonedDate(at) <= addDays(from, ONLINE_APPROVAL_DAYS) ? 'within' : 'after';
+}
+// Whether the ledgers pay a walkthrough's job at all under knock-setter-v2: signed at the walkthrough, or its quote
+// approved within the window (job-actuals.js deducts exactly these).
+export const signedWalkthroughJob = job => job?.handoffVersion === 1 || job?.estimate?.acceptanceMethod === 'in_person_signature' || job?.customerApproval?.source === 'in_person_signature';
+export const paidWalkthroughJob = (job, visit) => signedWalkthroughJob(job) || approvedWalkthroughQuote(job) && approvalWindow(visit, job) === 'within';
+
+// knock-setter-v1 approvals keep their own rules exactly; v2, or no approval yet, the owner's 2026-10-30 rules.
+export const earlierRules = terms => terms?.contract === SETTER_CONTRACT_V1;
+/* knock-setter-v2 approved over a knock-setter-v1 approval (terms.earlier, knock-access.js setterTermsState): a share v1
+   earned before the v2 approval keeps its time and amount, so no closed period changes; anything else follows v2. */
+export function underEarlierTerms(terms, project) {
+  if (terms?.verified !== true || earlierRules(terms) || !terms.earlier) return null;
+  const legacy = project({ verified: true, approvedAt: terms.earlier.approvedAt, reference: terms.earlier.reference || terms.reference, contract: SETTER_CONTRACT_V1 });
+  return legacy.state === 'earned' && Date.parse(legacy.earnedAt) < Date.parse(terms.approvedAt) ? { ...legacy, termsContract: SETTER_CONTRACT_V1 } : null;
+}
 
 /* Closed (an accepted estimate and its time) and how it was collected (the unified totals and payment ledger): the
    evidence both walkthrough channels earn on, the setter's and the estimator's. null while not closed. */
@@ -154,22 +213,127 @@ export const earnedFloor = (terms, ...floors) => Math.max(Date.parse(terms.appro
 export const earnedTime = (qualifiedAt, terms, ...floors) => new Date(Math.max(qualifiedAt, earnedFloor(terms, ...floors))).toISOString();
 export const centsToDollars = amount => Number.isSafeInteger(amount) ? amount / 100 : null;
 
+/* ---- knock-setter-v2: earned at completion, taken back after a refund or cancellation (owner decision 2026-10-30) ---- */
+
+const DONE = ['completed', 'paid', 'invoiced', 'closed', 'review_requested'], CANCELLED = ['cancelled', 'canceled', 'no_show'];
+const stages = job => [job?.pipelineStatus || job?.status, job?.status].map(value => String(value || '').toLowerCase());
+const cancelledJob = job => stages(job).some(stage => CANCELLED.includes(stage));
+// When the job's work was completed (its field completion, else completedAt; America/Denver decides its pay period), on a
+// job marked done or cancelled after it; null otherwise.
+export function jobCompletedAt(job) {
+  const at = Date.parse(job?.fieldExecution?.completion?.completedAt || job?.completedAt || '');
+  return Number.isFinite(at) && (stages(job).some(stage => DONE.includes(stage)) || cancelledJob(job)) ? at : null;
+}
+/* The refunds recorded on the job, in the shapes refundsRecorded reads (job.refunds, payment.refunds rows with their
+   amount and refundedAt; payment.refundedAmount with payment.refundedAt), as [{cents, at}]; null when one of them has no
+   readable amount or time, or a lump refund sits beside itemized ones. */
+export function refundEvents(job) {
+  const events = [], lump = moneyCents(job?.payment?.refundedAmount);
+  for (const list of [job?.refunds, job?.payment?.refunds]) {
+    if (!Array.isArray(list)) { if (list && (typeof list !== 'object' || Object.keys(list).length)) return null; continue; }
+    for (const item of list) {
+      const cents = Number.isSafeInteger(item?.amountCents) && item.amountCents > 0 ? item.amountCents : moneyCents(item?.amount);
+      const at = Date.parse(item && typeof item === 'object' ? item.refundedAt || item.at || item.createdAt || item.recordedAt || '' : '');
+      if (!(cents > 0) || !Number.isFinite(at)) return null;
+      events.push({ cents, at });
+    }
+  }
+  if (lump > 0) {
+    const at = Date.parse(job.payment.refundedAt || '');
+    if (events.length || !Number.isFinite(at)) return null;
+    events.push({ cents: lump, at });
+  }
+  return events.sort((a, b) => a.at - b.at);
+}
+/* When a share is earned under knock-setter-v2, from the job's own evidence: the later of its close, its full payment
+   (verified receipts reaching its whole price, tips and refunds aside) and its completion; and the refunds and the
+   cancellation dated after nothing more than now. {state: 'qualified', at, completedAt, events: [{reason, cents?, at}]}
+   or the state that holds it: awaiting_completion (job_not_complete: a deposit is not earned before the job is done),
+   awaiting_collection (a completed job's balance is still due), cancelled (cancelled before it was completed and paid
+   in full: never earned, nothing to take back), review_required. */
+export function completionEarning(job, { closedAt, totals, ledger }, nowMs) {
+  const refunds = refundEvents(job);
+  if (refunds === null) return { state: 'review_required', reviewReasons: ['refund_unverified'] };
+  const receipts = ledger.entries.filter(entry => !['tip', 'refund'].includes(entry.kind));
+  // A refund money-core cannot reconcile yet is read here by its own amount and time.
+  const issues = ledger.issues.filter(issue => !(issue === 'money_refunds_unreconciled' && refunds.length));
+  if (!totals.complete || ledger.unreconciledCents !== 0 || issues.length || receipts.some(entry => entry.verified !== true || !Number.isSafeInteger(entry.amountCents))) return { state: 'review_required', reviewReasons: ['collection_unverified'] };
+  const gross = receipts.reduce((sum, entry) => sum + entry.amountCents, 0), completedAt = jobCompletedAt(job), cancelled = cancelledJob(job);
+  if (!(totals.totalCents > 0) || gross > totals.totalCents) return { state: 'review_required', reviewReasons: ['partial_collection_policy_unconfigured'] };
+  if (cancelled && (completedAt === null || gross < totals.totalCents)) return { state: 'cancelled', reviewReasons: [] };
+  if (completedAt === null) return { state: 'awaiting_completion', reviewReasons: ['job_not_complete'] };
+  if (gross < totals.totalCents) return { state: 'awaiting_collection', reviewReasons: gross > 0 ? ['balance_due'] : [] };
+  const times = receipts.map(entry => Date.parse(entry.at));
+  if (!times.length || times.some(time => !Number.isFinite(time))) return { state: 'review_required', reviewReasons: ['collection_time_unverified'] };
+  const at = Math.max(Date.parse(closedAt), ...times, completedAt), cancelledAt = Date.parse(job.cancelledAt || '');
+  if (at > nowMs) return { state: 'review_required', reviewReasons: ['event_time_unverified'] };
+  if (cancelled && !Number.isFinite(cancelledAt)) return { state: 'review_required', reviewReasons: ['cancellation_review'] };
+  if (refunds.reduce((sum, event) => sum + event.cents, 0) > gross) return { state: 'review_required', reviewReasons: ['refund_review'] };
+  const events = [...refunds.map(event => ({ reason: 'refund', ...event })), ...(cancelled ? [{ reason: 'cancellation', at: cancelledAt }] : [])]
+    .filter(event => event.at <= nowMs).sort((a, b) => a.at - b.at || (a.reason === 'cancellation') - (b.reason === 'cancellation'));
+  return { state: 'qualified', at, completedAt, events };
+}
+/* What each refund or the cancellation takes back from each share: the refunded part at the share's rate, half up to the
+   cent and counted cumulatively, all of what is left when cancelled, never more than the share. Each line keeps its
+   evidence (reason, when) and a stable id from the share, the reason and the event's time. */
+export function shareClawbacks(allocations, events, jobId) {
+  const lines = [];
+  for (const share of allocations) {
+    const percent = Math.round(share.rate * 100);
+    let refunded = 0, taken = 0;
+    for (const event of events) {
+      refunded += event.cents || 0;
+      const want = event.reason === 'cancellation' ? share.amountCents : Math.min(share.amountCents, Math.floor((refunded * percent + 50) / 100));
+      if (want > taken) lines.push({ id: `${share.id}:clawback:${event.reason}:${event.at}`, jobId, role: share.role, repKey: share.repKey, amountCents: want - taken, reason: event.reason, at: new Date(event.at).toISOString(), refundedCents: event.cents ?? null });
+      taken = Math.max(taken, want);
+    }
+  }
+  return lines;
+}
+/* One share's knock-setter-v2 state from its projection so far (result: its reasons that hold it), its job's evidence
+   and its allocations: earned on completion once paid in full (or at the approval or the office's later record:
+   floors), with the shares a later refund or cancellation takes back (clawbacks); a refund or cancellation before it was
+   earned holds it as before. unapproved: what a row says once qualified before the owner approved the terms. */
+export function completionProjection(result, { job, evidence, allocation, terms, floors, ownRole, nowMs, unapproved }) {
+  const approved = terms?.verified === true, earning = completionEarning(job, evidence, nowMs), iso = at => new Date(at).toISOString();
+  if (evidence.collected !== null) result.customerCollectedRevenue = evidence.collected;
+  // A cancelled job projects nothing unless its share was earned before the cancellation (then taken back).
+  const projected = result.projectedCommission;
+  if (cancelledJob(job)) result.projectedCommission = null;
+  if (earning.state === 'cancelled') return { ...result, state: 'cancelled', projectedCommission: null, earnedCommission: 0, payableCommission: 0 };
+  const hold = reasons => {
+    const adjustment = approved ? adjustmentHold(job, evidence, reasons, earnedFloor(terms, ...floors), nowMs, earning.at) : null;
+    return { ...result, state: 'review_required', reviewReasons: reasons, ...(adjustment ? { adjustment } : {}) };
+  };
+  if (result.reviewReasons.length || earning.state === 'review_required') return hold([...result.reviewReasons, ...(earning.reviewReasons || [])]);
+  if (earning.state !== 'qualified') return { ...result, state: earning.state, reviewReasons: earning.reviewReasons };
+  const qualifyingAt = iso(earning.at), completedAt = iso(earning.completedAt);
+  if (!approved) return { ...result, state: 'review_required', qualifyingAt, completedAt, ...unapproved };
+  if (allocation.state !== 'calculated') return { ...result, state: 'review_required', qualifyingAt, completedAt, reviewReasons: allocation.reviewReasons };
+  const earnedAt = earnedTime(earning.at, terms, ...floors), early = earning.events.filter(event => event.at <= Date.parse(earnedAt));
+  if (early.length) return hold([...new Set(early.map(event => event.reason === 'refund' ? 'refund_review' : 'cancellation_review'))]);
+  const clawbacks = shareClawbacks(allocation.allocations, earning.events, job.id), own = centsToDollars(allocation.allocations.find(item => item.role === ownRole).amountCents);
+  const taken = clawbacks.filter(line => line.role === ownRole).reduce((sum, line) => sum + line.amountCents, 0);
+  return { ...result, state: 'earned', projectedCommission: projected, qualifyingAt, completedAt, earnedAt, earnedCommission: own, payableCommission: own, ...(clawbacks.length ? { clawbacks, clawedBackCommission: centsToDollars(taken) } : {}) };
+}
+
 /* A share held for a cancellation, a refund or an unverified receipt after money was collected may already have been
-   earned, and paid, in an earlier statement (the terms hold refunds and cancellations for review; nothing is clawed
-   back). Like a direct sale's review (crew/knock-money.js reviewScope) it holds its recipients' statements for the pay
-   periods it touched from floorMs on: {dates} of when it was (or would have been) earned, its close, receipts,
-   cancellation and refunds, and {from} for a refund or cancellation with no usable date, which holds every period from
-   floorMs. null when nothing was collected, or when all of it happened before the share could be earned. */
-const ADJUSTMENT_REASONS = ['cancellation_review', 'collection_unverified'];
+   earned, and paid, in an earlier statement (knock-setter-v1 holds refunds and cancellations for review; v2 holds those
+   before the share was earned, or that it cannot read). Like a direct sale's review (crew/knock-money.js reviewScope) it
+   holds its recipients' statements for the pay periods it touched from floorMs on: {dates} of when it was (or would have
+   been) earned (qualifiedAt: v2's completion-based time, else full payment), its close, receipts, cancellation and
+   refunds, and {from} for a refund or cancellation with no usable date, which holds every period from floorMs. null when
+   nothing was collected, or when all of it happened before the share could be earned. */
+const ADJUSTMENT_REASONS = ['cancellation_review', 'collection_unverified', 'refund_review', 'refund_unverified'];
 const refundTimes = job => [job?.refunds, job?.payment?.refunds].flatMap(list => Array.isArray(list) ? list : [])
   .map(item => item && typeof item === 'object' ? item.refundedAt || item.at || item.createdAt || item.recordedAt : null).concat(job?.payment?.refundedAt ?? [])
   .filter(value => typeof value === 'string' && Number.isFinite(Date.parse(value)));
-export function adjustmentHold(job, evidence, reasons, floorMs, nowMs = Date.now()) {
+export function adjustmentHold(job, evidence, reasons, floorMs, nowMs = Date.now(), qualifiedAt = null) {
   const held = reasons.filter(reason => ADJUSTMENT_REASONS.includes(reason));
   if (!evidence || !held.length || !Number.isFinite(floorMs)) return null;
   const refunded = refundsRecorded(job), receipts = evidence.ledger.entries.filter(entry => entry.kind !== 'tip');
   if (!receipts.length && !refunded) return null;
-  const refunds = refundTimes(job), qualified = qualifyingCollection(evidence, nowMs);
+  const refunds = refundTimes(job), qualified = Number.isFinite(qualifiedAt) ? { state: 'qualified', at: qualifiedAt } : qualifyingCollection(evidence, nowMs);
   const dates = [...new Set([...[evidence.closedAt, job.cancelledAt, ...receipts.map(entry => entry.at), ...refunds].map(value => typeof value === 'string' ? Date.parse(value) : NaN),
     ...(qualified.state === 'qualified' ? [Math.max(qualified.at, floorMs)] : [])]
     .filter(time => Number.isFinite(time) && time >= floorMs))].sort((a, b) => a - b).map(time => new Date(time).toISOString());
@@ -188,8 +352,10 @@ export function adjustmentHold(job, evidence, reasons, floorMs, nowMs = Date.now
 // The estimator the Knock bridge booked (knock-bridge.js recordD2dSetter), not one the office recorded.
 const bridgeEstimator = record => record.source === 'knock_walkthrough' || record.recordedBy === 'knock-bridge' || String(record.estimatorReference || '').startsWith('knock-walkthrough:');
 export function projectSetterAttribution(record, visit, job, directSales = [], nowMs = Date.now(), terms = null) {
+  const earlier = underEarlierTerms(terms, legacy => projectSetterAttribution(record, visit, job, directSales, nowMs, legacy));
+  if (earlier) return earlier;
   // REP-WALKTHROUGH: on a self-run record the rep is never the estimator (repRanWalkthrough), so any signer but them is.
-  const recorded = String(record.estimatorKey || '').trim().toLowerCase();
+  const recorded = String(record.estimatorKey || '').trim().toLowerCase(), v1 = earlierRules(terms);
   const approved = terms?.verified === true, recordedEstimator = record.selfRun === true && recorded === record.repStaffKey ? '' : recorded;
   const result = { id: record.id || record.walkthroughId, walkthroughId: record.walkthroughId, channel: 'appointment_setter',
     setterKey: record.setterKey, estimatorKey: recordedEstimator || null, estimatorEvidence: recordedEstimator ? 'admin_recorded_unreconciled' : 'unverified',
@@ -199,29 +365,40 @@ export function projectSetterAttribution(record, visit, job, directSales = [], n
   if (record.serviceClassification === 'junk_removal') return { ...result, state: 'excluded', earnedCommission: 0, payableCommission: 0 };
   if (!visit || visit.id !== record.walkthroughId || visit.type !== 'walkthrough' || !visit.revision) return { ...result, state: 'review_required', reviewReasons: ['walkthrough_unverified'] };
   const status = walkthroughStatus(visit);
-  if (!visit.convertedJobId) return { ...result, state: ['no_show', 'cancelled', 'lost'].includes(status.state) ? status.state : 'awaiting_close', earnedCommission: 0, payableCommission: 0 };
-  if (!job || job.type !== 'job' || job.id !== visit.convertedJobId || job.sourceWalkthroughId !== visit.id || !job.revision) return { ...result, state: 'review_required', reviewReasons: ['conversion_link_unverified'] };
+  // ONLINE-APPROVAL (knock-setter-v2): the quote saved from the walkthrough and approved (setterAttributions finds it).
+  if (!visit.convertedJobId && !v1 && job?.ambiguous === true) return { ...result, state: 'review_required', reviewReasons: ['conversion_link_unverified'] };
+  const online = !visit.convertedJobId && !v1 && approvedWalkthroughQuote(job);
+  if (!visit.convertedJobId && !online) return { ...result, state: ['no_show', 'cancelled', 'lost'].includes(status.state) ? status.state : 'awaiting_close', earnedCommission: 0, payableCommission: 0 };
+  if (!job || job.type !== 'job' || job.id !== (online ? job.id : visit.convertedJobId) || job.sourceWalkthroughId !== visit.id || !job.revision) return { ...result, state: 'review_required', reviewReasons: ['conversion_link_unverified'] };
   result.jobId = job.id;
   result.closingActorKey = typeof job.acceptance?.recordedBy === 'string' ? job.acceptance.recordedBy : null;
-  // REP-WALKTHROUGH: the rep ran and signed it: one direct-sale share (25%) to them, no estimator share.
-  const repRan = repRanWalkthrough(record, job);
+  if (online) result.closedBy = 'approved_quote';
+  // REP-WALKTHROUGH: the rep ran and signed it (or did the walkthrough of the approved quote): one direct-sale share
+  // (25%) to them, no estimator share.
+  const repRan = repRanWalkthrough(record, job, online ? visit : null);
   if (repRan) Object.assign(result, { channel: 'direct_sale', rate: CHANNEL_PERCENTS.directSale / 100, estimatorKey: null, estimatorEvidence: 'rep_ran_walkthrough' });
   const ownRole = repRan ? 'direct_rep' : 'setter';
-  const classification = approved && record.serviceClassification === 'unverified' && signedGarageHandoff(job) ? 'garage' : record.serviceClassification;
+  const classification = approved && record.serviceClassification === 'unverified' && (online ? approvedGarageQuote(job) : signedGarageHandoff(job)) ? 'garage' : record.serviceClassification;
   if (approved) {
     // recordedAt: when the record was made, the source a statement's lookback is counted from (estimator-commission.js).
     Object.assign(result, { jobDate: typeof job.date === 'string' ? job.date : null, serviceClassification: classification,
-      classificationEvidence: classification === record.serviceClassification ? 'recorded' : 'signed_handoff', projectedCommission: null, earnedAt: null, recordedAt: record.recordedAt ?? null });
-    const signer = handoffSigner(job);
+      classificationEvidence: classification === record.serviceClassification ? 'recorded' : online ? 'approved_quote' : 'signed_handoff', projectedCommission: null, earnedAt: null, recordedAt: record.recordedAt ?? null });
+    // An approved quote has no signer: the one who did the walkthrough is the same evidence.
+    const signer = online ? walkthroughEstimator(visit) : handoffSigner(job);
     if (repRan) { /* the rep is the signer: no estimator share to attribute */ }
-    else if (!recordedEstimator && signer) Object.assign(result, { estimatorKey: signer, estimatorEvidence: 'handoff_signer' });
+    else if (!recordedEstimator && signer) Object.assign(result, { estimatorKey: signer, estimatorEvidence: online ? 'walkthrough_estimator' : 'handoff_signer' });
     else if (recordedEstimator && signer && signer !== recordedEstimator && bridgeEstimator(record) && !record.estimatorClassifiedAt) result.reviewReasons.push('estimator_attribution_conflict');
   }
+  // ONLINE-APPROVAL: approved more than ONLINE_APPROVAL_DAYS after the walkthrough pays nothing, and says why.
+  const window = online ? approvalWindow(visit, job) : 'signed';
+  if (window === 'after') return { ...result, state: 'excluded', earnedCommission: 0, payableCommission: 0, reviewReasons: ['approved_after_30_days'] };
+  if (window === 'unverified') result.reviewReasons.push('walkthrough_date_unverified');
   const direct = directSales.find(sale => sale.handoff?.job?.ref === job.id);
   result.directSaleRepKey = direct?.repKey || null;
   if (direct) result.reviewReasons.push('direct_close_attribution_conflict');
   if (classification !== 'garage') result.reviewReasons.push('service_scope_unverified');
-  if (['cancelled', 'canceled', 'no_show'].includes(job.pipelineStatus || job.status)) result.reviewReasons.push('cancellation_review');
+  // knock-setter-v2 decides a cancellation by when it came (completionEarning); v1 holds every one.
+  if (v1 && ['cancelled', 'canceled', 'no_show'].includes(job.pipelineStatus || job.status)) result.reviewReasons.push('cancellation_review');
   const evidence = collectionEvidence(job);
   if (!evidence) return { ...result, state: 'awaiting_close' };
   const allocation = repRan
@@ -230,9 +407,11 @@ export function projectSetterAttribution(record, visit, job, directSales = [], n
       setterKey: record.setterKey, estimatorKey: result.estimatorKey || '', directRepKey: result.directSaleRepKey || '', ...approvedBase(terms, evidence) });
   // A cancelled job projects nothing: it cannot be earned while it stays cancelled.
   if (approved) Object.assign(result, { allocations: allocation.allocations, projectedCommission: result.reviewReasons.includes('cancellation_review') ? null : centsToDollars(allocation.allocations.find(item => item.role === ownRole)?.amountCents) });
+  const floors = [record.recordedAt, record.classifiedAt, record.estimatorClassifiedAt];
+  if (!v1) return completionProjection(result, { job, evidence, allocation, terms, floors, ownRole, nowMs,
+    unapproved: { allocations: allocation.allocations, reviewReasons: [...allocation.reviewReasons, 'payroll_anchor_unconfigured'] } });
   if (!evidence.verified) result.reviewReasons.push('collection_unverified');
   if (evidence.collected !== null) result.customerCollectedRevenue = evidence.collected;
-  const floors = [record.recordedAt, record.classifiedAt, record.estimatorClassifiedAt];
   if (result.reviewReasons.length) {
     const adjustment = approved ? adjustmentHold(job, evidence, result.reviewReasons, earnedFloor(terms, ...floors), nowMs) : null;
     return { ...result, state: 'review_required', ...(adjustment ? { adjustment } : {}) };
@@ -246,9 +425,11 @@ export function projectSetterAttribution(record, visit, job, directSales = [], n
   return { ...result, state: 'earned', qualifyingAt, earnedAt, earnedCommission: own, payableCommission: own };
 }
 
-// The setter policy a view reports: the fixed rates, and whether the owner approved them (knock-access.js setterTermsState).
-export const setterPolicyFor = terms => terms?.verified === true
-  ? { ...setterPolicy, approval: 'approved', approvedAt: terms.approvedAt, gaps: ['partial_collections', 'refund_clawbacks'] } : setterPolicy;
+// The setter policy a view reports: the fixed rates, and whether the owner approved them (knock-access.js setterTermsState)
+// under which contract (a knock-setter-v1 approval keeps its own trigger and its refund holds).
+export const setterPolicyFor = terms => terms?.verified !== true ? setterPolicy : earlierRules(terms)
+  ? { ...setterPolicy, earningTrigger: 'closed_and_collected', approval: 'approved', contract: terms.contract, approvedAt: terms.approvedAt, gaps: ['partial_collections', 'refund_clawbacks'] }
+  : { ...setterPolicy, approval: 'approved', contract: terms.contract ?? null, approvedAt: terms.approvedAt, gaps: ['partial_collections'] };
 
 /* The door sales the office linked to these jobs (knock_sales handoff.job.ref, the direct_close_attribution_conflict
    evidence): one query per 30 job ids, never every sale. */
@@ -260,24 +441,31 @@ export async function directSalesFor(store, jobIds) {
 
 /* Setter records as money, at most `limit` of them (truncated says more exist). Each reads its walkthrough and, once
    converted, its job (masked; setterJobReader, or readJobs: the whole page in batches, setterBatchReaderFor), and the
-   door sales linked to those jobs. `rows` projects the given records instead of reading them. A record whose source
-   cannot be read is 'source_unavailable'. */
+   door sales linked to those jobs. Under knock-setter-v2 a walkthrough that never converted is matched to the quote
+   saved from it and approved (the reader's quoteJobs; approvedWalkthroughQuote; more than one is held). `rows`
+   projects the given records instead of reading them. A record whose source cannot be read is 'source_unavailable'. */
+const quoteFor = (jobs = [], visitId) => {
+  const approved = jobs.filter(job => job?.sourceWalkthroughId === visitId && approvedWalkthroughQuote(job));
+  return approved.length > 1 ? { type: 'job', sourceWalkthroughId: visitId, ambiguous: true } : approved[0] || null;
+};
 export async function setterAttributions(store, env, { repKey = null, nowMs = Date.now(), readJob = null, readJobs = null, terms = null, limit = 100, rows: given = null } = {}) {
   const rows = given || (repKey ? await store.query('knock_setters', { where: [['setterKey', '==', repKey]] }) : await store.list('knock_setters'));
   const policy = setterPolicyFor(terms);
   if (!rows.length) return { rows: [], truncated: false, policy };
-  const page = rows.slice(0, limit);
-  let read = readJob || (readJobs ? null : setterJobReader(env));
+  const page = rows.slice(0, limit), open = visit => visit && !ID.test(String(visit.convertedJobId || ''));
+  let read = readJob || (readJobs ? null : setterJobReader(env)), quotes = earlierRules(terms) ? null : (read || readJobs)?.quoteJobs || null;
   if (!read) {
     try {
       const visits = await readJobs(page.map(row => row.walkthroughId)), jobs = await readJobs([...visits.values()].map(visit => visit.convertedJobId));
+      const saved = quotes ? await quotes([...visits.values()].filter(open).map(visit => visit.id)) : new Map();
       read = async id => visits.get(id) || jobs.get(id) || null;
+      quotes = async ids => new Map(ids.map(id => [id, saved.get(id) || []]));
     } catch { read = async () => { throw new Error('source_unavailable'); }; }
   }
   const sources = await Promise.all(page.map(async row => {
     try {
       const visit = await read(row.walkthroughId);
-      return { row, visit, job: ID.test(String(visit?.convertedJobId || '')) ? await read(visit.convertedJobId) : null };
+      return { row, visit, job: ID.test(String(visit?.convertedJobId || '')) ? await read(visit.convertedJobId) : open(visit) && quotes ? quoteFor((await quotes([visit.id])).get(visit.id), visit.id) : null };
     } catch { return { row, unavailable: true }; }
   }));
   const directSales = await directSalesFor(store, sources.map(source => source.job?.id));

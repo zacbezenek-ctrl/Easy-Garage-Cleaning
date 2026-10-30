@@ -185,7 +185,9 @@ function moneyScreen(_app, params) {
         stat('Commission paid (recorded)', earningsMoney(current.commissionPaid), { sub: 'admin recorded; settlement unverified' })),
       current.compensationState !== 'configured' ? h('p', { class: 'banner banner--warning' },
         current.compensationState === 'unconfigured' ? 'Compensation is unconfigured: finance must verify the saved rates. Default rates are not a pay promise.'
-          : `Finance review required: ${current.reviewReasons.join(', ').replaceAll('_', ' ')}. No automatic clawback is calculated.`) : null,
+          : `Finance review required: ${current.reviewReasons.join(', ').replaceAll('_', ' ')}.`) : null,
+      // A share taken back for a refund or cancellation after it was earned (current terms): each line, as the statement counts it.
+      (current.clawbacks || []).length ? h('p', { class: 'caption muted' }, `Taken back this period: ${current.clawbacks.map(line => `${money(-line.amount, true)} (${line.reason}${line.eventDate ? ` ${dateLabel(line.eventDate)}` : ''})`).join(', ')}.`) : null,
       h('section', { class: 'card', style: { gap: '10px' } },
         h('h2', {}, 'How commission works'),
         h('p', {}, commissionRuleText(rates)),
@@ -206,7 +208,7 @@ function moneyScreen(_app, params) {
         (data.setters?.rows || []).map(row => h('div', { class: 'list-row list-row--static' },
           // REP-WALKTHROUGH: a walkthrough you ran yourself pays your door-sale rate, not the setter's.
           h('span', {}, `${row.walkthroughId}${row.channel === 'direct_sale' ? ` (you ran it · ${CHANNEL_PERCENTS.directSale}%)` : ''}: ${row.state.replaceAll('_', ' ')}${row.state === 'earned' && Number.isFinite(row.earnedCommission) ? ` · ${money(row.earnedCommission, true)} earned`
-            : Number.isFinite(row.projectedCommission) ? ` · ${money(row.projectedCommission, true)} once paid in full` : ''}`),
+            : Number.isFinite(row.projectedCommission) ? ` · ${money(row.projectedCommission, true)} once the job is done and paid in full` : ''}${Number.isFinite(row.clawedBackCommission) ? ` · ${money(row.clawedBackCommission, true)} taken back` : ''}`),
           h('span', { class: 'caption muted' }, (row.reviewReasons || []).join(', ').replaceAll('_', ' ')))),
         data.setters?.truncated ? h('p', { class: 'caption muted' }, 'More setter records need review.') : null),
       lead && rates.verified && current.compensationState === 'configured' && rates.leadOverrideEnabled ? h('section', { class: 'card', style: { gap: '8px' } },

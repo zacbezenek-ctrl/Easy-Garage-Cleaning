@@ -28,7 +28,9 @@ const owner = { user: 'ZacB', role: 'owner', businessAccess: true }, office = { 
 const setterApproval = (extra = {}) => ({ contract: SETTER_CONTRACT, reference: 'synthetic-d6b-record', reviewedBy: 'ZacB', reviewedAt: APPROVED_AT, terms: { ...SETTER_TERMS }, ...extra });
 // The $3,000 job of the review's scenario: a rep set the walkthrough at the door, the estimator signed it, the customer
 // paid in full by a verified card payment.
-const paidJob = (id, walkthroughId, amount = 3000, extra = {}) => ({ type: 'job', status: 'scheduled', date: '2026-10-19', sourceWalkthroughId: walkthroughId,
+// knock-setter-v2 (owner decision 2026-10-30): earned when the job is completed and paid in full, so the job was completed
+// on its day before the balance was paid (was 'scheduled': paid in full used to be enough).
+const paidJob = (id, walkthroughId, amount = 3000, extra = {}) => ({ type: 'job', status: 'completed', completedAt: '2026-10-19T18:00:00Z', date: '2026-10-19', sourceWalkthroughId: walkthroughId,
   handoffVersion: 1, handoffRequestId: `req-${id}`, serviceType: 'Garage transformation', scope: { finish: ['cleanout', 'shelving'] }, customer: 'Synthetic Customer',
   estimate: { status: 'accepted', amount, acceptedAt: '2026-10-17T15:00:00Z' }, acceptance: { recordedBy: 'Estimator.One', acceptedAt: '2026-10-17T14:55:00Z' },
   payment: { amount, verified: true, stripeSessions: [{ sessionId: `cs_test_${id.replace(/-/g, "")}`, paymentIntentId: `pi_${id.replace(/-/g, "")}`, amount, purpose: 'balance', verifiedAt: '2026-10-19T20:00:00Z' }] }, ...extra });
@@ -121,8 +123,9 @@ test('a rep-set walkthrough paid in full: held with no amount before approval, $
   const terms = { verified: true, approvedAt: APPROVED_AT, reference: 'synthetic' }, w = { ...visit('walk-1', 'job-1'), id: 'walk-1', revision: 'r' };
   const project = job => projectSetterAttribution(bridgeRow('walk-1'), w, { ...job, id: 'job-1', revision: 'r' }, [], Date.parse(NOW), terms);
   assert.deepEqual([project(paidJob('job-1', 'walk-1', 3000, { serviceType: 'Junk removal' })).state, project(paidJob('job-1', 'walk-1', 3000, { serviceType: 'Junk removal' })).reviewReasons], ['review_required', ['service_scope_unverified']]);
+  // knock-setter-v2: a completed job with a balance still due waits for it (was held as partial_collection_policy_unconfigured).
   const short = paidJob('job-1', 'walk-1'); short.payment.amount = short.payment.stripeSessions[0].amount = 2000;
-  assert.deepEqual([project(short).state, project(short).reviewReasons, project(short).projectedCommission], ['review_required', ['partial_collection_policy_unconfigured'], 390]);
+  assert.deepEqual([project(short).state, project(short).reviewReasons, project(short).projectedCommission], ['awaiting_collection', ['balance_due'], 390]);
   const refunded = paidJob('job-1', 'walk-1'); refunded.payment.refundedAmount = 50;
   assert.equal(project(refunded).earnedCommission, null);
   const unpaid = paidJob('job-1', 'walk-1'); delete unpaid.payment;

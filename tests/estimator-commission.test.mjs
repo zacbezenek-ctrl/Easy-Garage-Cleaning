@@ -19,7 +19,9 @@ const env = knockEnv({ HUB_AUTH_USERS_JSON: JSON.stringify({
   'Estimator.One': { passwordHash: 'test', role: 'sales', displayName: 'Estimator One' },
   'Estimator.Two': { passwordHash: 'test', role: 'sales', displayName: 'Estimator Two' },
 }) });
-const job = (id, walkthroughId, amount, signer = 'Estimator.One', extra = {}) => ({ type: 'job', status: 'scheduled', date: '2026-10-19', sourceWalkthroughId: walkthroughId,
+// knock-setter-v2 (owner decision 2026-10-30): a share is earned when the job is completed (and paid in full), so these
+// jobs were completed on their job day, before the balance was paid (was 'scheduled': paid in full used to be enough).
+const job = (id, walkthroughId, amount, signer = 'Estimator.One', extra = {}) => ({ type: 'job', status: 'completed', completedAt: '2026-10-19T18:00:00Z', date: '2026-10-19', sourceWalkthroughId: walkthroughId,
   handoffVersion: 1, handoffRequestId: `req${id}`, serviceType: 'Garage transformation', scope: { finish: ['cleanout'] }, customer: 'Synthetic Customer', phone: '9705550100',
   estimate: { status: 'accepted', amount, acceptedAt: '2026-10-17T15:00:00Z' }, acceptance: { recordedBy: signer, acceptedAt: '2026-10-17T14:55:00Z' },
   payment: { amount, verified: true, stripeSessions: [{ sessionId: `cs_test_${id}`, paymentIntentId: `pi_${id}`, amount, purpose: 'balance', verifiedAt: '2026-10-19T20:00:00Z' }] }, ...extra });
@@ -107,8 +109,10 @@ test('a direct sale\'s projection: 7% of the closed price, never stacked on a se
   const later = projectEstimatorJob({ ...job('j9', 'w9', 3000), id: 'j9', revision: 'r' }, { terms: { ...terms, approvedAt: '2026-10-01T00:00:00.000Z' }, nowMs: at });
   assert.equal(later.earnedAt, '2026-10-19T20:00:00.000Z', 'earned when paid, after an earlier approval');
   assert.deepEqual(projectEstimatorJob({ ...job('j9', 'w9', 3000, 'Estimator.One', { serviceType: 'Junk removal' }), id: 'j9', revision: 'r' }, { terms, nowMs: at }).reviewReasons, ['service_scope_unverified']);
+  // knock-setter-v2: a completed job with a balance still due waits for it (was held as partial_collection_policy_unconfigured).
   const short = job('j9', 'w9', 3000); short.payment.amount = short.payment.stripeSessions[0].amount = 1000;
-  assert.deepEqual(projectEstimatorJob({ ...short, id: 'j9', revision: 'r' }, { terms, nowMs: at }).reviewReasons, ['partial_collection_policy_unconfigured']);
+  const due = projectEstimatorJob({ ...short, id: 'j9', revision: 'r' }, { terms, nowMs: at });
+  assert.deepEqual([due.state, due.reviewReasons, due.earnedCommission], ['awaiting_collection', ['balance_due'], null]);
   assert.deepEqual(projectEstimatorJob({ ...job('j9', '', 3000), id: 'j9', revision: 'r' }, { terms, nowMs: at }).reviewReasons, ['conversion_link_unverified'], 'a sale with no walkthrough is not a walkthrough sale');
   const unsigned = projectEstimatorJob({ ...job('j9', 'w9', 3000, ''), id: 'j9', revision: 'r' }, { terms, nowMs: at });
   assert.deepEqual([unsigned.state, unsigned.reviewReasons], ['review_required', ['recipient_unverified']]);

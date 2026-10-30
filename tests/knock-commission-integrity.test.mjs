@@ -29,7 +29,9 @@ const ROSTER = ['estimator.one', 'estimator.two', 'rep.one', 'tylerg', 'zacb'].m
 const terms = { verified: true, approvedAt: APPROVED_AT, reference: 'synthetic-d6b-record' };
 const setterApproval = () => ({ contract: SETTER_CONTRACT, reference: 'synthetic-d6b-record', reviewedBy: 'ZacB', reviewedAt: APPROVED_AT, terms: { ...SETTER_TERMS } });
 const card = (id, amount, verifiedAt = '2026-10-19T20:00:00Z') => ({ sessionId: `cs_test_${id}`, paymentIntentId: `pi_${id}`, amount, purpose: 'balance', verifiedAt });
-const paidJob = (id, walkthroughId, amount = 3000, extra = {}) => ({ type: 'job', status: 'scheduled', date: '2026-10-19', sourceWalkthroughId: walkthroughId,
+// knock-setter-v2 (owner decision 2026-10-30): earned when the job is completed and paid in full, so the job was completed
+// on its day before the balance was paid (was 'scheduled': paid in full used to be enough).
+const paidJob = (id, walkthroughId, amount = 3000, extra = {}) => ({ type: 'job', status: 'completed', completedAt: '2026-10-19T18:00:00Z', date: '2026-10-19', sourceWalkthroughId: walkthroughId,
   handoffVersion: 1, handoffRequestId: `req-${id}`, serviceType: 'Garage transformation', scope: { finish: ['cleanout'] }, customer: 'Synthetic Customer',
   estimate: { status: 'accepted', amount, acceptedAt: '2026-10-17T15:00:00Z' }, acceptance: { recordedBy: 'Estimator.One', acceptedAt: '2026-10-17T14:55:00Z' },
   payment: { amount, verified: true, stripeSessions: [card(id.replace(/-/g, ''), amount)] }, ...extra });
@@ -97,20 +99,36 @@ test('money-1: a share paid in one period that the job later changes holds that 
   assert.deepEqual(state(periodStatement(input)[0]), ['configured', 0, []]);
 });
 
-test('money-4: an earned share later cancelled or refunded holds its recipients\' statements instead of silently dropping out', async () => {
+// Owner decision 2026-10-30 (knock-setter-v2; this test held such a share for review before): a cancellation or refund
+// after a share was earned takes it back on the next pay period's statement, audited, never more than was earned; one
+// that cannot be dated or read is still held.
+test('money-4: an earned share later cancelled or refunded is taken back on the next pay period\'s statement; one that cannot be read is held', async () => {
   const cancelled = world();
   await pay(cancelled, 'rep.one', P1, 390);
   edit(cancelled, 'jobs/job-1', job => Object.assign(job, { status: 'cancelled', pipelineStatus: 'cancelled', cancelledAt: '2026-11-05T17:00:00Z' }));
-  const later = '2026-11-06T18:00:00.000Z', p1 = await statement(cancelled, '2026-10-21', later), p2 = await statement(cancelled, '2026-11-05', later);
-  assert.deepEqual(state(p1['rep.one']), ['review_required', null, ['cancellation_review', 'channel_share_changed', 'payout_exceeds_earned']]);
-  // The estimator's $210 was earned in P1 too (unpaid): held there and where the cancellation happened, not dropped.
-  assert.deepEqual([state(p1['estimator.one']), state(p2['estimator.one'])], [['review_required', null, ['cancellation_review']], ['review_required', null, ['cancellation_review']]]);
-  assert.equal((await statement(cancelled, '2026-11-16', later))['estimator.one'], undefined, 'a period it never touched is not held');
-  // A $50 refund recorded before payroll, with no date: held from the period it was earned on, never shown as configured.
+  const later = '2026-11-20T18:00:00.000Z', p1 = await statement(cancelled, '2026-10-21', later), p2 = await statement(cancelled, '2026-11-05', later), p3 = await statement(cancelled, '2026-11-16', later);
+  // P1 keeps what was earned (and paid) there: nothing moves, nothing is paid twice.
+  assert.deepEqual([...state(p1['rep.one']), p1['rep.one'].setterCommission], ['configured', 0, [], 390]);
+  assert.deepEqual([p1['estimator.one'].estimatorCommission, p1['estimator.one'].payableCommission], [296.42, 296.42]);
+  // The cancellation's own period (Nov 2-15) carries nothing; the next one (Nov 16-29) carries each whole share back.
+  assert.deepEqual([p2['rep.one'].clawback, p2['estimator.one']?.clawback ?? 0], [0, 0]);
+  assert.deepEqual(p3['rep.one'].clawbacks, [{ ref: 'job:job-1:setter', role: 'setter', reason: 'cancellation', amount: -390, eventDate: '2026-11-05' }]);
+  assert.deepEqual(p3['estimator.one'].clawbacks, [{ ref: 'job:job-1:estimator', role: 'estimator', reason: 'cancellation', amount: -210, eventDate: '2026-11-05' }]);
+  // Neither has anything else earned that period: the line stays listed and the rest is finance's to settle, never a
+  // silent zero (a period with other earnings nets it: tests/commission-completion.test.mjs).
+  assert.deepEqual([state(p3['rep.one']), state(p3['estimator.one'])], [['review_required', null, ['clawback_exceeds_earned']], ['review_required', null, ['clawback_exceeds_earned']]]);
+  assert.equal((await view(cancelled, 'setters', later)).rows[0].clawedBackCommission, 390);
+  // A dated $500 refund on Oct 28, after the shares were earned: 13% and 7% of it come off the next period (Nov 2-15).
   const refunded = world();
-  edit(refunded, 'jobs/job-1', job => { job.payment.refundedAmount = 50; });
-  const held = await statement(refunded, '2026-10-21');
-  assert.deepEqual([state(held['rep.one']), state(held['estimator.one'])], [['review_required', null, ['collection_unverified']], ['review_required', null, ['collection_unverified']]]);
+  edit(refunded, 'jobs/job-1', job => { job.refunds = [{ amount: 500, refundedAt: '2026-10-28T17:00:00Z', reason: 'customer_request' }]; });
+  const r1 = await statement(refunded, '2026-10-21', later), r2 = await statement(refunded, '2026-11-05', later);
+  assert.deepEqual([r1['rep.one'].setterCommission, r1['rep.one'].payableCommission, r1['estimator.one'].payableCommission], [390, 390, 296.42]);
+  assert.deepEqual([r2['rep.one'].clawbacks, r2['estimator.one'].clawbacks.map(line => line.amount)], [[{ ref: 'job:job-1:setter', role: 'setter', reason: 'refund', amount: -65, eventDate: '2026-10-28' }], [-35]]);
+  // A $50 refund recorded with no date: held from the period it was earned on, never shown as configured.
+  const undated = world();
+  edit(undated, 'jobs/job-1', job => { job.payment.refundedAmount = 50; });
+  const held = await statement(undated, '2026-10-21');
+  assert.deepEqual([state(held['rep.one']), state(held['estimator.one'])], [['review_required', null, ['refund_unverified']], ['review_required', null, ['refund_unverified']]]);
   // A cancelled job with nothing collected holds nothing.
   const unpaid = world();
   edit(unpaid, 'jobs/job-1', job => { delete job.payment; Object.assign(job, { status: 'cancelled', pipelineStatus: 'cancelled', cancelledAt: '2026-10-21T10:00:00Z' }); });
@@ -276,12 +294,13 @@ test('money-12: a cancelled job projects nothing to its estimator or setter', as
   const w = world();
   edit(w, 'jobs/job-1', cancel); edit(w, 'jobs/job-2', cancel);
   const own = await mine(w, 'Estimator.One');
+  // knock-setter-v2: cancelled before it was paid in full, it was never earned and nothing is held (was cancellation_review).
   assert.deepEqual(own.rows.map(row => [row.jobId, row.channel, row.state, row.projectedCommission, row.reviewReasons]),
-    [['job-1', 'door_to_door', 'review_required', null, ['cancellation_review']], ['job-2', 'direct', 'review_required', null, ['cancellation_review']]]);
+    [['job-1', 'door_to_door', 'cancelled', null, []], ['job-2', 'direct', 'cancelled', null, []]]);
   assert.deepEqual(own.totals, { projected: 0, earned: 0 });
   const rep = (await myMoney(w, '2026-10-21')).setters.rows[0];
-  assert.deepEqual([rep.state, rep.projectedCommission], ['review_required', null]);
-  // Paid and then cancelled: held, and still no projection.
+  assert.deepEqual([rep.state, rep.projectedCommission], ['cancelled', null]);
+  // Paid and then cancelled with no cancellation time: held, and still no projection.
   const paid = projectEstimatorJob({ ...paidJob('job-9', 'walk-9', 1000), status: 'cancelled', id: 'job-9', revision: 'r' }, { terms, nowMs: Date.parse(NOW) });
   assert.deepEqual([paid.state, paid.projectedCommission], ['review_required', null]);
   assert.ok(SETTER_JOB_FIELDS.includes('cancelledAt'));

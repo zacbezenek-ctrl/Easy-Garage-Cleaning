@@ -192,7 +192,9 @@ test('a "do it now" walkthrough needs the tapped time and no estimator slot', as
 // ---------- commission ----------
 
 const TERMS = { verified: true, approvedAt: '2026-10-20T16:00:00.000Z', reference: 'synthetic' };
-const job = (signer, extra = {}) => ({ id: 'job-9', revision: 'r', type: 'job', status: 'scheduled', date: '2026-10-19', sourceWalkthroughId: 'walk-9',
+// knock-setter-v2 (owner decision 2026-10-30): earned when the job is completed and paid in full, so the job was completed
+// on its day before the balance was paid (was 'scheduled': paid in full used to be enough).
+const job = (signer, extra = {}) => ({ id: 'job-9', revision: 'r', type: 'job', status: 'completed', completedAt: '2026-10-19T18:00:00Z', date: '2026-10-19', sourceWalkthroughId: 'walk-9',
   handoffVersion: 1, handoffRequestId: 'req-9', serviceType: 'Garage transformation', scope: { finish: ['cleanout', 'shelving'] },
   estimate: { status: 'accepted', amount: 3000, acceptedAt: '2026-10-17T15:00:00Z' }, acceptance: { recordedBy: signer, acceptedAt: '2026-10-17T14:55:00Z' },
   payment: { amount: 3000, verified: true, stripeSessions: [{ sessionId: 'cs_test_9', paymentIntentId: 'pi_9', amount: 3000, purpose: 'balance', verifiedAt: '2026-10-19T20:00:00Z' }] }, ...extra });

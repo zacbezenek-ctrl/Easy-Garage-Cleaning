@@ -25,11 +25,13 @@ const HARNESS = `<!doctype html><html lang="en"><head><meta charset="utf-8"><met
 const line = (id, kind, quantity, unitCents, extra = {}) => ({ id, kind, name: id, quantity, unitCents, totalCents: quantity * unitCents, optional: false, selected: true, taxable: false, ...extra });
 const goods = (retail, sell) => line('shelving-goods', 'product', 1, sell, { split: { productCents: retail, markupCents: sell - retail, laborCents: 0, laborMinutes: 0, disposalCents: 0 } });
 const job = (id, date, customer, amount, lineItems, extra = {}) => ({ id, type: 'job', date, customer, status: 'completed', completedAt: `${date}T22:00:00.000Z`, estimate: { status: 'accepted', amount, lineItems }, serviceType: 'Garage transformation', ...extra });
+// Signed at the walkthrough (walkthrough-handoff.js): the commission ledgers pay it, so its share is costed (job-actuals.js channelOf).
+const signed = id => ({ handoffVersion: 1, handoffRequestId: `req-${id}` });
 const JOBS = [
   // Billed 8 man-hours, worked 18 on timecards (the owner's benchmark), two full loads and a partial, shelving.
-  job('job-two-car', '2026-10-18', 'Synthetic Two-Car Garage With A Long Family Name', 4214, [line('removal-base', 'service', 1, 150000), line('removal-junk-full', 'service', 2, 75000), line('removal-junk-partial', 'service', 1, 40000), goods(30000, 39000), line('labor', 'labor', 1, 42400)], { jobInstructions: { laborManHours: 8 }, sourceWalkthroughId: 'walk-setter' }),
+  job('job-two-car', '2026-10-18', 'Synthetic Two-Car Garage With A Long Family Name', 4214, [line('removal-base', 'service', 1, 150000), line('removal-junk-full', 'service', 2, 75000), line('removal-junk-partial', 'service', 1, 40000), goods(30000, 39000), line('labor', 'labor', 1, 42400)], { jobInstructions: { laborManHours: 8 }, sourceWalkthroughId: 'walk-setter', ...signed('job-two-car') }),
   // No timecards: the crew lead confirmed 2 people × 3.5 hours and 1 load at Complete.
-  job('job-one-car', '2026-10-02', 'Synthetic One-Car Reset', 1384, [line('removal-base', 'service', 1, 100000), line('labor', 'labor', 1, 38400)], { jobInstructions: { laborManHours: 7.25 }, sourceWalkthroughId: 'walk-direct', fieldExecution: { completion: { crewOnSite: { people: 2, hours: 3.5 }, truckLoads: 1 } } }),
+  job('job-one-car', '2026-10-02', 'Synthetic One-Car Reset', 1384, [line('removal-base', 'service', 1, 100000), line('labor', 'labor', 1, 38400)], { jobInstructions: { laborManHours: 7.25 }, sourceWalkthroughId: 'walk-direct', ...signed('job-one-car'), fieldExecution: { completion: { crewOnSite: { people: 2, hours: 3.5 }, truckLoads: 1 } } }),
   // Junk-only, $750 per truck, no Labor line; a door sale would not matter, junk earns 0.
   job('job-junk', '2026-09-05', 'Synthetic Junk Haul', 1500, [line('removal-junk-full', 'service', 2, 75000)], { serviceType: 'Junk removal', sourceWalkthroughId: 'walk-junk' }),
   // A job that lost money: billed 4, worked 30.

@@ -17,8 +17,9 @@ rep payments. A recorded payment is not proof of bank or payroll settlement.
   explicit full collection and existing completion. Reopening and cancelling
   preserve recorded customer money.
 - Incomplete paid records, partial/excess paid snapshots, refunds and cancelled
-  collections produce a review state. No automatic clawback or reversal is
-  inferred. Historical earnings are unknown during an unresolved adjustment,
+  collections produce a review state. Under `knock-collected-v3` and older terms
+  no automatic clawback or reversal is inferred (the 2026-10-30 terms take a
+  share back by their own rule; see "Earned at job completion" below). Historical earnings are unknown during an unresolved adjustment,
   not silently rewritten as a confirmed zero. Reinstating a cancelled sale does
   not clear the review hold or automatically earn the commission again.
 - Rep payments remain administrative records in `knock_payouts`; the report
@@ -84,7 +85,7 @@ a receipt, completion, refund, cancellation or a status change), plus the rest o
 a receipt's calendar month when a monthly accelerator applies; other periods stay
 payable. A refund or cancellation under review with no usable date holds every
 period, since its adjustment could land in any of them. No pro-rata rule,
-clawback or payment execution is introduced.
+clawback or payment execution is introduced for these terms.
 
 Only packages independently verified as wholly eligible garage work belong in
 `garageOnlyPackages`. Names alone do not establish this. Junk-removal packages
@@ -229,7 +230,7 @@ door-to-door terms, whose two-week pay cycle pays them). It records
 `knock_settings/current.setterApproval` with the fixed `SETTER_TERMS`
 (crew/knock-money.js): 13% setter + 7% estimator on a walkthrough a rep set, 7%
 on a walkthrough an estimator sold directly, of the job's whole price including
-goods, rounded to the cent, earned when the job is closed and paid in full (or
+goods, rounded to the cent, earned (under `knock-setter-v1`) when the job is closed and paid in full (or
 at the approval, or when the office recorded or settled the setter record or
 classification, if later, so no closed period changes). Under them a signed
 walkthrough handoff counts as garage work when what was signed shows it (a
@@ -251,7 +252,8 @@ an estimator who has no canvassing account is paid with a recorded payout under
 their Hub staff key. A payout records the shares it paid (`channelItems`): a
 share that later changes, moves or is earned again, and payments above what a
 period earned, hold the statement for finance (`channel_share_changed`,
-`payout_exceeds_earned`); nothing is clawed back or paid twice automatically.
+`payout_exceeds_earned`); nothing is paid twice automatically, and under
+`knock-setter-v1` nothing is clawed back.
 Admin > Estimators lists every estimator's 7% (walkthroughs signed in the last
 365 days); each estimator sees their own in the Hub under My commission
 (`GET /api/estimator-commission`). The statement reads setter records and
@@ -270,6 +272,67 @@ the people it names (or every row when its estimator is unknown).
 - [ ] Confirm the setter and estimator get separate 13% and 7% allocations from
   an explicitly verified base, with no added 25% route and no duplicate IDs.
   Payable totals stay held while the base, recipients or payroll anchor are unverified.
+
+## Earned at job completion, clawbacks and approved quotes (owner decisions 2026-10-30)
+
+The rates do not change (25% door sale, 13% setter + 7% estimator, 7% direct
+estimator, a rep-run walkthrough 25% only; one job pays once). What changes is
+when a share is earned, what happens after a refund or cancellation, and which
+sales pay. Each is a new terms version the owner approves in Knock Admin >
+Settings; until then the earlier approval keeps its own rules, so nothing
+changes at deploy.
+
+- **Terms versions.** Door sales snapshot their terms on each sale, so a sale
+  booked under `knock-collected-v3` keeps earning on full collection; once the
+  owner approves `knock-completed-v4` (the only contract "Approve commission
+  terms" records now) new sales carry it. Setter and estimator shares follow
+  one approval: a `knock-setter-v1` approval keeps verifying with its rules
+  until the owner approves `knock-setter-v2`. That approval keeps the v1 one as
+  `setterApproval.earlier`: a share v1 earned before the v2 approval keeps its
+  earned time and amount (`underEarlierTerms`), so no closed period changes;
+  every other share follows v2 from the v2 approval on.
+- **Earned at completion.** A share is earned on the day the job is completed
+  (America/Denver; `jobCompletedAt`: the field completion, else `completedAt`,
+  on a job marked done), once the customer has paid the whole price with
+  verified receipts, or at the approval or the office's later record if later.
+  Its pay period is the one holding that day. A deposit on a job not done yet
+  reads "Not earned yet — job not complete" (`awaiting_completion`,
+  `job_not_complete`); a completed job with a balance due waits for it
+  (`awaiting_collection`, `balance_due`) and earns on the later of completion
+  and full payment. A door sale under `knock-completed-v4` earns at the later
+  of its recorded completion and full collection; a sale reopened after it was
+  completed is held (`completion_review`).
+- **Clawbacks.** A refund dated after a share was earned takes back the
+  refunded part at the share's rate (half up to the cent, counted cumulatively);
+  a cancellation after it takes back what is left; together never more than
+  the share (`shareClawbacks`; door sales `saleClawbacks`, pro rata of the
+  sale's commission and the lead's override). Each is a negative line on the
+  statement of the pay period after the refund or cancellation, listed with its
+  job or sale, reason and date (`clawback`, `clawbacks`, the CSV's
+  `commission_clawback_included`), and recorded with the payout like any share
+  (`channelItems`). A period whose clawbacks exceed what it earned is held
+  (`clawback_exceeds_earned`) for finance to settle the rest. Refunds are read
+  in the shapes already recorded (`job.refunds`, `payment.refunds` with their
+  amount and `refundedAt`, `payment.refundedAmount` with `payment.refundedAt`);
+  one with no readable amount or time is held (`refund_unverified`), and one
+  before the share was earned is held as before (`refund_review`). A job
+  cancelled before it was completed and paid in full was never earned
+  (`cancelled`, nothing to take back).
+- **Quotes approved online.** A quote saved from a walkthrough (the quote
+  builder: `sourceWalkthroughId` on the job and its `quoteDraft`) and approved
+  in the customer portal or as the office recorded it, within 30 days of the
+  walkthrough (Denver dates), pays exactly as if it had been signed there: 13%
+  to the rep and 7% to the estimator of a rep-set walkthrough, 7% on an
+  estimator's own walkthrough, 25% only when the rep did the walkthrough
+  themselves. Its estimator is the one the office or the door booking recorded,
+  else whoever did the walkthrough (`walkthroughOutcome.performedBy`), never
+  whoever recorded or sent the quote. Approved later, it pays nothing
+  (`approved_after_30_days`); a web or phone lead with no walkthrough pays
+  nothing. The ledgers find these jobs by one query on approval time and one on
+  their walkthroughs, never a scan.
+- **Margins.** Job actuals deducts exactly what the ledgers will pay: no
+  setter or estimator share on a walkthrough job that was neither signed there
+  nor approved within 30 days, or that the office classified as junk removal.
 
 ## Customer photo access in Hub readiness
 

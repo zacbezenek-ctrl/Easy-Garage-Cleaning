@@ -8,7 +8,9 @@ import { call, cookieFor, knockEnv, knockWorld, post, uuid } from './helpers/kno
 const now = '2026-10-20T18:00:00Z', admin = { user: 'test-owner' };
 const record = () => ({ walkthroughId: 'walk-1', setterKey: 'rep.one', serviceClassification: 'garage', classificationReference: 'synthetic-review' });
 const visit = () => ({ id: 'walk-1', revision: 'rev-w', type: 'walkthrough', convertedJobId: 'job-1', walkthroughOutcome: { outcome: 'sold_on_site' } });
-const job = () => ({ id: 'job-1', revision: 'rev-j', type: 'job', sourceWalkthroughId: 'walk-1',
+// knock-setter-v2 (owner decision 2026-10-30): a share is earned once the job is completed and paid in full, so the job
+// is completed (it had no status: paid in full used to be enough).
+const job = () => ({ id: 'job-1', revision: 'rev-j', type: 'job', status: 'completed', completedAt: '2026-10-19T15:00:00Z', sourceWalkthroughId: 'walk-1',
   estimate: { status: 'accepted', amount: 1000, acceptedAt: '2026-10-19T12:00:00Z' },
   acceptance: { recordedBy: 'estimator.one' }, payment: { amount: 1000, verified: true,
     stripeSessions: [{ sessionId: 'cs_test_syntheticSetter', paymentIntentId: 'pi_syntheticSetter', amount: 1000, purpose: 'balance', verifiedAt: now }] } });
@@ -95,10 +97,12 @@ test('direct-estimator and direct-sale routes remain 7 and 25 percent, with unkn
 
 test('junk, partial/refunded receipts, conflicting direct-sale credit and missing links stay safe', () => {
   assert.equal(projectSetterAttribution({ ...record(), serviceClassification: 'junk_removal' }, visit(), job()).earnedCommission, 0);
+  // knock-setter-v2: a completed job's balance still due waits for it, and a refund with no date is held as unreadable
+  // (were partial_collection_policy_unconfigured and collection_unverified).
   const partial = job(); partial.payment.amount = partial.payment.stripeSessions[0].amount = 200;
-  assert.ok(projectSetterAttribution(record(), visit(), partial).reviewReasons.includes('partial_collection_policy_unconfigured'));
+  assert.deepEqual([projectSetterAttribution(record(), visit(), partial).state, projectSetterAttribution(record(), visit(), partial).reviewReasons], ['awaiting_collection', ['balance_due']]);
   const refunded = job(); refunded.payment.refundedAmount = 20;
-  assert.ok(projectSetterAttribution(record(), visit(), refunded).reviewReasons.includes('collection_unverified'));
+  assert.ok(projectSetterAttribution(record(), visit(), refunded).reviewReasons.includes('refund_unverified'));
   const direct = [{ repKey: 'rep.one', handoff: { job: { ref: 'job-1' } } }];
   const conflict = projectSetterAttribution(record(), visit(), job(), direct);
   assert.equal(conflict.directSaleRepKey, 'rep.one');

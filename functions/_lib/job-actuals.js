@@ -19,7 +19,7 @@
  *   all owner-entered (pay figures never live in the code); goods at their retail basis (the estimate's product split, Home Depot retail before
  *   the 1.30 markup) plus the owner's goods purchase tax %; dump fee per truck load (the crew lead's count at Complete,
  *   else the quoted loads); truck cost per job. Commission on revenue by channel: estimator 7%, setter 13% + estimator
- *   7%, door sale 25%, junk-only 0%.
+ *   7%, door sale 25%, junk-only 0%, and 0% on a walkthrough job the commission ledgers will not pay (channelOf).
  * Revenue with a refund, an unbilled approved change or an incomplete money record has no margin ('revenue_unreconciled').
  * Unreadable timecards, incomplete timecards and truck loads nobody recorded (quoted, or none) leave it an upper bound.
  * The wage has no stand-in: until the owner enters it, no job has a margin ('wage_unset'). Any other blank owner cost
@@ -133,16 +133,20 @@ export function goodsRetailCents(job) {
   return Number.isSafeInteger(totals.productCents) ? totals.productCents : null;
 }
 
-/** Commission channel: junk-only earns nothing; a walkthrough a door-to-door rep ran and signed themselves pays the
- * door-sale 25% alone (REP-WALKTHROUGH, knock-setters.js repRanWalkthrough: repWalkthroughJobs); a door-to-door setter's
- * walkthrough pays setter + estimator; a door sale linked to the job pays 25%; any other signed walkthrough pays the
- * estimator 7%; anything else (no walkthrough) none. */
-export function channelOf(job, { setterWalkthroughs = new Set(), doorSaleJobs = new Set(), repWalkthroughJobs = new Set() } = {}) {
+/** Commission channel, exactly what the commission ledgers will pay (knock-setters.js, estimator-commission.js):
+ * junk-only earns nothing; a walkthrough a door-to-door rep ran and signed themselves (or did, for a quote approved
+ * online) pays the door-sale 25% alone (REP-WALKTHROUGH, knock-setters.js repRanWalkthrough: repWalkthroughJobs); a
+ * door-to-door setter's walkthrough pays setter + estimator; a door sale linked to the job pays 25%; any other walkthrough
+ * pays the estimator 7%; anything else (no walkthrough) none. unpaidJobs: walkthrough jobs no share is paid on
+ * (knock-setters.js paidWalkthroughJob: neither signed at the walkthrough nor its quote approved within 30 days of it, or
+ * the office classified the work as junk removal), which deduct no setter or estimator share. */
+export function channelOf(job, { setterWalkthroughs = new Set(), doorSaleJobs = new Set(), repWalkthroughJobs = new Set(), unpaidJobs = new Set() } = {}) {
   if (junkOnlyJob(job)) return 'junk_only';
   if (repWalkthroughJobs.has(job?.id)) return 'door_sale';
-  if (job?.sourceWalkthroughId && setterWalkthroughs.has(job.sourceWalkthroughId)) return 'appointment_setter';
+  const walkthrough = typeof job?.sourceWalkthroughId === 'string' && Boolean(job.sourceWalkthroughId) && !unpaidJobs.has(job.id);
+  if (walkthrough && setterWalkthroughs.has(job.sourceWalkthroughId)) return 'appointment_setter';
   if (doorSaleJobs.has(job?.id)) return 'door_sale';
-  if (typeof job?.sourceWalkthroughId === 'string' && job.sourceWalkthroughId) return 'direct_estimator';
+  if (walkthrough) return 'direct_estimator';
   return 'none';
 }
 
@@ -247,10 +251,10 @@ export function jobActualsWindow(today) {
 }
 
 /** The report: completed work jobs dated in the window, newest first, with totals for the last 30 and 90 days. */
-export function buildJobActuals({ jobs = [], labor = { jobs: [] }, settings = {}, setterWalkthroughs = new Set(), doorSaleJobs = new Set(), repWalkthroughJobs = new Set(), timecardsAvailable = true, today, asOf = new Date().toISOString() }) {
+export function buildJobActuals({ jobs = [], labor = { jobs: [] }, settings = {}, setterWalkthroughs = new Set(), doorSaleJobs = new Set(), repWalkthroughJobs = new Set(), unpaidJobs = new Set(), timecardsAvailable = true, today, asOf = new Date().toISOString() }) {
   const window = jobActualsWindow(today), byJob = new Map((labor?.jobs || []).map(row => [row.jobId, timecardLabor(row)]));
   const rows = jobs.filter(job => workJob(job) && completedJob(job) && typeof job.date === 'string' && job.date >= window.start && job.date < window.end)
-    .map(job => jobActualsRow(job, { labor: byJob.get(job.id) || null, settings, timecardsAvailable, channel: channelOf(job, { setterWalkthroughs, doorSaleJobs, repWalkthroughJobs }) }))
+    .map(job => jobActualsRow(job, { labor: byJob.get(job.id) || null, settings, timecardsAvailable, channel: channelOf(job, { setterWalkthroughs, doorSaleJobs, repWalkthroughJobs, unpaidJobs }) }))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || a.jobId.localeCompare(b.jobId));
   const normalized = normalizeCostSettings(settings);
   return {

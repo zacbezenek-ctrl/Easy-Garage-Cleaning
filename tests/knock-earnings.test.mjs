@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { DEFAULT_SETTINGS } from '../crew/knock-settings.js';
-import { CHANNEL_PERCENTS, SETTER_RULE_TEXT, commissionEligibility, commissionIssues, commissionRuleText, customerCollection, earnedAt, isEarned, payPeriodFor, periodStatement, projectedCommission, saleCommissions, leadOverrides, snapshotCommissionTerms } from '../crew/knock-money.js';
+import { CHANNEL_PERCENTS, DOOR_CONTRACT, SETTER_RULE_TEXT, commissionEligibility, commissionIssues, commissionRuleText, customerCollection, earnedAt, isEarned, payPeriodFor, periodStatement, projectedCommission, saleCommissions, leadOverrides, snapshotCommissionTerms } from '../crew/knock-money.js';
 import { loadSettings } from '../functions/_lib/knock-access.js';
 import { createKnockStore } from '../functions/_lib/knock-store.js';
 import { decodeFirestoreFields } from '../functions/_lib/firestore-job.js';
@@ -528,19 +528,24 @@ test('a refund or cancellation with no usable date holds every period; a dated o
   }
 });
 
-test('reps read one earning rule, matching the approval state and the collected-v3 terms', async () => {
+test('reps read one earning rule, matching the approval state and its contract (a knock-collected-v3 approval keeps its own)', async () => {
   const { settings } = await v3();
   const approved = commissionRuleText(settings.commission);
   assert.match(approved, /^25% of each eligible garage sale, earned once the customer has paid the full price \(a deposit alone does not count\), with payouts every two weeks\./);
   assert.doesNotMatch(approved, /completed|cancellation deadline|Not approved/);
+  // Owner decision 2026-10-30: the contract approved from now on (knock-completed-v4), and so the rule planned before an
+  // approval, earns at job completion and takes a refunded or cancelled share back (the planned rule was the v3 sentence).
+  const current = commissionRuleText({ ...settings.commission, contract: DOOR_CONTRACT });
+  assert.match(current, /^25% of each eligible garage sale, earned on the day the job is completed once the customer has paid the full price \(a deposit alone does not count\), with payouts every two weeks\./);
+  assert.match(current, /a refund or cancellation after that takes its share back \(all of it when cancelled\) on the next pay period's statement\. Sales booked under older terms keep their own rules\.$/);
   const unapproved = commissionRuleText((await loadSettings({ get: async () => ({ settings: DEFAULT_SETTINGS }) })).commission);
   assert.match(unapproved, /^Not approved yet: nothing is earned or payable/);
-  assert.ok(unapproved.includes(approved.split(' Sales booked')[0]), 'the planned rule is the same sentence');
+  assert.ok(unapproved.includes(current.split(' Sales booked')[0]), 'the planned rule is the current contract\'s sentence');
   assert.equal(commissionRuleText(undefined).startsWith('Not approved yet'), true);
   // A saved rate the contract cannot approve is never shown as the planned rate.
   const offContract = commissionRuleText({ ...settings.commission, verified: false, rate: 0.27 });
   assert.doesNotMatch(offContract, /27%|25%/);
-  assert.match(offContract, /Planned once approved: Commission on each eligible garage sale at the approved rate, earned once the customer has paid the full price/);
+  assert.match(offContract, /Planned once approved: Commission on each eligible garage sale at the approved rate, earned on the day the job is completed once the customer has paid the full price/);
   assert.match(SETTER_RULE_TEXT, /^13% to you .* estimator gets 7% \(20% total\)/);
   assert.deepEqual(CHANNEL_PERCENTS, { directSale: 25, setter: 13, estimator: 7 });
   const [help, money] = await Promise.all(['../crew/knock-app.js', '../crew/knock-stats-ui.js'].map(path => readFile(new URL(path, import.meta.url), 'utf8')));

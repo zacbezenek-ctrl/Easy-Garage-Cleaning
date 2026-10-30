@@ -4,7 +4,7 @@
 import { hasBusinessAccess, isHubOwner } from './hub-session.js';
 import { knockFailure, write } from './knock-store.js';
 import { mergeSettings, ROLES, validateSettings } from '../../crew/knock-settings.js';
-import { SETTER_CONTRACT, validCollectionPolicy, validCommissionScope, validSetterTerms } from '../../crew/knock-money.js';
+import { DOOR_CONTRACT, DOOR_CONTRACT_V3, SETTER_CONTRACT, SETTER_CONTRACT_V1, validCollectionPolicy, validCommissionScope, validSetterTerms } from '../../crew/knock-money.js';
 
 const SAFE_KEY = /^[a-z0-9._-]{1,64}$/;
 // Every stored commission field an approval binds to.
@@ -40,20 +40,24 @@ export async function loadSettings(store) {
   // the evidence for the complete contract and garage-only scope, bound to its settings.
   const fields = COMMISSION_FIELDS;
   const approval = doc?.compensationApproval;
+  // The contract it approved: knock-completed-v4 (DOOR_CONTRACT) from now on, or an earlier knock-collected-v3 approval,
+  // which keeps verifying (and new sales keep snapshotting it) until the owner approves the current contract.
+  const contract = [DOOR_CONTRACT_V3, DOOR_CONTRACT].includes(approval?.contract) ? approval.contract : null;
   settings.commission.verified = Boolean(doc?.updatedBy && Number.isFinite(Date.parse(doc?.updatedAt)) &&
     fields.every(key => Object.hasOwn(doc?.settings?.commission || {}, key)) && !validateSettings(doc.settings).length &&
-    approval?.contract === 'knock-collected-v3' && settings.commission.rate === 0.25 && validCommissionScope(approval.scope) && validCollectionPolicy(approval.collectionPolicy) &&
+    contract && settings.commission.rate === 0.25 && validCommissionScope(approval.scope) && validCollectionPolicy(approval.collectionPolicy, contract) &&
     approval.payrollAnchorConfirmed === true && doc.settings.payroll?.period === 'biweekly' && Object.hasOwn(doc.settings.payroll, 'anchorDate') &&
     approval.reference && approval.reviewedBy && Number.isFinite(Date.parse(approval.reviewedAt)) &&
     sameSettings(approval.commission, doc.settings.commission) && sameSettings(approval.payroll, doc.settings.payroll));
   settings.commission.approvedAt = settings.commission.verified ? approval.reviewedAt : null;
   settings.commission.scope = settings.commission.verified ? structuredClone(approval.scope) : null;
   settings.commission.collectionPolicy = settings.commission.verified ? structuredClone(approval.collectionPolicy) : null;
-  settings.commission.knownPolicy = { earnedOn: 'customer_collection', payoutCadence: 'biweekly' };
+  settings.commission.contract = settings.commission.verified ? contract : null;
+  settings.commission.knownPolicy = { earnedOn: contract === DOOR_CONTRACT ? 'job_completion' : 'customer_collection', payoutCadence: 'biweekly' };
   settings.commission.policyGaps = [
-    ...(!validCollectionPolicy(approval?.collectionPolicy) ? ['calculation_base_and_attribution'] : []),
+    ...(!validCollectionPolicy(approval?.collectionPolicy, contract || DOOR_CONTRACT_V3) ? ['calculation_base_and_attribution'] : []),
     ...(!settings.commission.verified ? ['payroll_cycle_anchor'] : []),
-    'partial_collections', 'refund_clawbacks',
+    'partial_collections', ...(settings.commission.verified && contract === DOOR_CONTRACT ? [] : ['refund_clawbacks']),
   ];
   settings.payroll.anchorVerified = settings.commission.verified;
   settings.payroll.period = 'biweekly';
@@ -64,19 +68,26 @@ export async function loadSettings(store) {
     Number.isFinite(Date.parse(planApproval.reviewedAt)) && sameSettings(planApproval.plan, doc?.settings?.plan) && sameSettings(planApproval.gate, doc?.settings?.gate));
   // Only once the owner approved the setter terms (setterTermsState), so a rep's rule text says they pay; absent before.
   const setter = setterTermsState(doc, settings);
-  if (setter.verified) settings.commission.setter = { verified: true, approvedAt: setter.approvedAt };
+  if (setter.verified) settings.commission.setter = { verified: true, approvedAt: setter.approvedAt, contract: setter.contract };
   return settings;
 }
 
-/* The owner's approval of the appointment-setter and estimator terms (crew/knock-money.js SETTER_TERMS, D6b), written
-   only by knock-admin.js approveSetterTerms beside compensationApproval. Its shares are paid every two weeks with the
+/* The owner's approval of the appointment-setter and estimator terms (crew/knock-money.js SETTER_TERMS), written only
+   by knock-admin.js approveSetterTerms beside compensationApproval. Its shares are paid every two weeks with the
    door-to-door commission, so it verifies only while that approval (and its pay cycle) does. Kept out of loadSettings,
-   whose settings go to every rep: callers that pay or show these shares read it with loadSetterTerms. */
+   whose settings go to every rep: callers that pay or show these shares read it with loadSetterTerms.
+   contract: knock-setter-v2 (SETTER_CONTRACT), or an earlier knock-setter-v1 approval, which keeps its own rules until
+   the owner approves v2. earlier: the v1 approval a v2 approval replaced (its time): a share earned under v1 before the
+   v2 approval keeps that time (knock-setters.js underEarlierTerms). */
 export function setterTermsState(doc, settings) {
   const approval = doc?.setterApproval;
-  const verified = Boolean(settings?.commission?.verified === true && approval && approval.contract === SETTER_CONTRACT && validSetterTerms(approval.terms) &&
+  const contract = [SETTER_CONTRACT, SETTER_CONTRACT_V1].includes(approval?.contract) ? approval.contract : null;
+  const verified = Boolean(settings?.commission?.verified === true && approval && contract && validSetterTerms(approval.terms, contract) &&
     typeof approval.reference === 'string' && approval.reference.trim() && typeof approval.reviewedBy === 'string' && approval.reviewedBy && Number.isFinite(Date.parse(approval.reviewedAt)));
-  return { verified, approvedAt: verified ? approval.reviewedAt : null, reference: verified ? approval.reference : null };
+  const prior = verified && contract === SETTER_CONTRACT ? approval.earlier : null;
+  const earlier = prior?.contract === SETTER_CONTRACT_V1 && Number.isFinite(Date.parse(prior.reviewedAt)) && Date.parse(prior.reviewedAt) <= Date.parse(approval.reviewedAt)
+    ? { contract: SETTER_CONTRACT_V1, approvedAt: prior.reviewedAt, reference: typeof prior.reference === 'string' ? prior.reference : '' } : null;
+  return { verified, approvedAt: verified ? approval.reviewedAt : null, reference: verified ? approval.reference : null, contract: verified ? contract : null, ...(earlier ? { earlier } : {}) };
 }
 
 export async function loadSetterTerms(store, settings) {
