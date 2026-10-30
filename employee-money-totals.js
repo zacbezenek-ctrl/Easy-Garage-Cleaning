@@ -151,7 +151,33 @@ function verifiedCashCents(job,finance){
   }
   return applied-credit;
 }
+/* FIX-CASH-OUTSTANDING: the command center's "Cash outstanding" and the finance tiles count sold work only. Never a
+   cancelled job (either spelling), a lost or superseded one (customer-payments CLOSED_STATUSES), or a quote still
+   waiting for approval; a quote counts once it is approved (the portal's rule, customer-payments payable()), paid
+   toward, or the work is done. Owed now is what the portal would take today: the whole balance once the work is
+   done (money-core's closing, or invoiced, review_requested or closed) or its invoice's due date has come, else the
+   approved deposit still unpaid (money-core depositRequiredCents); the rest is booked, due later. A no-show owes
+   nothing now. The balance is the board's own (financeState), so legacy and unified modes each keep their figures. */
+const CLOSED=['cancelled','canceled','superseded','lost'],NO_SHOW=['noshow','no_show','no-show'];
+const lower=value=>String(value||'').toLowerCase(),stageIn=(job,list)=>[job.status,job.pipelineStatus].some(value=>list.includes(lower(value)));
+const approved=job=>['accepted','approved'].includes(lower(job.customerApproval?.status||job.estimate?.status||job.quoteStatus));
+const done=(job,money)=>money.purpose==='balance'||['invoiced','review_requested','closed'].includes(lower(job.pipelineStatus||job.status));
+/** Whether a job is sold work (the finance tiles and Cash outstanding). */
+function sold(job){
+  if(!plain(job)||stageIn(job,CLOSED))return false;
+  const quoted=plain(job.estimate)||given(job.quoteStatus)||given(job.customerApproval?.status);
+  return !quoted||approved(job)||cents(job.payment?.amount)>0||done(job,totals(job));
+}
+/** One job's share of Cash outstanding in whole cents, {dueNowCents, laterCents}, or null when nothing on it is owed. `finance` is the suite's financeState; `today` a Denver date. */
+function outstanding(job,finance,today){
+  if(!sold(job)||stageIn(job,NO_SHOW)||!plain(finance))return null;
+  const balance=cents(finance.balance);if(balance===null)return null;
+  const money=totals(job),due=finance.dueDate||'',billed=Boolean(due)&&due<=today&&!['paid','void','superseded'].includes(lower(job.invoice?.status));
+  const deposit=money.depositRequiredCents,applied=cents(finance.paid);
+  const dueNowCents=billed||done(job,money)?balance:!approved(job)?0:deposit===null||applied===null?balance:Math.min(balance,Math.max(0,deposit-applied));
+  return{dueNowCents,laterCents:balance-dueNowCents};
+}
 function configure(flags){S.enabled=flags?.unifiedTotals===true;try{sessionStorage.setItem(KEY,String(S.enabled));}catch{}}
 window.addEventListener?.('egc:signout',()=>{S.enabled=false;try{sessionStorage.removeItem(KEY);}catch{}});
-window.EGCMoneyTotals={configure,enabled:()=>S.enabled,totals,financeState,verifiedCashCents};
+window.EGCMoneyTotals={configure,enabled:()=>S.enabled,totals,financeState,verifiedCashCents,sold,outstanding};
 })();
