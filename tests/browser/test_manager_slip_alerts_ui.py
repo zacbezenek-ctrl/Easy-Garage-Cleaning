@@ -62,6 +62,13 @@ class ManagerSlipAlertTests(HubShell, unittest.TestCase):
         # Only the slip alerts: the Hub's own announcement and crew-chat alerts (#212) share the stub.
         return page.evaluate("window.__alerts.filter(a=>String(a.options.tag||'').startsWith('egc-slip-')).map(a=>({title:a.title,body:a.options.body,tag:a.options.tag,data:a.options.data}))")
 
+    def wait_still(self, page):
+        # The Hub scrolls smoothly: wait until the page has stopped moving.
+        for _ in range(40):
+            before = page.evaluate('scrollY'); page.wait_for_timeout(250)
+            if page.evaluate('scrollY') == before: return
+        self.fail('the page kept scrolling')
+
     def assert_phone(self, page):
         self.assertFalse(page.evaluate('document.documentElement.scrollWidth > innerWidth'), 'no sideways scroll at 390 px')
 
@@ -101,6 +108,28 @@ class ManagerSlipAlertTests(HubShell, unittest.TestCase):
         card = page.locator('article.ops-agenda-focus')
         expect(card).to_contain_text('Synthetic Soon Garage')
         expect(card).to_be_in_viewport()
+        self.assert_phone(page)
+
+    def test_the_row_stays_in_view_through_a_late_render_until_the_viewer_scrolls(self):
+        self.slip = False
+        page = self.start_page('view=today&job=soon-job')
+        card = page.locator('article.ops-agenda-focus')
+        expect(card).to_be_in_viewport(ratio=1)
+        # A render that lands above the agenda afterwards (home widgets or review alerts loading, a refreshed agenda)
+        # replaces the screen 1,000 px taller: the row is put back in view.
+        late = "()=>{const host=document.querySelector('#ops-main');host.innerHTML='<div style=\"height:1000px\"></div>'+host.innerHTML}"
+        page.evaluate(late)
+        expect(card).to_be_in_viewport(ratio=1)
+        self.wait_still(page)
+        # Once the viewer scrolls (a finger drags the page back to the top), the position is theirs: a later render does
+        # not take it back. A phone context does not scroll on mouse wheel events, so the drag is the touch plus its scroll.
+        page.evaluate("()=>{document.querySelector('#ops-main').dispatchEvent(new Event('touchstart',{bubbles:true}));scrollTo({top:0,behavior:'instant'})}")
+        self.wait_still(page)
+        self.assertEqual(page.evaluate('scrollY'), 0)
+        page.evaluate(late)
+        page.wait_for_timeout(1500)
+        self.assertEqual(page.evaluate('scrollY'), 0)
+        expect(card).not_to_be_in_viewport()
         self.assert_phone(page)
 
     def test_switched_off_and_crew_get_none(self):
