@@ -5,6 +5,7 @@ import { getHubUserProfile } from '../functions/_lib/hub-session.js';
 import { fieldPaymentHandlers } from '../functions/api/field-payments.js';
 import { customerPaymentNeedsReview } from '../functions/_lib/customer-payments.js';
 import { mutateMoney } from '../functions/_lib/money-service.js';
+import { fieldJobProjection } from '../functions/_lib/field-execution.js';
 
 const ORIGIN = 'https://easygaragecleaning.com', NOW = '2026-09-29T18:00:00.000Z';
 const jpeg = Buffer.from([255, 216, 255, 224, 0, 16, 74, 70, 73, 70, 0, 1, 255, 217]);
@@ -68,6 +69,19 @@ test('only the current assigned lead can view and submit; feature flag off canno
     assert.equal((await removed.get('Lead.One')).status, 403, `stale named lead cannot read with visits=${visits || 'off'}`);
     assert.equal((await removed.submit()).status, 403, `stale named lead cannot submit with visits=${visits || 'off'}`);
   }
+});
+
+// Owner decision (2026-10-30): crew never see prices in any job text (functions/_lib/crew-money.js). The lead's balance to
+// collect is this screen's own number from the money record, never job text, so that filter leaves it whole.
+test('the lead still sees and collects the exact balance when the job text carries amounts the crew views remove', async () => {
+  const scope = 'Collect the $100 balance by check', f = fixture({ operationalScope: { text: scope }, title: 'Cleanout, balance 100.00', serviceType: 'Garage cleanout (balance 100.00)' });
+  const view = await body(await f.get('Lead.One'));
+  assert.equal(view.status, 200); assert.equal(view.balanceCents, 10000); assert.equal(view.capabilities.submit, true);
+  const submitted = await body(await f.submit({ method: 'check', reference: 'Check 2001' }));
+  assert.equal(submitted.status, 200); assert.equal(submitted.submissions[0].amountCents, 10000); assert.equal(submitted.balanceCents, 10000);
+  assert.equal((await body(await f.get('ZacB'))).submissions[0].reference, 'Check 2001', 'the manager reads the reference as typed');
+  assert.equal(f.job().operationalScope.text, scope, 'the stored job text is untouched');
+  assert.equal(fieldJobProjection(f.job(), [], { viewer: 'lead.one' }).scope, 'Collect the balance by check', 'the job page text reads without the amount');
 });
 
 test('exact balance stays integer cents across fractional dollars and malformed money fails closed', async () => {

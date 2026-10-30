@@ -359,7 +359,7 @@ test('a handoff request frozen before the page sent a crew brief is recovered un
   assert.equal(bodies[1], bodies[0], 'the original frozen request is retried byte for byte');
 });
 
-test('jobs saved before the fix stop leaking at once: crew projections strip a signed brief, staff scopes are untouched', async t => {
+test('jobs saved before the fix stop leaking at once: crew projections strip a signed brief and, by the owner decision of 2026-10-30, an office-written scope too', async t => {
   const leaked = { id: 'job-leaked', type: 'job', status: 'scheduled', pipelineStatus: 'scheduled', date: '2026-09-24', time: '08:00', endTime: '13:00', assignedCrew: ['crew.one'], customer: 'Synthetic Customer', address: '100 Fixture Lane',
     handoffVersion: 1, operationalScope: { text: LEAKED, updatedBy: 'zacb' }, jobInstructions: { customerGoal: 'Park two cars', keepItems: 'Blue bicycle', customerNotes: 'Customer adds $50 for the fridge', hazards: ['Pest waste'] },
     customerInstructions: 'Customer adds $50 for the fridge', clientChecklists: { preJob: [{ id: 'goal', label: 'Repeat the promised outcome to the crew', detail: 'Park two cars (+$0 extra)' }], postJob: [] },
@@ -372,11 +372,14 @@ test('jobs saved before the fix stop leaking at once: crew projections strip a s
   // A recurring visit copied from the job keeps the brief text but not handoffVersion.
   const copy = { ...leaked, id: 'job-copy', handoffVersion: undefined, sourceTemplateJobId: 'job-leaked' };
   assert.equal(fieldJobProjection(copy).scope, CLEAN);
-  // Staff-written scope on an ordinary job is the crew's instruction and is never rewritten.
+  // Owner decision (2026-10-30): crew never see prices on any job, so an office-written scope on an ordinary job reads
+  // without its amount too (this pinned the opposite before). The stored job keeps it; the lead's balance to collect is
+  // the field-pay screen's own number (tests/field-payments.test.mjs).
   const staff = { ...leaked, id: 'job-staff', handoffVersion: undefined, operationalScope: { text: 'Collect the $300 balance by check.' } };
   const plainProjection = fieldJobProjection(staff);
-  assert.equal(plainProjection.scope, 'Collect the $300 balance by check.');
-  assert.equal(plainProjection.customerInstructions, 'Customer adds $50 for the fridge');
+  assert.equal(plainProjection.scope, 'Collect the balance by check.');
+  assert.equal(plainProjection.customerInstructions, 'Customer adds for the fridge');
+  assert.equal(staff.operationalScope.text, 'Collect the $300 balance by check.', 'the stored scope is not rewritten');
   // /api/crew-jobs reads a masked scan: the mask carries handoffVersion, so the crew row is stripped too.
   assert.ok(CREW_PROJECTION_FIELDS.includes('handoffVersion') && CREW_LISTING_FIELDS.includes('handoffVersion'));
   const store = hubStore(); store.rows.set('jobs/job-leaked', { ...leaked, revision: 'leak-r1' });
@@ -396,7 +399,7 @@ test('jobs saved before the fix stop leaking at once: crew projections strip a s
   assert.doesNotMatch(crew, MONEY);
 });
 
-test('a signed job shows checklist labels without amounts wherever crew read them; a staff job keeps its own wording', () => {
+test('checklist labels read without amounts wherever crew read them, on a signed job and, by the owner decision of 2026-10-30, an office-written one', () => {
   const actor = { user: 'crew.one', displayName: 'Crew One' }, fee = 'Checklist: Collect the agreed disposal fee';
   // A manager-written check on a signed job (the handoff already strips the checks it writes).
   const signed = { id: 'job-fee', type: 'job', status: 'arrived', pipelineStatus: 'arrived', assignedCrew: ['crew.one'], handoffVersion: 1, operationalScope: { text: CLEAN },
@@ -418,17 +421,21 @@ test('a signed job shows checklist labels without amounts wherever crew read the
   const checked = fieldCommand(signed, actor, { action: 'checklist', itemId: 'fee', completed: true, requestId: randomUUID() }, NOW);
   assert.equal(checked.event.summary, 'Checked: Collect the agreed disposal fee');
   assert.equal(checked.patch.fieldExecution.checklistTemplate[0].label, 'Collect the agreed $75 disposal fee', 'the stored template is not rewritten');
-  // The same check on an ordinary job with a staff-written scope is the crew's instruction and keeps its amount.
+  // Owner decision (2026-10-30): crew never see prices on any job, so the same check on an ordinary job with an
+  // office-written scope reads without its amount too (this pinned the opposite before); its stored template keeps it.
   const staff = { ...signed, handoffVersion: undefined, operationalScope: { text: 'Collect the $300 balance by check.' } };
-  assert.ok(fieldCompletionMissing(staff).includes('Checklist: Collect the agreed $75 disposal fee'));
-  assert.equal(fieldCommand(staff, actor, { action: 'checklist', itemId: 'fee', completed: true, requestId: randomUUID() }, NOW).event.summary, 'Checked: Collect the agreed $75 disposal fee');
-  assert.equal(fieldJobProjection(staff, [recorded]).history[0].summary, 'Checked: Collect the agreed $75 disposal fee');
+  assert.ok(fieldCompletionMissing(staff).includes(fee));
+  const staffCheck = fieldCommand(staff, actor, { action: 'checklist', itemId: 'fee', completed: true, requestId: randomUUID() }, NOW);
+  assert.equal(staffCheck.event.summary, 'Checked: Collect the agreed disposal fee');
+  assert.equal(staffCheck.patch.fieldExecution.checklistTemplate[0].label, 'Collect the agreed $75 disposal fee', 'the stored template is not rewritten');
+  assert.equal(fieldJobProjection(staff, [recorded]).history[0].summary, 'Checked: Collect the agreed disposal fee');
 });
 
 // QA: on a signed job crew still read amounts in a note's body, an issue, a material's name, the job's title and service,
-// a status reason, photo notes and closeout notes. Each is shown without them, as the scope is.
+// a status reason, photo notes and closeout notes. Each is shown without them, as the scope is; by the owner decision of
+// 2026-10-30 (crew never see prices on any job) the same holds on a job with office-written text.
 const texts = value => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(texts) : value && typeof value === 'object' ? Object.values(value).flatMap(texts) : [];
-test('a signed job shows every crew text without amounts (title, service, materials, issue, crew notes, closeout, day notes); a staff job keeps its wording', async t => {
+test('every crew text reads without amounts (title, service, materials, issue, crew notes, closeout, day notes) on a signed job and, by the owner decision of 2026-10-30, an office-written one', async t => {
   const actor = { user: 'crew.one', displayName: 'Crew One' };
   const signed = { id: 'job-texts', type: 'job', status: 'in_progress', pipelineStatus: 'in_progress', date: '2026-09-22', time: '08:00', endTime: '13:00', assignedCrew: ['crew.one'], handoffVersion: 1,
     customer: 'Synthetic Customer', address: '100 Fixture Lane', operationalScope: { text: CLEAN }, title: 'Garage cleanout, quoted 1,250.00', serviceType: 'Garage cleanout (balance 937.50)',
@@ -466,13 +473,21 @@ test('a signed job shows every crew text without amounts (title, service, materi
   // Through the real crew-session GET /api/field-jobs.
   const { crew: response } = await crewAndManagerReads(t, signed);
   for (const text of texts(JSON.parse(response).job)) assert.equal(hasCrewMoney(text), false, text);
-  // An ordinary job with a staff-written scope shows its own wording (an owner decision, not this fix).
+  // Owner decision (2026-10-30): crew never see prices on any job, so an ordinary job with an office-written scope reads
+  // the same (this pinned the opposite before). Management-only notes and issues, and the stored job, keep their wording.
   const staff = { ...signed, id: 'job-staff-texts', handoffVersion: undefined, operationalScope: { text: 'Collect the $300 balance by check.' } };
-  const plainView = fieldJobProjection(staff, events, { viewer: 'crew.one' });
-  assert.equal(plainView.serviceType, 'Garage cleanout (balance 937.50)');
-  assert.equal(crewJobProjection(staff, { viewer: 'crew.one' }).title, 'Garage cleanout, quoted 1,250.00');
-  assert.deepEqual([plainView.materials[0].name, plainView.attention.reason, plainView.history[0].body], ['Shelf kit (120 bucks)', 'Customer paid 312.50 deposit, balance 937.50', 'Customer will Venmo me 50 tonight']);
-  assert.equal(fieldVisitProjection(staff, { today: '2026-09-22', manager: true }).days[0].notes, 'Day one done, collected 300 cash');
+  const plainView = fieldJobProjection(staff, events, { viewer: 'crew.one' }), plainManager = fieldJobProjection(staff, events, { manager: true });
+  assert.equal(plainView.scope, 'Collect the balance by check.');
+  assert.equal(plainView.serviceType, 'Garage cleanout (balance)');
+  assert.equal(crewJobProjection(staff, { viewer: 'crew.one' }).title, 'Garage cleanout, quoted');
+  assert.deepEqual([plainView.materials[0].name, plainView.attention.reason, plainView.history[0].body], ['Shelf kit', 'Customer paid deposit, balance', 'Customer will Venmo me tonight']);
+  assert.equal(fieldVisitProjection(staff, { today: '2026-09-22', manager: true }).days[0].notes, 'Day one done, collected cash');
+  for (const view of [plainView, crewJobProjection(staff, { viewer: 'crew.one' })]) for (const text of texts(view)) assert.equal(hasCrewMoney(text), false, text);
+  assert.equal(plainManager.history.find(event => event.visibility === 'management').body, 'Balance 937.50 by check');
+  const managementIssue = { ...staff, fieldExecution: { ...staff.fieldExecution, attention: { ...staff.fieldExecution.attention, visibility: 'management' } } };
+  assert.equal(fieldJobProjection(managementIssue, [], { manager: true }).attention.reason, 'Customer paid 312.50 deposit, balance 937.50');
+  assert.equal(fieldJobProjection(managementIssue, [], { viewer: 'crew.one' }).attention, null, 'crew never see a management-only issue');
+  assert.deepEqual([staff.title, staff.operationalScope.text], ['Garage cleanout, quoted 1,250.00', 'Collect the $300 balance by check.'], 'the stored job is not rewritten');
 });
 
 // Backfill: rows as the masked scan returns them.

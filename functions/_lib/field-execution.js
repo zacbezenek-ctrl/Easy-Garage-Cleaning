@@ -2,7 +2,7 @@ import { jobCrewNames, assignmentKey } from './job-assignment.js';
 import { advanceFieldTime, fieldJobTime } from './field-execution-time.js';
 import { segmented, jobSegments } from './dispatch-segments.js';
 import { denverToday, occupiedDays } from './dispatch-time.js';
-import { signedBriefJob, stripCrewMoney } from './crew-money.js';
+import { stripCrewMoney } from './crew-money.js';
 import { walkthroughCrewBrief } from './walkthrough-crew-brief.js';
 import { crewVisitNotes } from './visit-notes.js';
 import { crewMaterialFields } from './job-materials.js';
@@ -40,9 +40,10 @@ export const FIELD_CHECKLIST_DEFAULTS = [
 
 export function fieldChecklist(job) {
   const configured = job.fieldExecution?.checklistTemplate;
-  // FIX-CREW-PRICE-LEAK: on a signed walkthrough's job every checklist label crew read (the list, what is
-  // missing before start or completion, the history entry of a check) is shown without amounts.
-  const crew = signedBriefJob(job) ? stripCrewMoney : value => value;
+  // FIX-CREW-PRICE-LEAK: every checklist label crew read (the list, what is missing before start or completion, the
+  // history entry of a check) is shown without amounts: a signed walkthrough's, and since the owner's decision of
+  // 2026-10-30 (crew never see prices on any job) an office-written one too. The stored template is not rewritten.
+  const crew = stripCrewMoney;
   // Older imported instructions are not guaranteed to have been written through
   // the current validator. Preserve meaningful tasks without letting one bad
   // entry break the entire crew workday or collapse two tasks into one check.
@@ -67,9 +68,9 @@ export function fieldChecklist(job) {
 
 // options.purchaseDetails (EGC_JOB_MATERIALS, /api/field-jobs): a buy item's store, SKU and product page (crewMaterialFields).
 export function fieldMaterials(job, { purchaseDetails = false } = {}) {
-  // FIX-CREW-PRICE-LEAK: on a signed walkthrough's job a material's name is shown without amounts wherever crew read it
-  // (the list, what is missing at completion, the history entry of a state change).
-  const crew = signedBriefJob(job) ? stripCrewMoney : value => value;
+  // FIX-CREW-PRICE-LEAK: a material's name is shown without amounts wherever crew read it (the list, what is missing at
+  // completion, the history entry of a state change), on every job (owner decision, 2026-10-30).
+  const crew = stripCrewMoney;
   return list(job.materials || job.requiredMaterials).slice(0, 100).map((item, index) => {
     const id = fieldText(item?.id, 100) || `material-${index}`;
     const state = job.fieldExecution?.materialStates?.[id];
@@ -103,8 +104,9 @@ export function fieldEventProjection(event, manager = false) {
 export function fieldAttention(job, manager = false) {
   const issue = job.fieldExecution?.attention;
   if (!issue || !manager && issue.visibility !== 'crew') return null;
-  // A crew-visible issue on a signed walkthrough's job reads without amounts, for everyone who sees it.
-  const crew = issue.visibility === 'crew' && signedBriefJob(job) ? stripCrewMoney : value => value;
+  // A crew-visible issue reads without amounts, for everyone who sees it (owner decision, 2026-10-30: crew never see prices
+  // on any job). A management-only issue keeps its wording for the managers who alone read it.
+  const crew = issue.visibility === 'crew' ? stripCrewMoney : value => value;
   const additions = Number.isSafeInteger(issue.additions) && issue.additions > 0 ? `~${issue.additions}` : '';
   return { id: `${issue.requestId || `${issue.at || ''}:${issue.actorId || ''}`}${additions}`, status: issue.status === 'resolved' ? 'resolved' : 'open', reason: crew(fieldText(issue.reason)), reportedAt: issue.at || null, reportedBy: fieldText(issue.actorName || issue.actorId, 200), visibility: issue.visibility === 'crew' ? 'crew' : 'management', resolvedAt: issue.resolvedAt || null, resolvedBy: fieldText(issue.resolvedByName || issue.resolvedBy, 200), resolution: crew(fieldText(issue.resolution)), canResolve: manager && issue.status !== 'resolved' };
 }
@@ -171,10 +173,12 @@ export function fieldJobProjection(job, events = [], options = {}) {
   const instructionText = typeof job.jobInstructions === 'string' ? job.jobInstructions : typeof job.instructions === 'string' ? job.instructions : '';
   const state = job.fieldExecution || {}, stage = fieldStage(job), frozen = closed(job);
   const crewNames = options.crewNames || {};
-  // FIX-CREW-PRICE-LEAK: a signed walkthrough's brief is shown without the quoted prices it
-  // carried before the fix (jobs saved earlier, and recurring visits copied from them), and so is every other text crew
-  // read on it: its service, status reasons, segment notes, equipment, photo notes, crew history and completion notes.
-  const signed = signedBriefJob(job), crew = value => !signed ? value : Array.isArray(value) ? value.map(stripCrewMoney).filter(Boolean) : stripCrewMoney(value);
+  // FIX-CREW-PRICE-LEAK: every text crew read is shown without amounts: the scope and instructions, the service, status
+  // reasons, segment notes, equipment, photo notes, crew history and completion notes. First for a signed walkthrough's
+  // brief (and recurring visits copied from it); since the owner's decision of 2026-10-30 (crew never see prices on any
+  // job) for office-written text too. The stored job is never rewritten; the lead's balance to collect is the field-pay
+  // screen's own number (/api/field-payments), not text.
+  const crew = value => Array.isArray(value) ? value.map(stripCrewMoney).filter(Boolean) : stripCrewMoney(value);
   return {
     id: job.id, expectedRevision: job.__updateTime || job.revision || '', type: 'job',
     customer: fieldText(job.customer, 200), phone: fieldText(job.phone, 100), address: fieldText(job.address, 1000),
@@ -205,7 +209,7 @@ export function fieldJobProjection(job, events = [], options = {}) {
     checklist: fieldChecklist(job),
     photos: fieldPhotos(job).map(photo => ({ id: photo.id, category: photo.category, caption: crew(fieldText(photo.caption, 500)), ...(photo.category === 'storage' ? { bin: fieldText(photo.bin, 24), items: crew(fieldText(photo.items, 500)) } : {}), createdAt: photo.createdAt, actorName: photo.actorName, bytes: photo.bytes, url: `/api/field-jobs?jobId=${encodeURIComponent(job.id)}&photoId=${encodeURIComponent(photo.id)}` })),
     // A management-only note keeps its wording for the managers who alone read it.
-    history: events.map(event => fieldEventProjection(event, options.manager)).filter(Boolean).map(event => signed ? { ...event, summary: stripCrewMoney(event.summary), ...(event.visibility === 'crew' ? { body: stripCrewMoney(event.body) } : {}) } : event),
+    history: events.map(event => fieldEventProjection(event, options.manager)).filter(Boolean).map(event => ({ ...event, summary: stripCrewMoney(event.summary), ...(event.visibility === 'crew' ? { body: stripCrewMoney(event.body) } : {}) })),
     attention: fieldAttention(job, options.manager === true), canAddManagementNote: options.manager === true,
     jobTime: fieldJobTime(job, options.now),
     completion: state.completion ? { completedAt: state.completion.completedAt, completedBy: state.completion.actorName || state.completion.actorId, notes: crew(fieldText(state.completion.notes)), hasIssues: state.completion.hasIssues === true, issueNotes: crew(fieldText(state.completion.issueNotes)) } : null,
