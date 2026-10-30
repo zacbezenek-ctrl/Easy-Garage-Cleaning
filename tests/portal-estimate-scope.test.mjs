@@ -164,6 +164,17 @@ test('the Hub browser estimate editor leaves a 25/75 quote to its own workflow a
   const legacy = financeHarness({ ...job, estimate: { number: 'EST-1', status: 'accepted', amount: 1400, depositRequired: 700 } }, null);
   await legacy.context.window.opsFinanceAction('job-1', 'invoice');
   assert.equal(legacy.captured.form.fields.find(field => field.name === 'dueDate').value, '2026-10-06', 'any other job keeps its default');
+  // Owner decision 2026-10-30: the balance is due when the job is complete, so a job moved later is invoiced for its
+  // current day (the saved schedule stays as it was), and a multi-day job for its last day.
+  const moved = financeHarness({ ...job, date: '2026-10-27' }, null);
+  await moved.context.window.opsFinanceAction('job-1', 'invoice');
+  assert.equal(moved.captured.form.fields.find(field => field.name === 'dueDate').value, '2026-10-27');
+  const multiDay = financeHarness({ ...job, estimate: { number: 'EST-1', status: 'accepted', amount: 1400, depositRequired: 350 }, date: '2026-10-08', endDate: '2026-10-10' }, null);
+  await multiDay.context.window.opsFinanceAction('job-1', 'invoice');
+  assert.equal(multiDay.captured.form.fields.find(field => field.name === 'dueDate').value, '2026-10-10');
+  const done = financeHarness({ ...job, date: '2026-10-27', status: 'completed', completedAt: '2026-10-05T20:00:00.000Z' }, null);
+  await done.context.window.opsFinanceAction('job-1', 'invoice');
+  assert.equal(done.captured.form.fields.find(field => field.name === 'dueDate').value, '2026-10-06', 'a finished job is due from today');
 });
 
 test('the Hub Issue invoice action copies only sold lines in their customer-facing shape', async () => {

@@ -97,6 +97,10 @@ async function load(){
 
 function includedLines(job){return job.lineItems.filter(line=>line.selected===true&&line.kind!=='tip');}
 // Options, packages, discounts and tips come from the walkthrough; this editor never reprices them.
+// The earliest invoice due date: the job's day while its work is still ahead (money-service.js invoiceEarliestDueDate; a
+// signed 25/75 job's remainder day follows its current job day), else today. The server refuses an earlier date and says
+// which day (a multi-day job's last day).
+const dueFloor=job=>{const day=job.estimate?.remainderDueDate||(!['completed','invoiced','paid','review_requested','closed'].includes(String(job.status||'').toLowerCase())?job.date:'');return /^\d{4}-\d{2}-\d{2}$/.test(String(day||''))&&day>today()?day:today();};
 function lockedEstimate(job){return job.lineItems.some(line=>line.optional||line.grouped||!['service','labor','product','disposal','fee'].includes(line.kind))||!job.linesComplete;}
 function freshDraft(){
   const job=S.job,t=job.totals;
@@ -107,8 +111,9 @@ function freshDraft(){
   if(S.view==='accept')return{approvedBy:job.customer||''};
   if(S.view==='deposit')return{amount:dollars(t.depositDueCents),method:'check',reference:''};
   if(S.view==='payment')return{amount:dollars(t.balanceCents),method:'check',reference:''};
-  // A job signed in person on the 25/75 terms: its balance is due on the signed job day (money-service.js issueInvoice).
-  if(S.view==='invoice'){const signed=job.estimate?.remainderDueDate&&job.estimate.remainderDueDate>today()?job.estimate.remainderDueDate:job.estimate?.remainderDueDate?today():'';return{dueDate:job.invoice.dueDate&&job.invoice.dueDate>=(signed||today())?job.invoice.dueDate:signed||addDays(today(),7),customerReference:job.invoice.customerReference||''};}
+  // No invoice is due before the job is complete (dueFloor). A job signed in person on the 25/75 terms defaults to that
+  // day, any other job to a week out or that day, whichever is later.
+  if(S.view==='invoice'){const floor=dueFloor(job),base=job.estimate?.remainderDueDate?today():addDays(today(),7),due=floor>base?floor:base;return{dueDate:job.invoice.dueDate&&job.invoice.dueDate>=floor?job.invoice.dueDate:due,customerReference:job.invoice.customerReference||''};}
   if(S.view==='sent')return{channel:'email',note:''};
   if(S.view==='void')return{reason:''};
   if(S.view==='change')return{changeOrderId:S.draft?.changeOrderId||'',reason:''};
@@ -293,7 +298,7 @@ function invoiceView(){
       h('p',{class:'em-muted'},`Paid ${money(t.appliedCents)} · balance ${money(t.balanceCents)}`),
       (preview.notices||[]).map(text=>h('p',{class:'em-notice warn'},text)),
     ]:h('p',{class:'em-notice warn'},'The invoice lines could not be previewed. Review the job money before issuing.'),
-    h('div',{class:'em-pair'},field('Payment due date',bind('dueDate',{type:'date',min:today(),required:true})),field('PO / customer reference',bind('customerReference',{maxLength:120,autocomplete:'off'}),'Optional')),
+    h('div',{class:'em-pair'},field('Payment due date',bind('dueDate',{type:'date',min:dueFloor(job),required:true}),dueFloor(job)>today()?`The balance is due when the job is complete: ${dueFloor(job)} or later.`:''),field('PO / customer reference',bind('customerReference',{maxLength:120,autocomplete:'off'}),'Optional')),
     note(automation('invoice-issued')+' The invoice shows in the customer portal with its balance.'),
     active&&invoice.status!=='paid'?h('button',{type:'button',class:'em-button danger',onclick:()=>switchView('void')},'Void this invoice…'):null,
     changeList(),

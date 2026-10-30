@@ -36,6 +36,27 @@ test('a job signed in person on the 25/75 terms is invoiced for its balance, due
   await assert.rejects(edited.run('invoice.issue', { dueDate: '2026-09-24' }), error => error.code === 'money_payment_policy_workflow_required' && error.status === 409);
 });
 
+// Owner decision 2026-10-30: the 75% balance is due when the job is complete, so an invoice is never due (and never goes
+// overdue, starting HighLevel's overdue reminder) before the work is done. The floor is the job's current day, never the
+// saved schedule's: a job moved later, a multi-day job's last day; a finished job is due from today.
+test('an invoice is never due before the job is complete: a moved signed job from its new day, a multi-day job from its last day', async () => {
+  const signed = { number: 'EST-SIGNED', revision: 1, status: 'accepted', amount: 1400, amountCents: 140000, depositRequired: 350, depositRequiredCents: 35000, depositPct: 25, termsVersion: SIGNED_25_75.version, commercialPolicy: { ...SIGNED_25_75 },
+    paymentSchedule: { depositCents: 35000, remainderCents: 105000, depositDueDate: '2026-09-22', remainderDueDate: '2026-09-24', timeZone: 'America/Denver', policyVersion: SIGNED_25_75.version }, lineItems: LINES };
+  const moved = fixture({ total: 1400, date: '2026-10-01', estimate: signed, deposit: { amount: 350, paidAmount: 350, status: 'paid' }, payment: { amount: 350, verified: true } });
+  await assert.rejects(moved.run('invoice.issue', { dueDate: '2026-09-24' }), error => error.code === 'money_invalid_due_date' && error.details.earliestDueDate === '2026-10-01' && /remainder when the job is complete, so this invoice is due on 2026-10-01 or later/.test(error.message));
+  const result = await moved.run('invoice.issue', { dueDate: '2026-10-01' });
+  assert.deepEqual([moved.job().invoice.dueDate, result.job.estimate.remainderDueDate], ['2026-10-01', '2026-10-01'], 'the Hub form pre-fills the current job day');
+  assert.deepEqual(moved.job().estimate.paymentSchedule, signed.paymentSchedule, 'the saved schedule is untouched');
+  const unbooked = fixture({ total: 1400, date: '', estimate: signed });
+  await assert.rejects(unbooked.run('invoice.issue', { dueDate: '2026-09-23' }), error => error.details?.earliestDueDate === '2026-09-24', 'no day booked: the signed remainder day');
+  const items = { total: 1400, estimate: { number: 'EST-1', status: 'accepted', amount: 1400, depositRequired: 350, lineItems: LINES } };
+  const multiDay = fixture({ ...items, date: '2026-09-24', endDate: '2026-09-26' });
+  await assert.rejects(multiDay.run('invoice.issue', { dueDate: '2026-09-25' }), error => error.code === 'money_invalid_due_date' && error.details.earliestDueDate === '2026-09-26' && /^The balance is due when the job is complete/.test(error.message));
+  assert.equal((await multiDay.run('invoice.issue', { dueDate: '2026-09-26' })).job.invoice.dueDate, '2026-09-26');
+  const finished = fixture({ ...items, date: '2026-09-24', status: 'completed', pipelineStatus: 'completed', completedAt: '2026-09-21T20:00:00.000Z' });
+  assert.equal((await finished.run('invoice.issue', { dueDate: '2026-09-22' })).job.invoice.dueDate, '2026-09-22', 'finished: due from today');
+});
+
 const NOW = '2026-09-22T18:00:00.000Z'; // noon in Denver on 2026-09-22
 const LATER = '2026-09-23T18:00:00.000Z';
 const owner = { user: 'zacb', role: 'owner', businessAccess: true, displayName: 'Synthetic Owner' };
