@@ -67,15 +67,45 @@ function check({visits,now,storage=root.localStorage,show=deliver,open=()=>{},ru
   for(const row of fresh)try{show(row.title,{body:row.body,tag:'egc-slip-'+row.key,data:{view:'today',job:row.jobId}},()=>open(row.jobId))}catch{}
   return fresh;
 }
-// The Field agenda row for a job: highlighted, scrolled to and focused. Retries while the Today screen renders.
-function focusRow(jobId,{doc=root.document,tries=20,wait=(fn,ms)=>root.setTimeout?.(fn,ms)}={}){
+// The Field agenda row for a job: highlighted, scrolled to and focused. Retries while the Today screen renders. Then,
+// for `settle` more checks (about 10 s), it puts the row back in view whenever a later render has moved it out (the
+// home widgets, review alerts or a refreshed agenda landing above it) and the page has stopped moving, until the viewer
+// scrolls, taps or types: their own scrolling is never taken back. A newer focusRow call takes over from an older one.
+const INPUT=['wheel','touchstart','pointerdown','keydown'];
+let focusCall=0;
+function focusRow(jobId,{doc=root.document,tries=20,settle=40,wait=(fn,ms)=>root.setTimeout?.(fn,ms),view=root}={}){
   if(!jobId||typeof doc?.querySelectorAll!=='function')return false;
-  const row=[...doc.querySelectorAll('[data-agenda-job]')].find(node=>node.getAttribute('data-agenda-job')===jobId);
-  if(!row){if(tries>0)wait(()=>focusRow(jobId,{doc,tries:tries-1,wait}),150);return false}
-  const card=row.closest?.('article')||row;
-  for(const node of doc.querySelectorAll('.ops-agenda-focus'))node.classList.remove('ops-agenda-focus');
-  card.classList.add('ops-agenda-focus');card.scrollIntoView?.({block:'center'});(card.querySelector('a,button')||card).focus?.({preventScroll:true});
-  return true;
+  const call=++focusCall,current=()=>call===focusCall;
+  const listen=on=>{for(const type of INPUT)try{on?doc.addEventListener?.(type,stop,{capture:true,passive:true}):doc.removeEventListener?.(type,stop,true)}catch{}};
+  const stop=()=>{if(current())focusCall++;listen(false)};
+  const find=()=>[...doc.querySelectorAll('[data-agenda-job]')].find(node=>node.getAttribute('data-agenda-job')===jobId);
+  const show=row=>{
+    const card=row.closest?.('article')||row;
+    for(const node of doc.querySelectorAll('.ops-agenda-focus'))node.classList.remove('ops-agenda-focus');
+    card.classList.add('ops-agenda-focus');card.scrollIntoView?.({block:'center'});(card.querySelector('a,button')||card).focus?.({preventScroll:true});
+    return card;
+  };
+  // In view: the card's top is on screen with the card (or half the screen) below it. A page that cannot be measured counts as in view.
+  const measurable=card=>typeof view?.innerHeight==='number'&&typeof card?.getBoundingClientRect==='function';
+  const inView=card=>{const box=card.getBoundingClientRect(),height=view.innerHeight;return box.top>=0&&box.top<=height-Math.min(box.height,height/2)};
+  // A scroll still moving (the smooth scroll this started) is left to finish before the row is checked again.
+  let lastY=view?.scrollY;
+  const watch=left=>{
+    if(!current())return listen(false);
+    if(left<=0)return stop();
+    const row=find(),card=row&&(row.closest?.('article')||row),y=view?.scrollY,moving=y!==lastY;lastY=y;
+    if(card&&!moving&&measurable(card)&&!inView(card))show(row);
+    wait(()=>watch(left-1),250);
+  };
+  const attempt=left=>{
+    if(!current())return false;
+    const row=find();
+    if(!row){if(left>0)wait(()=>attempt(left-1),150);else stop();return false}
+    const card=show(row);
+    if(settle>0&&measurable(card)){listen(true);wait(()=>watch(settle),250)}else stop();
+    return true;
+  };
+  return attempt(tries);
 }
 root.EGCSlipAlerts=Object.freeze({pending,check,deliver,focusRow,KEY,LIMIT});
 })(typeof window!=='undefined'?window:globalThis);
