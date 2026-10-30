@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { authorizeTimecard, timecardHours, timecardWorkDate } from '../functions/_lib/employee-timecards.js';
+import { computeTimesheetWeek } from '../functions/_lib/timesheet-week.js';
 import { createHubCredentialHash, createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { onRequestGet, onRequestPost } from '../functions/api/employee-hub.js';
 import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
@@ -151,6 +152,20 @@ test('Denver work dates and elapsed hours survive midnight, DST transitions and 
   assert.equal(timecardWorkDate('2026-09-22T24:00:00Z'), '');
   assert.equal(timecardHours({ clockInAt: '2026-03-08T01:30:00-07:00', clockOutAt: '2026-03-08T03:30:00-06:00', breaks: [] }), 1);
   assert.equal(timecardHours({ clockInAt: '2026-11-01T00:30:00-06:00', clockOutAt: '2026-11-01T02:30:00-07:00', breaks: [] }), 3);
+});
+
+test('stored hours and the gross estimate pay a rest break and leave out a meal break, as the payroll week does', () => {
+  // An 8 h shift with a 10-minute paid rest break and a 30-minute unpaid meal is 7.5 paid hours (Colorado COMPS rule 5.2).
+  const breaks = [{ startAt: '2026-09-22T16:00:00.000Z', endAt: '2026-09-22T16:10:00.000Z', kind: 'rest' }, { startAt: '2026-09-22T18:00:00.000Z', endAt: '2026-09-22T18:30:00.000Z', kind: 'meal' }];
+  const shift = { id: 'shift-rest', employee: 'Crew.One', employeeName: 'Crew One', clockInAt: start, clockOutAt: '2026-09-22T22:00:00.000Z', status: 'submitted', approvalStatus: 'pending', hourlyRate: 20, breaks };
+  assert.equal(timecardHours(shift), 7.5);
+  const approved = authorizeTimecard({ session: manager, manager: true, id: shift.id, existing: shift, incoming: { approvalStatus: 'approved' }, now: '2026-09-22T23:00:00.000Z' });
+  assert.deepEqual([approved.hours, approved.grossEstimate], [7.5, 150]);
+  const week = computeTimesheetWeek({ timecards: [approved], pto: [], policy: 'colorado', weekStart: '2026-09-21', now: '2026-09-23T00:00:00.000Z' });
+  assert.equal(week.employees[0].workedHours, approved.hours);
+  // A break without a kind (the crew app's Start break) and a meal break stay unpaid.
+  assert.equal(timecardHours({ ...shift, breaks: breaks.map(({ kind, ...item }) => item) }), 7.333);
+  assert.equal(timecardHours({ ...shift, breaks: breaks.map(item => ({ ...item, kind: 'meal' })) }), 7.333);
 });
 
 const hash = await createHubCredentialHash('Synthetic timecard test password 904!');

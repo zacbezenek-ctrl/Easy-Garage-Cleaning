@@ -36,10 +36,11 @@ export function approvedTimecard(raw) {
   const breaks = (raw.breaks || []).map(item => {
     const from = instant(item?.startAt), to = instant(item?.endAt);
     if (!Number.isFinite(from) || !Number.isFinite(to) || to < from || from < start || to > end) throw gustoTimecardError('Review this timecard’s incomplete or invalid break before syncing.');
-    return [from, to];
+    // A rest break is paid time worked; meal breaks and breaks with no kind are unpaid (timesheet-week.js).
+    return item.kind === 'rest' ? [from, to, 'rest'] : [from, to];
   }).sort((a, b) => a[0] - b[0]);
   if (breaks.some((item, index) => index && item[0] < breaks[index - 1][1])) throw gustoTimecardError('Review overlapping breaks before syncing.');
-  const hours = rounded((end - start - breaks.reduce((sum, [from, to]) => sum + to - from, 0)) / 3600000);
+  const hours = rounded((end - start - breaks.reduce((sum, [from, to, paid]) => paid ? sum : sum + to - from, 0)) / 3600000);
   if (!Number.isFinite(hours) || hours <= 0) throw gustoTimecardError('This timecard must contain positive work hours.');
   return { id: timecardId, employee, employeeName: String(raw.employeeName || raw.employee).slice(0, 180), clockInAt: new Date(start).toISOString(), clockOutAt: new Date(end).toISOString(), hours,
     source: { id: timecardId, employee, start, end, breaks, approvalStatus: raw.approvalStatus, approvedAt: String(raw.approvedAt || ''), approvedBy: normalized(raw.approvedBy), status: String(raw.status || '') } };

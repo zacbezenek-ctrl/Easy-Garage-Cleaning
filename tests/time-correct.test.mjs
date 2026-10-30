@@ -117,8 +117,8 @@ test('a correction sets clock-in, clock-out and breaks inside a real shift, reco
   const corrected = save(approved, body);
   assert.deepEqual([corrected.clockInAt, corrected.clockOutAt, corrected.approvalStatus, corrected.approvedBy, corrected.approvedAt], [iso(at('2026-09-21', '06:30')), iso(at('2026-09-21', '16:30')), 'pending', '', '']);
   assert.deepEqual(plain(corrected.breaks), [{ startAt: iso(at('2026-09-21', '10:00')), endAt: iso(at('2026-09-21', '10:15')), kind: 'rest' }, { startAt: at('2026-09-21', '12:00'), endAt: iso(at('2026-09-21', '12:45')) }]);
-  // Hours on the card count every break out (as before); payroll pays the rest break (timesheet-week.js).
-  assert.equal(corrected.hours, 9);
+  // Hours on the card pay the 15-minute rest break and leave out the 45-minute lunch, as payroll does (timesheet-week.js).
+  assert.equal(corrected.hours, 9.25);
   const entry = corrected.history.at(-1);
   assert.deepEqual([entry.action, entry.reason, Object.keys(entry.changes).sort()], ['manager_time_correction', 'Started early; lunch ran long', ['approvalStatus', 'approvedAt', 'approvedBy', 'breaks', 'clockInAt', 'clockOutAt']]);
   // NO-SELF-APPROVAL follow-up: the audit also records the approver being cleared as the card returns to pending.
