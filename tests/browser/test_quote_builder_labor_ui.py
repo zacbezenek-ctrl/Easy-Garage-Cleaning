@@ -65,7 +65,10 @@ class QuoteBuilderLaborTests(unittest.TestCase):
     def crew(self, dialog, people, hours):
         """Enters the crew on the review step (the Labor input opens by itself until one is entered; Adjust reopens it)."""
         row = dialog.locator('.qb-labor')
-        if not row.get_by_label('Hours on site', exact=True).count(): row.get_by_role('button', name='Adjust').click()
+        hours_input, adjust = row.get_by_label('Hours on site', exact=True), row.get_by_role('button', name='Adjust')
+        # Wait for the review step to draw the Labor row (count() does not wait) before choosing which one is there.
+        expect(hours_input.or_(adjust).first).to_be_visible()
+        if not hours_input.count(): adjust.click()
         row.get_by_label('People', exact=True).select_option(str(people))
         row.get_by_label('Hours on site', exact=True).fill(str(hours))
         row.get_by_role('button', name='Apply crew and hours').click()
