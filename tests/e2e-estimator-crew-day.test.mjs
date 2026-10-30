@@ -236,12 +236,12 @@ test('estimate through field completion, signoff, payment and recovered CRM hand
   const saved = await api.ok('Sales.Person', '/api/quote-draft', { action: 'save', requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: walkthrough.id, sourceRevision: prepared.sourceRevision, draft: draftOf(priced.lineItems) });
   const draft = saved.job;
   assert.deepEqual([draft.estimate.amountCents, fire.get(`jobs/${draft.id}`).quoteDraft.compositePricing.steps], [priced.totalCents, ['removal', 'shelving', 'storage']]);
-  // Draft menu prices: the quote is saved but the customer send is refused, each held price with its reason.
+  // Updated for the owner's decision of 2026-10-30: every menu price is approved in code, so no price holds the send
+  // (before, the base and the goods were drafts and the send was refused for them). A new quote's 25/75 payment dates
+  // still need the booked job day, so the send waits for that alone.
+  assert.deepEqual(priced.approval, { ready: true, blocked: [] }, 'every price on the quote is approved');
   const preview = await api.call('Sales.Person', '/api/quote-draft', { action: 'send_preview', jobId: draft.id, expectedRevision: fire.get(`jobs/${draft.id}`).updateTime });
-  assert.deepEqual([preview.status, preview.body.code], [409, 'quote_draft_composite_prices_unapproved']);
-  const held = preview.body.details.unapproved;
-  assert.deepEqual(held.map(row => row.name), ['Two-car garage base', SHELF.name, TOTES.name], 'the labor rate is the owner\'s and installation is billed through it, so neither holds the send');
-  assert.ok(held.every(row => typeof row.reason === 'string' && row.reason.length > 20), 'every held price says why');
+  assert.deepEqual([preview.status, preview.body.code], [409, 'quote_draft_payment_dates_pending']);
   assert.equal(fire.get(`jobs/${draft.id}`).estimate.status, 'draft', 'nothing went to the customer');
 
   // 4) Back on the first walkthrough the customer signs in person. The gameplan offers crew openings (crew-mode, no
@@ -278,10 +278,10 @@ test('estimate through field completion, signoff, payment and recovered CRM hand
     [SHELF.name, 2, 2, 1, 'The Home Depot', SHELF.sku, SHELF.productUrl, 'to_buy'], [TOTES.name, 8, 2, 4, 'The Home Depot', TOTES.sku, TOTES.productUrl, 'to_buy']]);
   assert.deepEqual(job().materials.filter(item => item.source === 'stock').map(item => item.name), ['Hand truck / dolly', 'Contractor bags']);
   assert.doesNotMatch(JSON.stringify([job().materials, job().jobBreakdown]), MONEY, 'the breakdown and the lists carry no price or cost');
-  // Draft prices: booked and staffed, but held from the customer until the owner approves them.
-  assert.deepEqual([job().pricesPendingApproval.status, job().pricesPendingApproval.reason, job().pricesPendingApproval.items.map(item => item.name)], ['pending', 'draft_prices', ['Two-car garage base', SHELF.name, TOTES.name]]);
-  assert.equal(job().customerPortalInvitationRequestedAt, undefined, 'no estimate or deposit request yet');
-  assert.deepEqual(signed.pricing, { source: 'builder', ready: false, pending: ['Two-car garage base', SHELF.name, TOTES.name] });
+  // Every price is approved (in code, 2026-10-30): booked, staffed and not held, so the customer gets the estimate and
+  // deposit request at once (before, the draft prices held it until the owner approved them).
+  assert.deepEqual([job().pricesPendingApproval ?? null, job().customerPortalInvitationRequestedAt], [null, iso(MON, '11:05')]);
+  assert.deepEqual(signed.pricing, { source: 'builder', ready: true, pending: [] });
   // D9b: the HighLevel schedule mirror (contact, opportunity, note; no calendar needed) is queued in the same commit.
   const mirror = fire.list(GHL_SCHEDULE_MIRROR).filter(row => row.jobId === draft.id);
   assert.equal(mirror.length, 1);
@@ -289,21 +289,23 @@ test('estimate through field completion, signoff, payment and recovered CRM hand
   assert.match(mirror[0].note.body, /Crew: Crew 1/);
   assert.match(mirror[0].note.body, /\nLabor: 6 man-hours sold\n/, 'the HighLevel internal note names the man-hours, never the labor amount');
 
-  // 3) The owner approves the draft menu prices on the quote (Hub > Catalog & pricing > Menu prices, POST /api/catalog
-  // menu.approve): every held job those prices now cover is released in the same request. Catalog pricing is off (not
-  // one of the owner's flags); the labor rate ($53.00, the owner's decision of 2026-10-19) is already approved and installation is billed through it,
-  // so the approval of the menu prices alone releases the job.
+  // 3) Nothing waits for the owner: every menu price is approved in code (2026-10-30), the labor rate ($53.00, the owner's
+  // decision of 2026-10-19) is approved and installation is billed through it. Catalog pricing is off (not one of the
+  // owner's flags). The owner can still approve another amount in the Hub (Catalog & pricing > Menu prices, POST
+  // /api/catalog menu.approve): it overrides the amount approved in code for new quotes; a signed job keeps its own.
   clock(at(MON, '12:00'));
   const ownerMenu = await api.ok('ZacB', '/api/quote-draft?view=builder');
   assert.deepEqual([ownerMenu.viewer.canApprove, ownerMenu.internal.approvalsRevision, ownerMenu.labor.rateCents, ownerMenu.labor.source, ownerMenu.installation], [true, null, 5300, 'default', { included: false, billedAs: 'labor' }]);
   assert.deepEqual((await api.ok('ZacB', '/api/catalog')).enabled, false, 'no Pricing tab: catalog pricing is off');
   // As the Menu prices screen does: the approvals revision the owner reviewed comes from the reloaded builder menu.
   const menuApproval = async extra => ({ action: 'menu.approve', requestId: randomUUID(), expectedRevision: (await api.ok('ZacB', '/api/quote-draft?view=builder')).internal.approvalsRevision, menuVersion: ownerMenu.menuVersion, settingsVersion: ownerMenu.settingsVersion, approve: [], revoke: [], ...extra });
-  const drafts = priced.breakdown.lines.filter(line => !line.approved).map(line => ({ id: line.id, unitCents: line.unitCents }));
-  assert.deepEqual(drafts.map(row => row.id), [menuItem('Two-car garage base').id, SHELF.id, TOTES.id]);
-  const prices = await api.ok('ZacB', '/api/catalog', await menuApproval({ approve: drafts }));
-  assert.deepEqual(prices.heldJobs, { released: [draft.id], waiting: 0, more: false }, 'every price approved: the job is released, labor included');
-  assert.deepEqual([job().pricesPendingApproval, job().customerPortalInvitationRequestedAt, job().pricesRelease.source, job().pricesRelease.gate, job().compositeQuote.approval.ready], [null, iso(MON, '12:00'), 'menu.approve', 'approved_prices', true]);
+  assert.deepEqual([...ownerMenu.services, ...ownerMenu.products].filter(item => !item.approved).map(item => item.id), [], 'no draft price on the menu');
+  const mattress = menuItem('Mattress');
+  const prices = await api.ok('ZacB', '/api/catalog', await menuApproval({ approve: [{ id: mattress.id, unitCents: 8000 }] }));
+  assert.deepEqual(prices.heldJobs, { released: [], waiting: 0, more: false }, 'no job was held');
+  const overridden = (await api.ok('Sales.Person', '/api/quote-draft?view=builder')).services.find(item => item.id === mattress.id);
+  assert.deepEqual([overridden.unitCents, overridden.approved, overridden.source], [8000, true, 'owner'], 'the owner\'s Hub amount overrides the one approved in code');
+  assert.deepEqual([job().pricesPendingApproval ?? null, job().compositeQuote.approval.ready, job().estimate.amountCents ?? Math.round(job().estimate.amount * 100)], [null, true, priced.totalCents], 'the signed job keeps what was signed');
   // A replayed approval (a lost response) changes nothing and releases nothing again. The owner keeps the $53.00 rate:
   // re-entering it is one change, recorded, and prices stay as they are.
   const again = await menuApproval({ laborRatePerManHourCents: 5300 }), once = await api.ok('ZacB', '/api/catalog', again), twice = await api.ok('ZacB', '/api/catalog', again);

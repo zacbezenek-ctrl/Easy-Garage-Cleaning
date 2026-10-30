@@ -11,16 +11,19 @@ import { PICKUP_MINIMUM_CENTS, PICKUP_MINIMUM_LINE_ID, PICKUP_MINIMUM_LINE_NAME,
  * the quote with its own subtotal and a running total. The browser only describes the selection
  * (compositePricing); every price is computed here from the server's pricing state:
  *   menu       functions/_data/pricing-menu.json (scripts/import-pricing-menu.mjs): public-retail goods per pack
- *              and the service/junk items of the owner's pricing menu. Every product is a DRAFT.
+ *              and the service/junk items of the owner's pricing menu, imported as DRAFTS, and menu.approvals: the
+ *              prices the owner approved in code (owner decision 2026-10-30, "hard code the pricing": every price that
+ *              was a draft on menu 2026-10-16.2, at that amount), in the shape of the owner's Hub approvals below.
  *   settings   the pricing settings in force (catalog-store.js); goodsMarkup turns the goods cost basis
  *              (retailPerPackCents) into the selling price per pack, rounded by settings.roundingRule.
  *   walkthrough the walkthrough price tables (pricing-config.js walkthroughPricing()), the DRAFT amounts of
  *              cleaning bases, cleaning add-ons, special items and access until the owner approves a price.
  *   approvals  pricingMenuApprovals/current: {items: {[menuItemId]: {unitCents, identity}}, revision,
  *              goodsInstallationIncluded?}, written only by the owner's bulk approval (catalog-store.js menu.approve).
- * A price is approved when the menu itself records an owner-approved amount (the $1,000 full truck) or the owner
- * approved that item at exactly that amount. An owner-approved service amount is the price; a product approval
- * holds only while cost x goodsMarkup still gives the approved amount. An approval also names the item it was
+ * A price is approved when the menu itself records an owner-approved amount (the $1,000 full truck), the owner
+ * approved that item at exactly that amount in the Hub, or the owner approved it in code (menu.approvals). The owner's
+ * Hub approval of an item overrides its approval in code. An owner-approved service amount is the price; a product
+ * approval holds only while cost x goodsMarkup still gives the approved amount. An approval also names the item it was
  * given for (menuItemIdentity): a re-import that renames or re-maps an item id puts it back into draft. Draft prices may
  * be saved on an unsent draft, never sent: quote-draft.js re-checks compositeApproval() at send preview and send.
  *
@@ -161,11 +164,14 @@ function shape(value, path, required, optional = []) {
 const PRODUCT_KEYS = ['id', 'sku', 'retailer', 'name', 'section', 'group', 'unitsPerPack', 'retailPerPackCents', 'perOrderPackLimit', 'productUrl', 'photoUrl', 'fitWarnings', 'evidence', 'status'];
 const SERVICE_KEYS = ['id', 'menuId', 'section', 'category', 'group', 'name', 'unit', 'basis', 'status'];
 const MENU_KEYS = ['schemaVersion', 'menuVersion', 'generatedOn', 'currency', 'status', 'source', 'priceBasis', 'products', 'services'];
+const MENU_APPROVAL_KEYS = ['approvedBy', 'approvedOn', 'note', 'items'];
 
-/** Validates the pricing menu document (functions/_data/pricing-menu.json). Products are always draft: only the
- * owner approves a goods price, at runtime. Only a service may carry an owner-approved amount in the data. */
+/** Validates the pricing menu document (functions/_data/pricing-menu.json). Every item is imported as a draft; only a
+ * service may carry a fixed owner-approved amount (status approved). approvals, when present, are the prices the owner
+ * approved in code: {approvedBy:'owner', approvedOn, note, items:{[menuItemId]:{unitCents, identity}}}, one entry per
+ * draft item at most, for an item on this menu (an entry whose identity no longer matches its item is a draft again). */
 export function validatePricingMenu(menu) {
-  shape(menu, 'menu', MENU_KEYS);
+  shape(menu, 'menu', MENU_KEYS, ['approvals']);
   if (menu.schemaVersion !== COMPOSITE_SCHEMA_VERSION) throw menuInvalid('menu.schemaVersion', `must be ${COMPOSITE_SCHEMA_VERSION}`);
   if (typeof menu.menuVersion !== 'string' || !VERSION.test(menu.menuVersion)) throw menuInvalid('menu.menuVersion', 'must look like YYYY-MM-DD.N');
   if (typeof menu.generatedOn !== 'string' || !DATE.test(menu.generatedOn) || menu.menuVersion.slice(0, 10) !== menu.generatedOn) throw menuInvalid('menu.generatedOn', 'must be the date in menuVersion');
@@ -227,6 +233,22 @@ export function validatePricingMenu(menu) {
     if (service.scopeNote !== undefined) text(service.scopeNote, `${at}.scopeNote`, { max: 600 });
   });
   if (full !== 1) throw menuInvalid('menu.services', 'must list exactly one full truck load');
+  if (menu.approvals !== undefined) {
+    const approvals = menu.approvals, items = new Map([...menu.products, ...menu.services].map(item => [item.id, item]));
+    shape(approvals, 'menu.approvals', MENU_APPROVAL_KEYS);
+    if (approvals.approvedBy !== 'owner') throw menuInvalid('menu.approvals.approvedBy', 'must be owner: only the owner approves a price');
+    if (typeof approvals.approvedOn !== 'string' || !DATE.test(approvals.approvedOn)) throw menuInvalid('menu.approvals.approvedOn', 'must be a date');
+    text(approvals.note, 'menu.approvals.note', { max: 600 });
+    if (!plain(approvals.items)) throw menuInvalid('menu.approvals.items', 'must be an object');
+    for (const [id, entry] of Object.entries(approvals.items)) {
+      const at = `menu.approvals.items.${id}`, item = items.get(id);
+      if (!item) throw menuInvalid(at, 'must name an item on this menu');
+      if (item.status === 'approved') throw menuInvalid(at, 'must not approve again an item the menu approves at a fixed amount');
+      shape(entry, at, ['unitCents', 'identity']);
+      count(entry.unitCents, `${at}.unitCents`, 1, MAX_ITEM_CENTS);
+      text(entry.identity, `${at}.identity`, { max: 600 });
+    }
+  }
   return menu;
 }
 
@@ -274,38 +296,45 @@ function tableCents(walkthrough, basis) {
 
 /**
  * Every menu item's current price and approval for one pricing state:
- * Map id -> {item, kind:'product'|'service', unitCents, approved, source:'menu'|'owner'|'draft', reason}.
+ * Map id -> {item, kind:'product'|'service', unitCents, approved, source:'menu'|'owner'|'code'|'draft', reason, codeCents?}.
+ * source 'code' is the owner's approval in code (menu.approvals); codeCents is that approved amount while it still
+ * holds (a service's, also under an owner's Hub approval: revoking the Hub approval falls back to it).
  * The state is {menu, settings, walkthrough, approvals}; settings are validated here.
  */
 export function menuPrices(state) {
   const { menu, settings, walkthrough } = state || {};
   if (!menu || !settings) throw fail('unavailable', 'The pricing menu could not be verified. Keep the quote and retry.', 503);
   validatePricingSettings(settings);
-  const approvals = validateMenuApprovals(state.approvals).items, markup = goodsMarkupOf(settings).basisPoints;
-  // An owner approval counts only for the item it was given for; one for an earlier version of the item is stale.
-  const ownerOf = item => { const entry = approvals[item.id]; return entry ? { unitCents: entry.unitCents, stale: entry.identity !== menuItemIdentity(item) } : null; };
+  const approvals = validateMenuApprovals(state.approvals).items, markup = goodsMarkupOf(settings).basisPoints, coded = plain(menu.approvals?.items) ? menu.approvals.items : {};
+  // An owner approval counts only for the item it was given for; one for an earlier version of the item is stale. The
+  // owner's approvals in code (menu.approvals) count the same way, under the owner's Hub approvals.
+  const approvalOf = (entries, item) => { const entry = Object.hasOwn(entries, item.id) ? entries[item.id] : null; return entry ? { unitCents: entry.unitCents, stale: entry.identity !== menuItemIdentity(item) } : null; };
+  const ownerOf = item => approvalOf(approvals, item), codeOf = item => approvalOf(coded, item);
+  const codeReason = `Owner-approved price (approved in code on ${menu.approvals?.approvedOn}).`;
   const staleReason = (owner, unitCents, unit = '') => `The owner approved ${money(owner.unitCents)}${unit} for an earlier version of this menu item; a menu re-import changed it (name, unit, pack or price basis), so the owner must approve it again. Draft price ${money(unitCents)}${unit}.`;
   const out = new Map();
   const full = menu.services.find(service => service.basis.kind === 'junk' && service.basis.fraction === 1), fullOwner = full ? ownerOf(full) : null;
   const fullCents = (full?.status === 'approved' ? full.approvedPriceCents : fullOwner && !fullOwner.stale ? fullOwner.unitCents : null) ?? null;
   for (const service of menu.services) {
     const fixed = service.status === 'approved' ? service.approvedPriceCents : null, prior = ownerOf(service), owner = prior && !prior.stale ? prior.unitCents : null;
+    const inCode = codeOf(service), code = inCode && !inCode.stale ? inCode.unitCents : null, stale = prior?.stale ? prior : inCode?.stale ? inCode : null;
     // A partial load is a proportional draft of the full-truck price until the owner approves its own amount;
     // with no full-truck price at all a load has no price and cannot be quoted.
     const draft = service.basis.kind === 'junk' ? (fullCents && service.basis.fraction < 1 ? Math.round(fullCents * service.basis.fraction) : null) : tableCents(walkthrough, service.basis);
-    const unitCents = fixed ?? owner ?? draft;
-    const source = fixed !== null ? 'menu' : owner !== null ? 'owner' : 'draft';
+    const unitCents = fixed ?? owner ?? code ?? draft;
+    const source = fixed !== null ? 'menu' : owner !== null ? 'owner' : code !== null ? 'code' : 'draft';
     // The walkthrough's size base is its full-service reset price, which already covers hauling: the builder adds
     // truck loads on top, so that number is only a placeholder until the owner sets the cleaning-only amount.
     const draftReason = service.basis.table === 'sizeBase' ? `Draft price ${money(unitCents)} is the walkthrough's historical full-service base, which already included hauling; the owner sets the cleaning-only amount.` : `Draft price ${money(unitCents)}, not yet approved by the owner.`;
-    out.set(service.id, { item: service, kind: 'service', unitCents, approved: source !== 'draft', source,
-      reason: unitCents === null ? 'No price yet: the owner must approve a full truck load price first.' : source === 'menu' ? service.approval : source === 'owner' ? 'Owner-approved price.' : prior?.stale ? staleReason(prior, unitCents) : draftReason });
+    out.set(service.id, { item: service, kind: 'service', unitCents, approved: source !== 'draft', source, ...(code !== null ? { codeCents: code } : {}),
+      reason: unitCents === null ? 'No price yet: the owner must approve a full truck load price first.' : source === 'menu' ? service.approval : source === 'owner' ? 'Owner-approved price.' : source === 'code' ? codeReason : stale ? staleReason(stale, unitCents) : draftReason });
   }
   for (const product of menu.products) {
-    const unitCents = roundCents(product.retailPerPackCents * markup, 10000, settings.roundingRule), owner = ownerOf(product);
-    const approved = Boolean(owner && !owner.stale && owner.unitCents === unitCents);
-    out.set(product.id, { item: product, kind: 'product', unitCents, approved, source: approved ? 'owner' : 'draft',
-      reason: approved ? 'Owner-approved price.' : owner?.stale ? staleReason(owner, unitCents, ' per pack') : owner ? `The owner approved ${money(owner.unitCents)} per pack, but the current price is ${money(unitCents)}; the owner must approve the new price.` : `Draft price ${money(unitCents)} per pack, not yet approved by the owner.` });
+    const unitCents = roundCents(product.retailPerPackCents * markup, 10000, settings.roundingRule), owner = ownerOf(product), inCode = codeOf(product);
+    const byOwner = Boolean(owner && !owner.stale && owner.unitCents === unitCents), byCode = Boolean(inCode && !inCode.stale && inCode.unitCents === unitCents);
+    const approved = byOwner || byCode, other = owner && !owner.stale ? owner : inCode && !inCode.stale ? inCode : null, stale = owner?.stale ? owner : inCode?.stale ? inCode : null;
+    out.set(product.id, { item: product, kind: 'product', unitCents, approved, source: byOwner ? 'owner' : byCode ? 'code' : 'draft', ...(byCode ? { codeCents: unitCents } : {}),
+      reason: byOwner ? 'Owner-approved price.' : byCode ? codeReason : other ? `The owner approved ${money(other.unitCents)} per pack${other === inCode ? ` in code on ${menu.approvals.approvedOn}` : ''}, but the current price is ${money(unitCents)}; the owner must approve the new price.` : stale ? staleReason(stale, unitCents, ' per pack') : `Draft price ${money(unitCents)} per pack, not yet approved by the owner.` });
   }
   return out;
 }
@@ -457,7 +486,8 @@ function laborBlock(labor, state, { required, signed, junk = false }) {
  * (productSize: its listed width, height and depth) is shown in its row, with its fit notes behind a disclosure. */
 export function builderMenu(state, { internal = false, canApprove = false } = {}) {
   const prices = menuPrices(state), { menu, settings } = state, approvals = validateMenuApprovals(state.approvals), rate = laborRate({ approvals }), time = laborTime(state);
-  const status = id => { const price = prices.get(id); return { unitCents: price.unitCents, approved: price.approved, source: price.source, reason: price.reason }; };
+  // codeCents (the owner and managers): the amount the owner approved in code, which a revoked Hub approval falls back to.
+  const status = id => { const price = prices.get(id); return { unitCents: price.unitCents, approved: price.approved, source: price.source, reason: price.reason, ...(internal && price.codeCents !== undefined ? { codeCents: price.codeCents } : {}) }; };
   const minutes = id => time ? time.items.get(id).minutes : null;
   return {
     menuVersion: menu.menuVersion, settingsVersion: settings.settingsVersion, evidenceDate: menu.generatedOn,

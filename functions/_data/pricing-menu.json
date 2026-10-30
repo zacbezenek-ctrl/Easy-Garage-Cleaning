@@ -1,6 +1,6 @@
 {
  "schemaVersion": 1,
- "menuVersion": "2026-10-16.2",
+ "menuVersion": "2026-10-16.3",
  "generatedOn": "2026-10-16",
  "currency": "USD",
  "status": "draft",
@@ -3173,5 +3173,656 @@
    "status": "draft",
    "scopeNote": "Incremental labor only; define flights and item limits."
   }
- ]
+ ],
+ "approvals": {
+  "approvedBy": "owner",
+  "approvedOn": "2026-10-30",
+  "note": "Approved in code by the owner's decision of 2026-10-30 (\"hard code the pricing\"): every price that was a draft on menu 2026-10-16.2, at that amount (goods at their price that day: public retail x the default goods markup, rounded half up to the cent). An amount the owner approves in the Hub (Menu prices) overrides it; an item a re-import changes is a draft again.",
+  "items": {
+   "egc-002": {
+    "unitCents": 67500,
+    "identity": "service|EGC-002|One-car garage base|job|cleaning-base|sizeBase:1|1"
+   },
+   "egc-003": {
+    "unitCents": 97500,
+    "identity": "service|EGC-003|Two-car garage base|job|cleaning-base|sizeBase:2|2"
+   },
+   "egc-004": {
+    "unitCents": 127500,
+    "identity": "service|EGC-004|Three-car garage base|job|cleaning-base|sizeBase:3|3"
+   },
+   "egc-005": {
+    "unitCents": 165000,
+    "identity": "service|EGC-005|Larger garage base|job|cleaning-base|sizeBase:other|other"
+   },
+   "egc-006": {
+    "unitCents": 60000,
+    "identity": "service|EGC-006|Pressure washing, one-car|job|cleaning|services:pressure_wash|"
+   },
+   "egc-007": {
+    "unitCents": 19000,
+    "identity": "service|EGC-007|Deep cleaning, one-car|job|cleaning|deep_clean:1|1"
+   },
+   "egc-008": {
+    "unitCents": 33000,
+    "identity": "service|EGC-008|Deep cleaning, two-car|job|cleaning|deep_clean:2|2"
+   },
+   "egc-009": {
+    "unitCents": 48000,
+    "identity": "service|EGC-009|Deep cleaning, three-car|job|cleaning|deep_clean:3|3"
+   },
+   "egc-010": {
+    "unitCents": 63000,
+    "identity": "service|EGC-010|Deep cleaning, larger|job|cleaning|deep_clean:other|other"
+   },
+   "egc-011": {
+    "unitCents": 30000,
+    "identity": "service|EGC-011|Pest-waste cleanup|job|cleaning|hazards:Pest waste|"
+   },
+   "egc-012": {
+    "unitCents": 37500,
+    "identity": "service|EGC-012|Mouse trapping|job|cleaning|services:mouse_trapping|"
+   },
+   "egc-027": {
+    "unitCents": 7000,
+    "identity": "service|EGC-027|Mattress|item|special|special:Mattress|"
+   },
+   "egc-028": {
+    "unitCents": 7000,
+    "identity": "service|EGC-028|Box spring|item|special|special:Box spring|"
+   },
+   "egc-029": {
+    "unitCents": 7000,
+    "identity": "service|EGC-029|Sofa / loveseat|item|special|special:Couch / sofa / loveseat|"
+   },
+   "egc-030": {
+    "unitCents": 13500,
+    "identity": "service|EGC-030|Sectional|item|special|special:Sectional|"
+   },
+   "egc-031": {
+    "unitCents": 7000,
+    "identity": "service|EGC-031|Recliner|item|special|special:Recliner / armchair|"
+   },
+   "egc-032": {
+    "unitCents": 7000,
+    "identity": "service|EGC-032|Dresser / armoire / desk|item|special|special:Dresser / armoire / desk|"
+   },
+   "egc-033": {
+    "unitCents": 9000,
+    "identity": "service|EGC-033|Refrigerator / freezer|item|special|special:Refrigerator / freezer|"
+   },
+   "egc-034": {
+    "unitCents": 7500,
+    "identity": "service|EGC-034|Washer|item|special|special:Washer|"
+   },
+   "egc-035": {
+    "unitCents": 7500,
+    "identity": "service|EGC-035|Dryer|item|special|special:Dryer|"
+   },
+   "egc-036": {
+    "unitCents": 9000,
+    "identity": "service|EGC-036|Water heater|item|special|special:Water heater|"
+   },
+   "egc-037": {
+    "unitCents": 6000,
+    "identity": "service|EGC-037|Other appliance|item|special|special:Appliances|"
+   },
+   "egc-038": {
+    "unitCents": 6000,
+    "identity": "service|EGC-038|BBQ|item|special|special:BBQ grill|"
+   },
+   "egc-039": {
+    "unitCents": 4000,
+    "identity": "service|EGC-039|TV|item|special|special:Electronics|"
+   },
+   "egc-040": {
+    "unitCents": 7500,
+    "identity": "service|EGC-040|Up to four tires|bundle|special|special:Tires|"
+   },
+   "egc-041": {
+    "unitCents": 7000,
+    "identity": "service|EGC-041|Approved nonhazardous paint / chemicals|job|special|special:Paint / chemicals|"
+   },
+   "egc-042": {
+    "unitCents": 11500,
+    "identity": "service|EGC-042|Treadmill|item|special|special:Treadmill / elliptical|"
+   },
+   "egc-043": {
+    "unitCents": 15000,
+    "identity": "service|EGC-043|Home gym|item|special|special:Home gym / weight set|"
+   },
+   "egc-044": {
+    "unitCents": 15000,
+    "identity": "service|EGC-044|Other heavy item|item|special|special:Very heavy items|"
+   },
+   "egc-045": {
+    "unitCents": 22500,
+    "identity": "service|EGC-045|Piano / safe|item|special|special:Piano / safe|"
+   },
+   "egc-046": {
+    "unitCents": 60000,
+    "identity": "service|EGC-046|Hot tub dismantle and haul|job|special|special:Hot tub / spa|"
+   },
+   "egc-047": {
+    "unitCents": 11500,
+    "identity": "service|EGC-047|Long carry|job|access|access:Long carry|"
+   },
+   "egc-048": {
+    "unitCents": 19000,
+    "identity": "service|EGC-048|Stairs|job|access|access:Stairs|"
+   },
+   "hd-100006678": {
+    "unitCents": 11570,
+    "identity": "product|100006678|1|shelving"
+   },
+   "hd-320803287": {
+    "unitCents": 1947,
+    "identity": "product|320803287|1|storage"
+   },
+   "hd-100498598": {
+    "unitCents": 2207,
+    "identity": "product|100498598|1|storage"
+   },
+   "hd-100387752": {
+    "unitCents": 2077,
+    "identity": "product|100387752|1|storage"
+   },
+   "hd-202868026": {
+    "unitCents": 426,
+    "identity": "product|202868026|1|storage"
+   },
+   "hd-318089167": {
+    "unitCents": 1687,
+    "identity": "product|318089167|1|storage"
+   },
+   "hd-341048322": {
+    "unitCents": 5190,
+    "identity": "product|341048322|4|storage"
+   },
+   "hd-318089160": {
+    "unitCents": 582,
+    "identity": "product|318089160|1|storage"
+   },
+   "hd-320803283": {
+    "unitCents": 2207,
+    "identity": "product|320803283|1|storage"
+   },
+   "hd-333882209": {
+    "unitCents": 32370,
+    "identity": "product|333882209|1|shelving"
+   },
+   "hd-327528802": {
+    "unitCents": 1167,
+    "identity": "product|327528802|1|storage"
+   },
+   "hd-328407070": {
+    "unitCents": 6629,
+    "identity": "product|328407070|1|storage"
+   },
+   "hd-326507326": {
+    "unitCents": 7799,
+    "identity": "product|326507326|1|storage"
+   },
+   "hd-314898009": {
+    "unitCents": 2227,
+    "identity": "product|314898009|10|storage"
+   },
+   "hd-206585761": {
+    "unitCents": 257,
+    "identity": "product|206585761|1|storage"
+   },
+   "hd-204285014": {
+    "unitCents": 4549,
+    "identity": "product|204285014|1|storage"
+   },
+   "hd-203985661": {
+    "unitCents": 13649,
+    "identity": "product|203985661|1|storage"
+   },
+   "hd-100387745": {
+    "unitCents": 2077,
+    "identity": "product|100387745|1|storage"
+   },
+   "hd-328027053": {
+    "unitCents": 1037,
+    "identity": "product|328027053|1|storage"
+   },
+   "hd-328027045": {
+    "unitCents": 1102,
+    "identity": "product|328027045|1|storage"
+   },
+   "hd-336630042": {
+    "unitCents": 2597,
+    "identity": "product|336630042|1|storage"
+   },
+   "hd-327528714": {
+    "unitCents": 1167,
+    "identity": "product|327528714|1|storage"
+   },
+   "hd-329481900": {
+    "unitCents": 1947,
+    "identity": "product|329481900|1|storage"
+   },
+   "hd-328026917": {
+    "unitCents": 1947,
+    "identity": "product|328026917|1|storage"
+   },
+   "hd-337213202": {
+    "unitCents": 1167,
+    "identity": "product|337213202|1|storage"
+   },
+   "hd-328027044": {
+    "unitCents": 2597,
+    "identity": "product|328027044|1|storage"
+   },
+   "hd-328027067": {
+    "unitCents": 4547,
+    "identity": "product|328027067|1|storage"
+   },
+   "hd-332895815": {
+    "unitCents": 452,
+    "identity": "product|332895815|1|storage"
+   },
+   "hd-332895816": {
+    "unitCents": 452,
+    "identity": "product|332895816|1|storage"
+   },
+   "hd-328027059": {
+    "unitCents": 7797,
+    "identity": "product|328027059|1|storage"
+   },
+   "hd-338941354": {
+    "unitCents": 8814,
+    "identity": "product|338941354|2|storage"
+   },
+   "hd-339775455": {
+    "unitCents": 12870,
+    "identity": "product|339775455|1|storage"
+   },
+   "hd-333239702": {
+    "unitCents": 12870,
+    "identity": "product|333239702|1|storage"
+   },
+   "hd-338941353": {
+    "unitCents": 9355,
+    "identity": "product|338941353|2|storage"
+   },
+   "hd-311485319": {
+    "unitCents": 4677,
+    "identity": "product|311485319|1|storage"
+   },
+   "hd-328026911": {
+    "unitCents": 2337,
+    "identity": "product|328026911|1|storage"
+   },
+   "hd-328026912": {
+    "unitCents": 2597,
+    "identity": "product|328026912|1|storage"
+   },
+   "hd-338941355": {
+    "unitCents": 10390,
+    "identity": "product|338941355|4|storage"
+   },
+   "hd-300170479": {
+    "unitCents": 2467,
+    "identity": "product|300170479|1|storage"
+   },
+   "hd-328027062": {
+    "unitCents": 5197,
+    "identity": "product|328027062|1|storage"
+   },
+   "hd-314607064": {
+    "unitCents": 36399,
+    "identity": "product|314607064|1|storage"
+   },
+   "hd-315203685": {
+    "unitCents": 38999,
+    "identity": "product|315203685|1|storage"
+   },
+   "hd-331323393": {
+    "unitCents": 49399,
+    "identity": "product|331323393|1|storage"
+   },
+   "hd-331321094": {
+    "unitCents": 49399,
+    "identity": "product|331321094|1|storage"
+   },
+   "hd-206790067": {
+    "unitCents": 84499,
+    "identity": "product|206790067|1|storage"
+   },
+   "hd-307874901": {
+    "unitCents": 55899,
+    "identity": "product|307874901|1|storage"
+   },
+   "hd-206789824": {
+    "unitCents": 33799,
+    "identity": "product|206789824|1|storage"
+   },
+   "hd-204238960": {
+    "unitCents": 48099,
+    "identity": "product|204238960|1|storage"
+   },
+   "hd-204238962": {
+    "unitCents": 61099,
+    "identity": "product|204238962|1|storage"
+   },
+   "hd-301809830": {
+    "unitCents": 38870,
+    "identity": "product|301809830|1|storage"
+   },
+   "hd-316253068": {
+    "unitCents": 77740,
+    "identity": "product|316253068|1|storage"
+   },
+   "hd-306659735": {
+    "unitCents": 64089,
+    "identity": "product|306659735|1|storage"
+   },
+   "hd-314362934": {
+    "unitCents": 77740,
+    "identity": "product|314362934|1|storage"
+   },
+   "hd-312063232": {
+    "unitCents": 51740,
+    "identity": "product|312063232|1|storage"
+   },
+   "hd-336277207": {
+    "unitCents": 53170,
+    "identity": "product|336277207|1|storage"
+   },
+   "hd-306659767": {
+    "unitCents": 323210,
+    "identity": "product|306659767|1|storage"
+   },
+   "hd-306605258": {
+    "unitCents": 299592,
+    "identity": "product|306605258|1|storage"
+   },
+   "hd-336848156": {
+    "unitCents": 71824,
+    "identity": "product|336848156|1|storage"
+   },
+   "hd-206288225": {
+    "unitCents": 19370,
+    "identity": "product|206288225|1|storage"
+   },
+   "hd-336965942": {
+    "unitCents": 51870,
+    "identity": "product|336965942|1|storage"
+   },
+   "hd-202305568": {
+    "unitCents": 387,
+    "identity": "product|202305568|1|storage"
+   },
+   "hd-314898026": {
+    "unitCents": 1417,
+    "identity": "product|314898026|6|storage"
+   },
+   "hd-338663081": {
+    "unitCents": 8836,
+    "identity": "product|338663081|4|storage"
+   },
+   "hd-318089168": {
+    "unitCents": 777,
+    "identity": "product|318089168|1|storage"
+   },
+   "hd-318089169": {
+    "unitCents": 777,
+    "identity": "product|318089169|1|storage"
+   },
+   "hd-318089176": {
+    "unitCents": 777,
+    "identity": "product|318089176|1|storage"
+   },
+   "hd-320803286": {
+    "unitCents": 1687,
+    "identity": "product|320803286|1|storage"
+   },
+   "hd-318089166": {
+    "unitCents": 452,
+    "identity": "product|318089166|1|storage"
+   },
+   "hd-320803288": {
+    "unitCents": 1687,
+    "identity": "product|320803288|1|storage"
+   },
+   "hd-318631333": {
+    "unitCents": 1687,
+    "identity": "product|318631333|1|storage"
+   },
+   "hd-305050584": {
+    "unitCents": 4935,
+    "identity": "product|305050584|1|storage"
+   },
+   "hd-336665072": {
+    "unitCents": 8730,
+    "identity": "product|336665072|2|storage"
+   },
+   "hd-304524324": {
+    "unitCents": 11049,
+    "identity": "product|304524324|1|storage"
+   },
+   "hd-332734923": {
+    "unitCents": 36399,
+    "identity": "product|332734923|1|storage"
+   },
+   "hd-332766670": {
+    "unitCents": 27299,
+    "identity": "product|332766670|1|storage"
+   },
+   "hd-331460555": {
+    "unitCents": 26909,
+    "identity": "product|331460555|1|storage"
+   },
+   "hd-332626028": {
+    "unitCents": 16184,
+    "identity": "product|332626028|1|storage"
+   },
+   "hd-337576905": {
+    "unitCents": 11569,
+    "identity": "product|337576905|1|storage"
+   },
+   "hd-331558887": {
+    "unitCents": 19824,
+    "identity": "product|331558887|1|storage"
+   },
+   "hd-202516532": {
+    "unitCents": 10828,
+    "identity": "product|202516532|1|storage"
+   },
+   "hd-325765293": {
+    "unitCents": 11387,
+    "identity": "product|325765293|1|storage"
+   },
+   "hd-319341421": {
+    "unitCents": 51999,
+    "identity": "product|319341421|1|storage"
+   },
+   "hd-202305509": {
+    "unitCents": 1037,
+    "identity": "product|202305509|1|storage"
+   },
+   "hd-204323746": {
+    "unitCents": 3693,
+    "identity": "product|204323746|1|storage"
+   },
+   "hd-300055808": {
+    "unitCents": 29834,
+    "identity": "product|300055808|1|shelving"
+   },
+   "hd-330532573": {
+    "unitCents": 14170,
+    "identity": "product|330532573|1|shelving"
+   },
+   "hd-306331734": {
+    "unitCents": 9097,
+    "identity": "product|306331734|1|shelving"
+   },
+   "hd-203846576": {
+    "unitCents": 16770,
+    "identity": "product|203846576|1|shelving"
+   },
+   "hd-322416082": {
+    "unitCents": 15597,
+    "identity": "product|322416082|1|shelving"
+   },
+   "hd-328789870": {
+    "unitCents": 21311,
+    "identity": "product|328789870|1|shelving"
+   },
+   "hd-305553565": {
+    "unitCents": 15425,
+    "identity": "product|305553565|1|shelving"
+   },
+   "hd-336568734": {
+    "unitCents": 28599,
+    "identity": "product|336568734|1|shelving"
+   },
+   "hd-309420172": {
+    "unitCents": 50699,
+    "identity": "product|309420172|1|shelving"
+   },
+   "hd-205853700": {
+    "unitCents": 13723,
+    "identity": "product|205853700|1|shelving"
+   },
+   "hd-323667688": {
+    "unitCents": 24699,
+    "identity": "product|323667688|1|shelving"
+   },
+   "hd-300937586": {
+    "unitCents": 1934,
+    "identity": "product|300937586|1|storage"
+   },
+   "hd-337838871": {
+    "unitCents": 1297,
+    "identity": "product|337838871|1|storage"
+   },
+   "hd-301959981": {
+    "unitCents": 777,
+    "identity": "product|301959981|1|storage"
+   },
+   "hd-320205228": {
+    "unitCents": 2857,
+    "identity": "product|320205228|8|storage"
+   },
+   "hd-333699793": {
+    "unitCents": 14170,
+    "identity": "product|333699793|1|storage"
+   },
+   "hd-303005741": {
+    "unitCents": 7796,
+    "identity": "product|303005741|1|storage"
+   },
+   "hd-305821977": {
+    "unitCents": 6496,
+    "identity": "product|305821977|1|storage"
+   },
+   "hd-317039249": {
+    "unitCents": 10396,
+    "identity": "product|317039249|1|storage"
+   },
+   "hd-305821962": {
+    "unitCents": 4546,
+    "identity": "product|305821962|1|storage"
+   },
+   "hd-303005752": {
+    "unitCents": 5196,
+    "identity": "product|303005752|1|storage"
+   },
+   "hd-305855062": {
+    "unitCents": 5197,
+    "identity": "product|305855062|1|storage"
+   },
+   "hd-311846946": {
+    "unitCents": 2144,
+    "identity": "product|311846946|1|storage"
+   },
+   "hd-301460878": {
+    "unitCents": 1143,
+    "identity": "product|301460878|1|storage"
+   },
+   "hd-301462777": {
+    "unitCents": 1828,
+    "identity": "product|301462777|1|storage"
+   },
+   "hd-301542671": {
+    "unitCents": 1819,
+    "identity": "product|301542671|1|storage"
+   },
+   "hd-317224391": {
+    "unitCents": 3377,
+    "identity": "product|317224391|1|storage"
+   },
+   "hd-314745777": {
+    "unitCents": 2856,
+    "identity": "product|314745777|1|storage"
+   },
+   "hd-205056097": {
+    "unitCents": 2076,
+    "identity": "product|205056097|1|storage"
+   },
+   "hd-301461651": {
+    "unitCents": 2207,
+    "identity": "product|301461651|1|storage"
+   },
+   "hd-204280761": {
+    "unitCents": 3249,
+    "identity": "product|204280761|1|storage"
+   },
+   "hd-303481712": {
+    "unitCents": 10212,
+    "identity": "product|303481712|1|storage"
+   },
+   "hd-204280493": {
+    "unitCents": 3314,
+    "identity": "product|204280493|2|storage"
+   },
+   "hd-204284997": {
+    "unitCents": 2209,
+    "identity": "product|204284997|1|storage"
+   },
+   "hd-303492749": {
+    "unitCents": 23399,
+    "identity": "product|303492749|1|storage"
+   },
+   "hd-303712251": {
+    "unitCents": 1947,
+    "identity": "product|303712251|1|storage"
+   },
+   "hd-303712281": {
+    "unitCents": 7107,
+    "identity": "product|303712281|1|storage"
+   },
+   "hd-303712256": {
+    "unitCents": 5197,
+    "identity": "product|303712256|1|storage"
+   },
+   "hd-303712262": {
+    "unitCents": 1798,
+    "identity": "product|303712262|3|storage"
+   },
+   "hd-207178795": {
+    "unitCents": 25999,
+    "identity": "product|207178795|1|storage"
+   },
+   "hd-311277070": {
+    "unitCents": 1362,
+    "identity": "product|311277070|1|storage"
+   },
+   "hd-100387753": {
+    "unitCents": 2144,
+    "identity": "product|100387753|1|storage"
+   },
+   "hd-205644982": {
+    "unitCents": 17809,
+    "identity": "product|205644982|1|storage"
+   },
+   "hd-309543748": {
+    "unitCents": 6369,
+    "identity": "product|309543748|1|storage"
+   }
+  }
+ }
 }

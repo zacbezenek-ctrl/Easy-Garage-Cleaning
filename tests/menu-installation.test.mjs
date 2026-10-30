@@ -22,6 +22,9 @@ import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js
 import { LABOR_CENTS, LATER, NOW, ON_ENV, builderState, client, estimator, fixture, menu, owner, selection, signedPlan } from './helpers/estimator-fixture.mjs';
 
 const ORIGIN = 'https://easygaragecleaning.com';
+// The pricing state from the stored approvals, on the menu without the owner's approvals in code (2026-10-30;
+// estimator-fixture.mjs DRAFT_MENU): these flows need prices that still wait for the owner.
+const pricingState = store => readCompositeState(store, { pricingMenu: () => menu });
 // An in-memory catalog store: the pricing settings, the menu approvals, receipts and the audit trail.
 function catalogStore() {
   const rows = new Map();
@@ -33,8 +36,8 @@ const approve = (state, extra) => ({ action: 'menu.approve', requestId: randomUU
 const audits = store => [...store.rows.entries()].filter(([key]) => key.startsWith('hub_audit/')).map(([, row]) => row);
 
 test('the owner sets the labor rate on Menu prices: approved at once, recorded with a receipt and an owner-only audit entry, and it prices every new builder quote', async () => {
-  const store = catalogStore(), handlers = catalogHandlers({ session: async () => owner, storage: () => store, now: () => new Date(LATER), held: () => ({ heldJobIds: async () => [] }) });
-  const state = () => readCompositeState(store);
+  const store = catalogStore(), handlers = catalogHandlers({ session: async () => owner, storage: () => store, now: () => new Date(LATER), compositeState: pricingState, held: () => ({ heldJobIds: async () => [] }) });
+  const state = () => pricingState(store);
   // Before any change: the owner's decision of 2026-10-19, $53.00 per man-hour, approved.
   assert.equal(DEFAULT_LABOR_RATE_CENTS, 5300);
   assert.deepEqual(laborRate(await state()), { rateCents: 5300, source: 'default', reason: 'Owner decision (2026-10-19): $53.00 per man-hour.' });
@@ -68,8 +71,8 @@ test('the owner sets the labor rate on Menu prices: approved at once, recorded w
 });
 
 test('with labor on the quote, goods the estimate times no longer wait for the installation answer; the answer still counts for quotes saved before labor and can be taken back', async () => {
-  const store = catalogStore(), handlers = catalogHandlers({ session: async () => owner, storage: () => store, now: () => new Date(LATER), held: () => ({ heldJobIds: async () => [] }) });
-  const state = () => readCompositeState(store);
+  const store = catalogStore(), handlers = catalogHandlers({ session: async () => owner, storage: () => store, now: () => new Date(LATER), compositeState: pricingState, held: () => ({ heldJobIds: async () => [] }) });
+  const state = () => pricingState(store);
   const goods = priceCompositeQuote(builderState(), selection(), { complete: true }), approvals = goods.breakdown.lines.filter(line => !line.approved).map(line => ({ id: line.id, unitCents: line.unitCents }));
   assert.equal((await post(handlers, approve(await state(), { approve: approvals }))).status, 200);
   assert.deepEqual(compositeApproval(goods.breakdown, await state()), { ready: true, blocked: [] }, 'every goods price approved: the quote sends, installation is billed through labor');
@@ -97,8 +100,8 @@ test('with labor on the quote, goods the estimate times no longer wait for the i
 });
 
 test('the labor rate and the installation answer are checked: whole cents from $1 to $1,000 and a boolean, one change each, stored only when given, owner only, builder-flag only', async () => {
-  const store = catalogStore(), handlers = catalogHandlers({ session: async () => owner, storage: () => store, now: () => new Date(LATER), held: () => ({ heldJobIds: async () => [] }) });
-  const state = await readCompositeState(store);
+  const store = catalogStore(), handlers = catalogHandlers({ session: async () => owner, storage: () => store, now: () => new Date(LATER), compositeState: pricingState, held: () => ({ heldJobIds: async () => [] }) });
+  const state = await pricingState(store);
   for (const value of ['yes', 1, null, {}]) {
     const response = await post(handlers, approve(state, { goodsInstallationIncluded: value }));
     assert.deepEqual([response.status, (await response.json()).code], [400, 'catalog_request_invalid'], JSON.stringify(value));
@@ -121,13 +124,13 @@ test('the labor rate and the installation answer are checked: whole cents from $
   assert.deepEqual(['goodsInstallationIncluded' in plain.approvals, 'laborRatePerManHourCents' in plain.approvals], [false, false]);
   const saved = store.rows.get(`${MENU_APPROVALS}/current`);
   assert.deepEqual(['goodsInstallationIncluded' in saved, 'laborRatePerManHourCents' in saved], [false, false]);
-  assert.equal('installationConfirmed' in builderMenu(await readCompositeState(store), { internal: true }).internal, false);
-  assert.equal(laborRate(await readCompositeState(store)).rateCents, DEFAULT_LABOR_RATE_CENTS);
+  assert.equal('installationConfirmed' in builderMenu(await pricingState(store), { internal: true }).internal, false);
+  assert.equal(laborRate(await pricingState(store)).rateCents, DEFAULT_LABOR_RATE_CENTS);
   // A manager cannot change either; with the builder flag off menu.approve is not a catalog action at all.
-  const manager = catalogHandlers({ session: async () => ({ user: 'tylerg', role: 'manager', businessAccess: true }), storage: () => store, now: () => new Date(LATER) });
+  const manager = catalogHandlers({ session: async () => ({ user: 'tylerg', role: 'manager', businessAccess: true }), storage: () => store, now: () => new Date(LATER), compositeState: pricingState });
   for (const extra of [{ goodsInstallationIncluded: true }, { laborRatePerManHourCents: 4500 }]) {
-    assert.equal((await post(manager, approve(await readCompositeState(store), extra))).status, 403);
-    assert.equal((await post(handlers, approve(await readCompositeState(store), extra), { ...ON_ENV, EGC_QUOTE_BUILDER_ENABLED: '' })).status, 404);
+    assert.equal((await post(manager, approve(await pricingState(store), extra))).status, 403);
+    assert.equal((await post(handlers, approve(await pricingState(store), extra), { ...ON_ENV, EGC_QUOTE_BUILDER_ENABLED: '' })).status, 404);
   }
   // A stored answer or rate that does not verify fails closed, like any other unverifiable approval.
   assert.throws(() => validateMenuApprovals({ items: {}, revision: 'r1', goodsInstallationIncluded: 'true' }), { code: 'quote_draft_composite_approvals_invalid' });
@@ -137,7 +140,7 @@ test('the labor rate and the installation answer are checked: whole cents from $
 test('held signed jobs: a job signed with labor is released by the owner\'s price approval alone; one signed before labor still waits for the installation answer', async () => {
   const f = fixture(), approvals = Object.fromEntries(priceCompositeQuote(builderState(), selection(), { complete: true }).breakdown.lines.filter(line => !line.approved).map(line => [line.id, line.unitCents]));
   const store = catalogStore();
-  const state = () => readCompositeState(store);
+  const state = () => pricingState(store);
   // The estimator's builder quote and its signed handoff (crew/quote-draft.js, crew/gameplan-handoff.js), all at draft prices.
   const sign = async n => {
     const priced = priceCompositeQuote(await state(), selection(), { complete: true });
@@ -153,7 +156,7 @@ test('held signed jobs: a job signed with labor is released by the owner\'s pric
   delete older.compositeQuote.breakdown.labor;
   f.rows.set(`jobs/${olderJob.job.id}`, older);
   const held = () => ({ ...f.store, heldJobIds: async limit => [...f.rows.values()].filter(row => row.pricesPendingApproval?.status === 'pending').map(row => row.id).slice(0, limit) });
-  const handlers = catalogHandlers({ session: async () => owner, storage: () => store, now: () => new Date(LATER), held });
+  const handlers = catalogHandlers({ session: async () => owner, storage: () => store, now: () => new Date(LATER), compositeState: pricingState, held });
   const prices = await (await post(handlers, approve(await state(), { approve: Object.entries(approvals).map(([id, unitCents]) => ({ id, unitCents })) }))).json();
   assert.deepEqual(prices.heldJobs, { released: [withLabor.job.id], waiting: 1, more: false }, 'the job with labor is released; the older goods job waits for installation');
   assert.deepEqual([f.job(withLabor.job.id).pricesPendingApproval, f.job(withLabor.job.id).customerPortalInvitationRequestedAt, f.job(withLabor.job.id).pricesRelease.gate], [null, LATER, 'approved_prices']);
@@ -167,14 +170,14 @@ test('held signed jobs: a job signed with labor is released by the owner\'s pric
 
 // money-4 / flow-5: the customer signed the then-approved rate, so a rate change never strands a held job.
 test('a held job signed at the old labor rate is released at the rate the customer signed when the owner changes the rate; an unsent quote must be saved again', async () => {
-  const f = fixture(), store = catalogStore(), state = () => readCompositeState(store);
+  const f = fixture(), store = catalogStore(), state = () => pricingState(store);
   const priced = priceCompositeQuote(await state(), selection({ shelving: [], storage: [] }), { complete: true });
   const lines = priced.lineItems.map(line => ({ id: line.id, kind: line.kind, name: line.name, description: line.description, quantity: line.quantity, unitCents: line.unitCents, totalCents: line.totalCents }));
   const signed = await saveWalkthroughHandoff(f.store, estimator, { actorId: estimator.user, requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: 'w1', sourceRevision: 'w1r',
     plan: signedPlan(1, { total: priced.totalCents / 100, quote: { composite_pricing: priced.compositePricing, line_items: lines, catalog_version: priced.menuVersion } }) }, NOW, { env: ON_ENV, compositeState: state });
   assert.deepEqual(signed.pricing.pending, ['Two-car garage base']);
   const held = () => ({ ...f.store, heldJobIds: async limit => [...f.rows.values()].filter(row => row.pricesPendingApproval?.status === 'pending').map(row => row.id).slice(0, limit) });
-  const handlers = catalogHandlers({ session: async () => owner, storage: () => store, now: () => new Date(LATER), held });
+  const handlers = catalogHandlers({ session: async () => owner, storage: () => store, now: () => new Date(LATER), compositeState: pricingState, held });
   const base = priced.breakdown.lines.find(line => !line.approved);
   const both = await (await post(handlers, approve(await state(), { approve: [{ id: base.id, unitCents: base.unitCents }], laborRatePerManHourCents: 4500 }))).json();
   assert.deepEqual(both.heldJobs, { released: [signed.job.id], waiting: 0, more: false }, 'the customer signed $53.00 labor, approved then; the new $45.00 rate is for new quotes');

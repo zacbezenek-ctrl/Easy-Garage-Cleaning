@@ -12,14 +12,16 @@ import { HELD_RELEASE_MARKER, heldJobsHandlers } from '../functions/api/held-job
 import { randomUUID } from 'node:crypto';
 import { priceCompositeQuote } from '../functions/_lib/composite-quote.js';
 import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
-import { builderState, fixture, menuItem, owner as fixtureOwner, selection, signedPlan, NOW as SIGNED_AT, ON_ENV } from './helpers/estimator-fixture.mjs';
+import { DRAFT_MENU, SHIPPED_MENU, builderState, fixture, menuItem, owner as fixtureOwner, selection, signedPlan, NOW as SIGNED_AT, ON_ENV } from './helpers/estimator-fixture.mjs';
 import { catalogStorage, readCompositeState } from '../functions/_lib/catalog-store.js';
 import { validatePricingSettings } from '../functions/_lib/catalog.js';
 import { decodeFirestoreFields, encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
 const SOURCE = read('../employee-catalog.js'), KIT = read('../employee-ui-kit.js');
-const defaults = JSON.parse(read('../functions/_data/pricing-settings.defaults.json')), menu = JSON.parse(read('../functions/_data/pricing-menu.json'));
+// The screen's draft-price flows run on the menu without the owner's approvals in code (2026-10-30; DRAFT_MENU); the
+// shipped menu, with every price approved, has its own test below.
+const defaults = JSON.parse(read('../functions/_data/pricing-settings.defaults.json')), menu = DRAFT_MENU;
 const ORIGIN = 'https://easygaragecleaning.com', ROOT = 'projects/egcw-1ec83/databases/(default)/documents/', NOW = '2026-10-17T18:00:00.000Z';
 const OWNER = { user: 'zacb', role: 'owner', businessAccess: true, displayName: 'Synthetic Owner' };
 const MANAGER = { user: 'tylerg', role: 'manager', businessAccess: true, displayName: 'Synthetic Manager' };
@@ -54,12 +56,12 @@ function firestore() {
   return { docs, posts, sweeps: [], gets: [], fetcher, get: key => docs.has(key) ? decodeFirestoreFields(docs.get(key).fields) : null, put: (key, data) => docs.set(key, { fields: encodeFirestoreFields(data), updateTime: time() }) };
 }
 
-function screen({ who = OWNER, env = BUILDER, fs = firestore(), jobs = { heldJobIds: async () => [] } } = {}) {
-  const document = createDocument(), session = storage({ egc_u: who.user });
-  const catalog = catalogHandlers({ session: async () => who, storage: e => catalogStorage(e, fs.fetcher), now: () => new Date(NOW), cache: new Map() });
-  const quotes = quoteDraftHandlers({ session: async () => who, storage: () => { throw new Error('the builder menu reads no jobs'); }, now: () => new Date(NOW), compositeState: e => readCompositeState(catalogStorage(e, fs.fetcher)) });
+function screen({ who = OWNER, env = BUILDER, fs = firestore(), jobs = { heldJobIds: async () => [] }, pricingMenu = menu } = {}) {
+  const document = createDocument(), session = storage({ egc_u: who.user }), compositeState = () => readCompositeState(catalogStorage({}, fs.fetcher), { pricingMenu: () => pricingMenu });
+  const catalog = catalogHandlers({ session: async () => who, storage: e => catalogStorage(e, fs.fetcher), now: () => new Date(NOW), cache: new Map(), compositeState });
+  const quotes = quoteDraftHandlers({ session: async () => who, storage: () => { throw new Error('the builder menu reads no jobs'); }, now: () => new Date(NOW), compositeState });
   // Opening the screen sweeps the held jobs (POST /api/held-jobs); jobs: the held jobs' storage (none held by default).
-  const held = heldJobsHandlers({ session: async () => who, storage: e => catalogStorage(e, fs.fetcher), held: () => jobs, now: () => new Date(NOW) });
+  const held = heldJobsHandlers({ session: async () => who, storage: e => catalogStorage(e, fs.fetcher), held: () => jobs, now: () => new Date(NOW), compositeState, menuVersion: () => pricingMenu.menuVersion });
   async function hubFetch(url, init = {}) {
     const method = init.method || 'GET', request = new Request(ORIGIN + url, { method, headers: { ...(init.headers || {}), Origin: ORIGIN }, body: init.body });
     if (url === '/api/held-jobs') { fs.sweeps.push(JSON.parse(init.body)); return held.post({ request, env }); }
@@ -107,6 +109,32 @@ test('the owner ticks draft menu prices, sets a service amount, reviews and appr
   assert.ok([...ui.fs.docs.keys()].some(key => key.startsWith('hub_audit/')) && [...ui.fs.docs.keys()].some(key => key.startsWith('catalogOperations/')), 'the catalog receipt and audit trail');
   await ui.settle(() => ui.root().textContent.includes('Approved by you (2)'), 'the reloaded approvals');
   assert.match(ui.row(mattress.id).textContent, /Mattress\$80\.00/, 'the approved amount is the price now');
+});
+
+test('the shipped menu (every price approved in code, 2026-10-30): no drafts, and the owner can still set another amount for a service', async () => {
+  const ui = screen({ pricingMenu: SHIPPED_MENU });
+  await ui.settle(() => ui.root()?.textContent.includes('Every pricing-menu price is approved.'), 'the menu prices');
+  assert.doesNotMatch(ui.root().textContent, /draft price/);
+  const card = ui.root().querySelector('[data-in-code]');
+  assert.match(card.textContent, /^Approved in code \(161\)Your decision of 2026-10-30 approved these prices in code: 128 goods at their price that day and the services below\./);
+  assert.equal(card.querySelectorAll('tr[data-item]').length, 33, 'every service approved in code can be changed; goods are approved at their price');
+  const box = ui.row(mattress.id).querySelector('input[type="checkbox"]');
+  box.checked = true; box.dispatchEvent({ type: 'change', target: box });
+  const amount = ui.row(mattress.id).querySelector('input.cat-menu-amount');
+  assert.equal(amount.value, '70.00', 'it starts at the amount approved in code');
+  amount.value = '80.00'; amount.dispatchEvent({ type: 'input', target: amount });
+  ui.button('Review 1 change').click();
+  assert.match(ui.document.body.querySelector('dialog').textContent, /MattressApproved \$70\.00Approved \$80\.00/);
+  ui.button('Save approvals').click();
+  await ui.settle(() => ui.root().textContent.includes('Approved by you (1)'), 'the reloaded approvals');
+  assert.equal(ui.fs.get('pricingMenuApprovals/current').approvals[mattress.id].unitCents, 8000);
+  assert.match(ui.row(mattress.id).textContent, /Mattress\$80\.00/, 'the owner\'s amount replaces the one in code');
+  assert.match(ui.root().querySelector('[data-in-code]').textContent, /^Approved in code \(160\)/);
+  // Revoking the owner's amount goes back to the one approved in code, not to a draft.
+  const revoke = ui.row(mattress.id).querySelector('input[type="checkbox"]');
+  revoke.checked = true; revoke.dispatchEvent({ type: 'change', target: revoke });
+  ui.button('Review 1 change').click();
+  assert.match(ui.document.body.querySelector('dialog').textContent, /MattressApproved \$80\.00Approved in code \$70\.00/);
 });
 
 test('a manager sees the draft prices and reasons but cannot approve them', async () => {

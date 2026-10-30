@@ -147,7 +147,9 @@ Each rule is an owner decision recorded in the code. Changing one needs the owne
   `functions/_lib/composite-quote.js`). Man-hours stay in the staff breakdown.
 - **Draft prices can be saved but never sent.** Owner-unapproved menu prices may sit on an unsent draft;
   `functions/_lib/quote-draft.js` re-checks `compositeApproval()` at send preview and send
-  (`quote_draft_composite_prices_unapproved`).
+  (`quote_draft_composite_prices_unapproved`). Every price on the current menu was approved in code by the owner on
+  2026-10-30 (`approvals` in `functions/_data/pricing-menu.json`); an amount the owner approves in the Hub overrides it.
+  New drafts (a later import's new items, a goods price a markup change moves) still follow this rule.
 - **Commission rates** (`CHANNEL_PERCENTS` in `crew/knock-money.js`): door-to-door direct sale 25%, appointment setter
   13%, estimator 7%. A walkthrough a rep runs and signs themselves at the door (Knock "Do the walkthrough now") is their
   direct sale: 25% only, never with the 13% or the 7% (owner decision 2026-10-21, `repRanWalkthrough` in

@@ -885,6 +885,9 @@ function menuRow(item,frozen){
 function menuPanel(){
   const m=S.menu,canApprove=m.viewer?.canApprove===true,frozen=locked()||!canApprove,pick=menuPick();
   const drafts=menuDrafts(),owner=menuItems().filter(item=>item.approved&&item.source==='owner'),fixed=menuItems().filter(item=>item.source==='menu');
+  // Prices the owner approved in code (owner decision 2026-10-30, the pricing menu's approvals): a service's amount can be
+  // changed here (the owner's approval replaces the one in code for new quotes); a goods price stays approved while unchanged.
+  const coded=menuItems().filter(item=>item.approved&&item.source==='code'),codedServices=coded.filter(item=>item.kind==='service'),codedOn=/\d{4}-\d{2}-\d{2}/.exec(coded[0]?.reason||'')?.[0];
   const chosen=Object.keys(pick.approve).length+Object.keys(pick.revoke).length+installationChange()+laborChange(),room=Math.max(0,MENU_MAX-chosen);
   const table=(rows,head)=>h('div',{class:'cat-table-wrap'},h('table',{class:'cat-table cat-menu-table'},h('thead',{},h('tr',{},head.map(text=>h('th',{scope:'col'},text)))),h('tbody',{},rows)));
   const bySection=m.sections.map(section=>{const rows=drafts.filter(item=>item.section===section.id);return rows.length?h('section',{class:'hub-card cat-card'},h('h2',{},`${section.label}: ${rows.length} draft price${rows.length===1?'':'s'}`),
@@ -903,6 +906,9 @@ function menuPanel(){
       h('td',{},h('input',{type:'checkbox',checked:Boolean(pick.revoke[item.id]),disabled:frozen,'aria-label':`Revoke approval of ${item.name}`,onchange:event=>{if(event.target.checked)pick.revoke[item.id]=true;else delete pick.revoke[item.id];render();}})),
       h('td',{class:'cat-item-cell'},h('strong',{},item.name)),h('td',{'data-label':'Price'},money(item.unitCents)))),['Revoke','Item','Approved price'])):null,
     fixed.length?h('p',{class:'cat-muted'},`Approved in the pricing menu itself: ${fixed.map(item=>`${item.name} ${money(item.unitCents)}`).join(', ')}.`):null,
+    coded.length?h('details',{class:'hub-card cat-card','data-in-code':''},h('summary',{},`Approved in code (${coded.length})`),
+      h('p',{class:'cat-muted'},`Your decision${codedOn?` of ${codedOn}`:''} approved these prices in code: ${coded.length-codedServices.length} goods at their price that day and the services below. To charge another amount for a service, tick it and enter the amount: your approval replaces the one in code for new quotes, and revoking it later goes back to the amount in code. A goods price stays approved while its price is unchanged.`),
+      codedServices.length?table(codedServices.map(item=>menuRow(item,frozen)),['Change','Item','Price']):null):null,
     h('div',{class:'cat-sticky'},btn(`Review ${chosen||''} change${chosen===1?'':'s'}`.replace('  ',' '),openMenuReview,'primary',{disabled:frozen||!chosen||chosen>MENU_MAX}),btn('Clear ticks',()=>{S.menuPick=null;S.menuErrors={};render();},'',{disabled:frozen||!chosen})));
 }
 function openMenuReview(){
@@ -916,8 +922,8 @@ function openMenuReview(){
   const included=value=>value?'Included in the goods price':'Not confirmed';
   openDialog({eyebrow:'Approve draft prices',title:approve.length+revoke.length?`Approve ${approve.length} and revoke ${revoke.length} pricing-menu price${approve.length+revoke.length===1?'':'s'}`:laborRateCents!==undefined&&typeof installation!=='boolean'?'Change the labor rate':'Answer the installation question',onSubmit:save,
     body:[h('div',{class:'cat-diff-table'},h('table',{},h('thead',{},h('tr',{},['Item','Now','After saving'].map(text=>h('th',{scope:'col'},text)))),h('tbody',{},
-      ...approve.map(entry=>h('tr',{},h('th',{scope:'row'},byId.get(entry.id)?.name||entry.id),h('td',{},`Draft ${money(byId.get(entry.id)?.unitCents)}`),h('td',{},h('strong',{},`Approved ${money(entry.unitCents)}`)))),
-      ...revoke.map(id=>h('tr',{},h('th',{scope:'row'},byId.get(id)?.name||id),h('td',{},`Approved ${money(byId.get(id)?.unitCents)}`),h('td',{},h('strong',{},'Draft again')))),
+      ...approve.map(entry=>h('tr',{},h('th',{scope:'row'},byId.get(entry.id)?.name||entry.id),h('td',{},`${byId.get(entry.id)?.approved?'Approved':'Draft'} ${money(byId.get(entry.id)?.unitCents)}`),h('td',{},h('strong',{},`Approved ${money(entry.unitCents)}`)))),
+      ...revoke.map(id=>h('tr',{},h('th',{scope:'row'},byId.get(id)?.name||id),h('td',{},`Approved ${money(byId.get(id)?.unitCents)}`),h('td',{},h('strong',{},Number.isSafeInteger(byId.get(id)?.codeCents)?`Approved in code ${money(byId.get(id).codeCents)}`:'Draft again')))),
       ...(typeof installation==='boolean'?[h('tr',{},h('th',{scope:'row'},'Shelving and storage installation'),h('td',{},included(installationConfirmed())),h('td',{},h('strong',{},included(installation))))]:[]),
       ...(laborRateCents!==undefined?[h('tr',{},h('th',{scope:'row'},'Labor rate per man-hour'),h('td',{},money(laborRateNow())),h('td',{},h('strong',{},money(laborRateCents))))]:[])))),
       h('div',{class:'hub-notice warning'},'Approved prices can be sent to customers on builder quotes at once. Nothing is sent to any customer by saving.')],

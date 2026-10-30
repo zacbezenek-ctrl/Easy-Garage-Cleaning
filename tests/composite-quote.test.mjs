@@ -10,9 +10,13 @@ import { DEFAULT_GOODS_MARKUP, goodsMarkupOf, validatePricingSettings } from '..
 import { walkthroughPricing, walkthroughServiceItems } from '../functions/_lib/pricing-config.js';
 import { decodeFirestoreFields, encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 import { checkCommitted } from '../scripts/import-pricing-menu.mjs';
+import { withoutCodeApprovals } from './helpers/estimator-fixture.mjs';
 
 const readJson = path => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
-const menu = readJson('../functions/_data/pricing-menu.json');
+// The shipped menu carries the owner's approvals in code (2026-10-30; tests/menu-approved-in-code.test.mjs). The rules
+// below are the draft-price rules, which still hold for any price the owner has not approved, so they price from the
+// same menu without those approvals.
+const shipped = readJson('../functions/_data/pricing-menu.json'), menu = withoutCodeApprovals(shipped);
 const defaults = readJson('../functions/_data/pricing-settings.defaults.json');
 const walkthrough = walkthroughPricing(walkthroughServiceItems());
 const state = ({ settings = {}, approvals = {} } = {}) => ({ menu, settings: { ...structuredClone(defaults), ...settings }, walkthrough, approvals: { items: approvals, revision: approvals && Object.keys(approvals).length ? 'a1' : null } });
@@ -32,15 +36,16 @@ const approve = (item, unitCents) => ({ unitCents, identity: menuItemIdentity(it
 const INSTALLED = { goodsInstallationIncluded: true };
 
 test('the shipped pricing menu validates, matches its generated module and holds public product data only', () => {
-  assert.doesNotThrow(() => validatePricingMenu(structuredClone(menu)));
+  assert.doesNotThrow(() => validatePricingMenu(structuredClone(shipped)));
+  assert.doesNotThrow(() => validatePricingMenu(structuredClone(menu)), 'a menu without approvals in code is valid too');
   assert.deepEqual(checkCommitted(), { ok: true });
-  assert.deepEqual(bundledPricingMenu(), menu);
+  assert.deepEqual(bundledPricingMenu(), shipped);
   assert.ok(Object.isFrozen(bundledPricingMenu().products[0]), 'the shared menu cannot be mutated');
   assert.equal(menu.products.length, 128);
   assert.equal(new Set(menu.products.map(item => item.sku)).size, 128, 'one entry per Home Depot internet SKU');
   assert.ok(menu.products.every(item => item.status === 'draft' && item.evidence.checkedOn === '2026-10-16' && item.retailer === 'The Home Depot'), 'every product is a DRAFT with the 2026-10-16 retail evidence');
   assert.ok(menu.products.every(item => /^https:\/\/www\.homedepot\.com\//.test(item.productUrl) && Number.isSafeInteger(item.retailPerPackCents) && item.unitsPerPack >= 1));
-  assert.deepEqual(menu.services.filter(item => item.status === 'approved').map(item => [item.menuId, item.approvedPriceCents]), [['EGC-023', 25000], ['EGC-024', 50000], ['EGC-025', 75000], ['EGC-026', 100000]], 'the truck loads (owner decision 2026-10-21: $250, $500, $750 and the $1,000 full truck) are the only approved prices');
+  assert.deepEqual(menu.services.filter(item => item.status === 'approved').map(item => [item.menuId, item.approvedPriceCents]), [['EGC-023', 25000], ['EGC-024', 50000], ['EGC-025', 75000], ['EGC-026', 100000]], 'the truck loads (owner decision 2026-10-21: $250, $500, $750 and the $1,000 full truck) are the only fixed amounts; every other price is approved in code (2026-10-30)');
   const text = readFileSync(new URL('../functions/_data/pricing-menu.json', import.meta.url), 'utf8');
   assert.doesNotMatch(text, /mail\.google|@easygaragecleaning|commission|margin|cost\s*\/\s*\.?60|Proposed|Original30|Sensitivity|Owner review|\bCAC\b|\bwages?\b/i, 'no margins, proposed prices, commission, CAC, wage or private links');
   // Every service's draft amount resolves against today's walkthrough tables (no 503 for a broken mapping).

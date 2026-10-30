@@ -65,6 +65,17 @@ test('the imported menu validates and never contains a margin, proposed price, c
   assert.equal(JSON.parse(JSON.parse(renderMenuModule(text).match(/PRICING_MENU_JSON = (".*");/)[1])).menuVersion, '2026-10-16.1');
 });
 
+test('a re-import keeps the owner\'s approvals in code (2026-10-30) for the items still on the menu', () => {
+  const approvals = { approvedBy: 'owner', approvedOn: '2026-10-30', note: 'Approved in code by the owner.', items: {
+    'hd-100006678': { unitCents: 11570, identity: 'product|100006678|1|shelving' }, 'egc-003': { unitCents: 97500, identity: 'service|EGC-003|Two-car garage base|job|cleaning-base|sizeBase:2|2' },
+    'egc-026': { unitCents: 100000, identity: 'x' }, 'egc-099': { unitCents: 100, identity: 'gone' } } };
+  const { menu } = buildPricingMenu({ productsCsv, itemsCsv }, { evidenceDate: '2026-10-16', approvals });
+  assert.deepEqual(Object.keys(menu.approvals.items), ['hd-100006678', 'egc-003'], 'an item no longer imported, or one the menu now approves at a fixed amount, is dropped');
+  assert.deepEqual([menu.approvals.approvedOn, menu.approvals.items['egc-003'].unitCents], ['2026-10-30', 97500]);
+  assert.doesNotThrow(() => validatePricingMenu(menu));
+  assert.equal('approvals' in buildPricingMenu({ productsCsv, itemsCsv }).menu, false, 'none without a committed menu');
+});
+
 test('a row the importer cannot place, or one claiming approval, stops the import instead of guessing', () => {
   const header = productsCsv.split('\n')[2];
   const row = productsCsv.split('\n')[3];
