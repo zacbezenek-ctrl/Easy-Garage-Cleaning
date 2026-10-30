@@ -86,14 +86,15 @@ export function splitCents(cents, rows) {
   return shares.map(({ rest, ...row }) => row);
 }
 
-/** Which refund flag a job's payment reviews put on its tips: 'tip_refund_open' while a refund Stripe shows on one of
- * its tipped charges waits for the owner, else 'tip_refunded' once the owner recorded one, else ''. Only reviews that
+/** Which refund flag a job's payment reviews put on its tips: 'tip_refund_open' while a refund Stripe shows (or a card
+ * dispute) on one of its tipped charges waits for the owner, else 'tip_refunded' once the owner recorded one, else ''. Only reviews that
  * name a tipped charge whose tip the job lists count. */
 function refundFlag(job, reviews) {
   if (!Array.isArray(reviews) || !reviews.length) return '';
   const sessions = new Set(savedTipRows(job).map(row => row?.sessionId).filter(id => typeof id === 'string' && id));
   const relevant = reviews.filter(review => Number.isSafeInteger(review?.tipCents) && review.tipCents > 0 && sessions.has(review.sessionId));
-  if (relevant.some(review => review.status === 'open' && review.reason === 'payment_refunded')) return 'tip_refund_open';
+  // A card dispute (chargeback) on a tipped charge holds its tip the same way while the owner settles it.
+  if (relevant.some(review => review.status === 'open' && ['payment_refunded', 'payment_disputed'].includes(review.reason))) return 'tip_refund_open';
   return relevant.some(review => review.status !== 'open' && review.resolution === 'refunded') ? 'tip_refunded' : '';
 }
 

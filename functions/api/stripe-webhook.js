@@ -19,17 +19,20 @@
  * reviewRequired:true only while an open review is queued for a person; a charge
  * whose reviews are all closed answers reviewRequired:false (payment_review_resolved).
  *
- * With CUSTOMER_TIPS_ENABLED=true, charge.refunded (sent for full and partial
- * refunds) holds a tipped Hub checkout's refund: the PaymentIntent's checkout
- * session is found and read again from Stripe, and a refund it shows opens the
- * payment review (or the {sessionId}:refund follow-up once the charge's earlier
- * review was closed), so Review queues and tip payroll hold the tip without
- * waiting for a browser return. It only ever holds: when Stripe shows no refund
- * (it failed or was reversed) and no review holds the charge, it is acknowledged
- * and ignored with nothing written, and booking the charge is left to
- * checkout.session.completed and the browser returns. Every other charge.refunded
- * (tips off, an untipped or non-Hub charge) is acknowledged and ignored, as before.
- * Disputes (charge.dispute.*) are not read: check Stripe for disputes before exporting tips.
+ * charge.refunded (sent for full and partial refunds) holds a Hub checkout's
+ * refund (portal or crew, tipped or not, whatever CUSTOMER_TIPS_ENABLED says):
+ * the PaymentIntent's checkout session is found and read again from Stripe, and
+ * a refund it shows opens the payment review (or the {sessionId}:refund follow-up
+ * once the charge's earlier review was closed), so Review queues (and, for a
+ * tipped charge, tip payroll) hold it without waiting for a browser return. It
+ * only ever holds: when Stripe shows no refund (it failed or was reversed) and no
+ * review holds the charge, it is acknowledged and ignored with nothing written,
+ * and booking the charge is left to checkout.session.completed and the browser
+ * returns. A charge that is not a Hub checkout is acknowledged and ignored.
+ * charge.dispute.created, .updated and .closed (a card dispute, or chargeback)
+ * on a Hub checkout open or update payment_reviews/{sessionId}:dispute for the
+ * owner the same way (customer-payments recordStripeDispute); they never write
+ * money either. The owner records a lost dispute's chargeback on the job.
  *
  * With FUNNEL_PAYMENT_EVENTS_ENABLED=true (and MONEY_API_ENABLED=true) a job
  * payment is committed together with its FUN-33 funnel events, dated at the
@@ -62,7 +65,8 @@
  *        https://easygaragecleaning.com/api/stripe-webhook
  *      Events: checkout.session.completed, checkout.session.async_payment_succeeded,
  *              invoice.paid, invoice.payment_failed, customer.subscription.deleted,
- *              and, with customer tips on, charge.refunded
+ *              charge.refunded, charge.dispute.created, charge.dispute.updated
+ *              and charge.dispute.closed
  *   2. Copy the endpoint's signing secret (whsec_...) into Cloudflare Pages
  *      env var STRIPE_WEBHOOK_SECRET.
  *   3. Optional: GARAGE_GUARD_HOOK_URL — Zapier Catch Hook for the team
@@ -70,7 +74,7 @@
  *      forwarded (Stripe Dashboard remains the record).
  */
 
-import { CHECKOUT_KINDS, customerTipsEnabled, findStripeCheckoutByPaymentIntent, readStripeCheckout, recordCrewStripePayment, recordCustomerStripePayment } from '../_lib/customer-payments.js';
+import { CHECKOUT_KINDS, findStripeCheckoutByPaymentIntent, readStripeCheckout, recordCrewStripePayment, recordCustomerStripePayment, recordStripeDispute } from '../_lib/customer-payments.js';
 import { applyGarageGuardEvent, claimGarageGuardAlert, expireGarageGuardAlert, garageGuardEvent, garageGuardMembershipSyncEnabled, membershipStorage, settleGarageGuardAlert } from '../_lib/garage-guard-membership.js';
 import { garageGuardBilling, garageGuardLedgerStore, garageGuardVisitTrackingEnabled } from '../_lib/garage-guard-ledger.js';
 
@@ -83,12 +87,15 @@ const HANDLED = new Set([
   'invoice.paid',
   'invoice.payment_failed',
   'customer.subscription.deleted',
-  // Only with CUSTOMER_TIPS_ENABLED, and only for a tipped Hub checkout; anything else is ignored as before.
+  // Hold-only: a Hub checkout's refund or card dispute opens a Review queues item; anything else is ignored.
   'charge.refunded',
+  'charge.dispute.created',
+  'charge.dispute.updated',
+  'charge.dispute.closed',
 ]);
 const IGNORED = { ok: true, received: true, ignored: true };
-// A Hub checkout session carrying a crew tip (metadata the Hub alone writes when it opens the checkout).
-const tippedHubCheckout = session => [CHECKOUT_KINDS.portal, CHECKOUT_KINDS.crew].includes(session?.metadata?.kind) && /^[1-9]\d{0,8}$/.test(String(session?.metadata?.tip_cents ?? ''));
+// A Hub checkout session (metadata the Hub alone writes when it opens the checkout).
+const hubCheckout = session => [CHECKOUT_KINDS.portal, CHECKOUT_KINDS.crew].includes(session?.metadata?.kind);
 
 // Tolerant env read: exact name first, then any dashboard var whose name
 // normalizes (case/underscores/whitespace ignored) to the name or an alias.
@@ -186,7 +193,7 @@ export function hookDelivery(response) {
   return response && response.status >= 400 && response.status < 500 && response.status !== 408 ? 'failed' : 'uncertain';
 }
 
-export function stripeWebhookHandlers({ storage = membershipStorage, now = () => new Date(), send = (url, init) => fetch(url, init), readCheckout = readStripeCheckout, findCheckout = findStripeCheckoutByPaymentIntent } = {}) {
+export function stripeWebhookHandlers({ storage = membershipStorage, now = () => new Date(), send = (url, init) => fetch(url, init), readCheckout = readStripeCheckout, findCheckout = findStripeCheckoutByPaymentIntent, recordDispute = recordStripeDispute } = {}) {
   const json = (status, body) =>
     new Response(JSON.stringify(body), {
       status,
@@ -231,16 +238,17 @@ export function stripeWebhookHandlers({ storage = membershipStorage, now = () =>
     // A charge a review holds: reviewRequired only while an open review is queued for a person, never for a charge
     // whose reviews are all closed (payment_review_resolved).
     const held = error => json(200, { ok: true, received: true, recorded: false, reviewRequired: error.reviewOpen === true, reason: error.code });
-    if (event.type === 'charge.refunded') {
-      // Tips off: acknowledged and ignored exactly as before this event was handled.
-      if (!customerTipsEnabled(env)) return json(200, IGNORED);
+    const dispute = event.type.startsWith('charge.dispute.');
+    if (event.type === 'charge.refunded' || dispute) {
       const paymentIntentId = typeof checkout.payment_intent === 'string' ? checkout.payment_intent : checkout.payment_intent?.id;
       if (typeof paymentIntentId !== 'string' || !/^pi_[A-Za-z0-9_]+$/.test(paymentIntentId)) return json(200, IGNORED);
       try {
-        // The charge event names only its PaymentIntent: its Hub checkout is looked up, then read again with its charge.
+        // The charge (or dispute) event names only its PaymentIntent: its Hub checkout is looked up, then read again with its charge.
         const found = await findCheckout(env, paymentIntentId);
-        if (!tippedHubCheckout(found)) return json(200, IGNORED);
+        if (!hubCheckout(found)) return json(200, IGNORED);
         const current = await readCheckout(env, found.id);
+        // A card dispute: held for the owner in Review queues (the event's dispute fields are signed by Stripe); no money is written.
+        if (dispute) return json(200, { ok: true, received: true, recorded: false, reviewRequired: (await recordDispute(env, current, checkout, { now: stamp })).reviewOpen === true, reason: 'payment_disputed' });
         // Hold-only: a refund Stripe shows opens (or updates) the review; this event never books a charge or writes the job.
         await (found.metadata.kind === CHECKOUT_KINDS.portal
           ? recordCustomerStripePayment(env, current, '', stamp, { recordedBy: 'stripe_webhook', settleHeld: false, holdOnly: true })
@@ -268,6 +276,9 @@ export function stripeWebhookHandlers({ storage = membershipStorage, now = () =>
           // A charge held in payment_reviews (Stripe shows it refunded, or a tipped charge on a job that closed after
           // checkout opened) is durable and the job is unchanged.
           if (error.reviewRecorded) return held(error);
+          // A session that fails verification (kind, currency, binding) was not created by the Hub, exactly as on the
+          // crew path: a refusal, never a storage retry.
+          if (error.code === 'payment_unverified') return json(409, { ok: false, error: 'Payment needs manager review' });
           // Stripe must retry a verified payment until its durable job record succeeds.
           return json(503, { ok: false, error: 'Payment recording needs retry' });
         }

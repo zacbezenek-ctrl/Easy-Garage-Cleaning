@@ -1222,22 +1222,23 @@ test('with tips on, Stripe’s charge.refunded brings a refund on a tipped charg
   crew.refund(session, 115000, true);
   assert.equal((await crew.refundEvent(session)).body.reason, 'payment_refunded');
   assert.deepEqual([crew.review(session).kind, crew.review(session).tipCents, crew.review(session).refundedCents], ['egc_job_payment', 15000, 115000]);
-  // An untipped charge, a charge that is not a Hub checkout, and any charge with tips off are acknowledged and ignored, as before.
+  // Issue #303: an untipped Hub charge, and any Hub charge with tips off, is held the same way (it used to be ignored, so a
+  // refund made in Stripe never reached the Hub). A charge that is not a Hub checkout is still acknowledged and ignored.
   t.mock.restoreAll();
   const plain = await fixture(t), open = await plain.pay({}), untipped = open.body.url.split('/').pop(); plain.complete(untipped);
   assert.equal((await plain.verifyPortal(untipped)).status, 200);
   plain.refund(untipped, 10000);
-  assert.deepEqual((await plain.refundEvent(untipped)).body, { ok: true, received: true, ignored: true });
+  assert.deepEqual((await plain.refundEvent(untipped)).body, { ok: true, received: true, recorded: false, reviewRequired: true, reason: 'payment_refunded' });
   assert.deepEqual((await plain.event({ id: 'ch_other', object: 'charge', payment_intent: 'pi_not_a_hub_checkout' }, undefined, 'charge.refunded')).body, { ok: true, received: true, ignored: true });
   assert.deepEqual((await plain.event({ id: 'ch_no_intent', object: 'charge', payment_intent: null }, undefined, 'charge.refunded')).body, { ok: true, received: true, ignored: true });
-  assert.equal(plain.review(untipped), undefined);
+  assert.deepEqual([plain.review(untipped).reason, plain.review(untipped).refundedCents, plain.review(untipped).tipCents], ['payment_refunded', 10000, undefined]);
   t.mock.restoreAll();
   const off = await fixture(t, { 'job-1': closing() }, base), made = await off.pay({}), offSession = made.body.url.split('/').pop(); off.complete(offSession);
   assert.equal((await off.verifyPortal(offSession)).status, 200);
   off.refund(offSession, 10000);
-  const before = off.stripeReads.length;
-  assert.deepEqual((await off.refundEvent(offSession)).body, { ok: true, received: true, ignored: true });
-  assert.deepEqual([off.stripeReads.length, off.review(offSession)], [before, undefined], 'tips off: nothing is read from Stripe');
+  const before = off.stripeReads.length, paid = structuredClone(off.job());
+  assert.equal((await off.refundEvent(offSession)).body.reason, 'payment_refunded');
+  assert.deepEqual([off.stripeReads.slice(before), off.review(offSession).reason, off.job()], [[`list:pi_${offSession}`, offSession], 'payment_refunded', paid], 'tips off: Stripe is checked, the refund is held, the job is unchanged');
 });
 
 test('held charges are server-only records, resolved only through Review queues', async () => {

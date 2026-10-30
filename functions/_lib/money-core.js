@@ -15,8 +15,9 @@ import { billedChangeOrders, changeOrderSaved } from './change-orders.js';
  *
  * paymentLedger(job)/paymentEntries(job) unify today's payment evidence
  * (verified Stripe sessions, the latest staff-recorded receipt and gift-credit
- * redemptions) into {id, kind, amountCents, method, processorRef, receiptUrl,
- * at, by} entries and report how much of the recorded paid total they explain.
+ * redemptions, and the refunds the money API recorded as 'refund' entries) into
+ * {id, kind, amountCents, method, processorRef, receiptUrl, at, by} entries and
+ * report how much of the recorded paid total they explain.
  * Stripe receipts are merged by session AND payment intent with
  * operations-financials uniqueReceipts, exactly as the revenue report does.
  *
@@ -183,12 +184,34 @@ function billedChangeTotal(job, issues) {
   return cents;
 }
 
-/** Refunds recorded on the job in any shape; they are not reconciled here yet (money_refunds_unreconciled). An empty
- * refunds list (or empty object) records no refund. */
+/** Refunds recorded on the job in any shape (every refund hold reads this). An empty refunds list (or empty object)
+ * records no refund. Only the money API's own records are netted (nettedRefunds); any other shape is not reconciled
+ * here (money_refunds_unreconciled). */
 export function refundsRecorded(job) {
   const payment = plain(job?.payment) ? job.payment : {};
   const listed = value => Array.isArray(value) ? value.length > 0 : plain(value) ? Object.keys(value).length > 0 : Boolean(value);
   return listed(job?.refunds) || listed(payment.refunds) || moneyCents(payment.refundedAmount) > 0;
+}
+const REFUND_ID = /^refund:[A-Za-z0-9_:.-]{1,190}$/;
+/** The ledger issue a netted refund raises: its amounts reconcile, and it still holds whatever waits for a complete ledger. */
+export const REFUND_RECORDED = 'money_refund_recorded';
+/**
+ * The refunds and chargebacks the money API recorded (money-service payment.record_refund, or a Review queues refund
+ * recorded on the job): payment.refunds rows {id: 'refund:…', amountCents, method, refundedAt, …} whose amount
+ * payment.amount already leaves out. They are itemized as 'refund' ledger entries, so the paid total and the ledger
+ * stay net. null when the job records no refund, or any refund in another shape (job.refunds, payment.refundedAmount,
+ * a row that cannot be read): those stay money_refunds_unreconciled.
+ */
+export function nettedRefunds(job) {
+  const payment = plain(job?.payment) ? job.payment : {}, rows = payment.refunds;
+  if (!Array.isArray(rows) || !rows.length || refundsRecorded({ refunds: job?.refunds, payment: { refundedAmount: payment.refundedAmount } })) return null;
+  const entries = [];
+  for (const row of rows) {
+    const at = plain(row) ? instant(row.refundedAt) : null;
+    if (!at || !REFUND_ID.test(row.id || '') || !Number.isSafeInteger(row.amountCents) || row.amountCents <= 0 || row.amountCents > MAX_ENTRY_CENTS || typeof row.method !== 'string' || !/^[a-z][a-z0-9_]{0,39}$/.test(row.method)) return null;
+    entries.push({ id: row.id, kind: 'refund', amountCents: row.amountCents, method: row.method, processor: '', processorRef: clean(row.reference), receiptUrl: '', at, by: clean(row.recordedBy, 120) || 'hub', verified: true, source: 'hub_offline' });
+  }
+  return entries;
 }
 
 /** Unified payment evidence for one job plus a reconciliation against the recorded paid total. */
@@ -266,7 +289,12 @@ export function paymentLedger(job) {
   if (credit === null) issues.push('money_gift_credit_invalid');
   else if (credit > itemized) push({ id: `gift:${clean(job?.id, 120) || 'job'}:applied`, kind: 'balance', amountCents: credit - itemized, method: 'gift_credit', processor: '', processorRef: '', receiptUrl: '', at: null, by: 'customer', verified: true, source: 'gift_credit_total' });
   else if (credit < itemized) issues.push('money_gift_credit_conflict');
-  if (refundsRecorded(job)) issues.push('money_refunds_unreconciled');
+  // Refunds the money API recorded are itemized against the net paid total (money_refund_recorded: reconciled, but money
+  // that went back stays for a person to review, so a ledger with one is never complete and every hold that waits for a
+  // complete ledger, such as commissions, still waits); any other refund record is not reconciled.
+  const netted = nettedRefunds(job);
+  if (netted) { netted.forEach(push); issues.push(REFUND_RECORDED); }
+  else if (refundsRecorded(job)) issues.push('money_refunds_unreconciled');
   entries.sort((a, b) => (a.at === null) - (b.at === null) || String(a.at).localeCompare(String(b.at)) || a.id.localeCompare(b.id));
   const sum = rows => rows.reduce((total, row) => total === null || row.amountCents === null ? null : total + (row.kind === 'refund' ? -row.amountCents : row.amountCents), 0);
   const paidRaw = payment.amount ?? job?.invoice?.paid ?? job?.invoice?.amountPaid ?? job?.deposit?.paidAmount;

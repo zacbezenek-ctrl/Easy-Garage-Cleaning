@@ -40,7 +40,7 @@ const ESTIMATE_STATUS = { approved: 'Approved', expired: 'Expired', superseded: 
 const INVOICE_STATUS = { not_issued: 'Not issued', draft: 'Draft', void: 'Void', superseded: 'Superseded', paid: 'Paid', pending_verification: 'Payment pending verification', overdue: 'Overdue', partial: 'Partially paid', issued: 'Issued' };
 const PORTAL_INVOICE = new Set(['issued', 'partial', 'overdue', 'paid', 'pending_verification']);
 const PAYMENT_KIND = { deposit: 'Deposit', balance: 'Payment', offline: 'Payment', tip: 'Tip for your crew', refund: 'Refund' };
-const PAYMENT_METHOD = { card: 'Card', gift_credit: 'Service credit', check: 'Check', cash: 'Cash', deposit: 'Recorded payment', mixed_with_gift_credit: 'Payment and service credit', ach: 'Bank transfer', zelle: 'Zelle', venmo: 'Venmo' };
+const PAYMENT_METHOD = { card: 'Card', gift_credit: 'Service credit', check: 'Check', cash: 'Cash', deposit: 'Recorded payment', mixed_with_gift_credit: 'Payment and service credit', ach: 'Bank transfer', zelle: 'Zelle', venmo: 'Venmo', stripe_refund: 'Card (Stripe)', chargeback: 'Card dispute' };
 const SERVICE_TYPES = { job: 'Garage service', cleanout: 'Garage cleanout', reorg: 'Garage reorganization' };
 const PAY_NOTE = {
   customer: 'Opens your private Easy Garage Cleaning customer portal. Card details are entered on Stripe’s secure checkout.',

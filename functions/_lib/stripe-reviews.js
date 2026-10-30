@@ -8,6 +8,8 @@ import { preconditionFetcher } from './firestore-precondition.js';
 import { CHECKOUT_KINDS, PAYMENT_REVIEW_COLLECTION, PORTAL_CHECKOUT_COLLECTION, STRIPE_API_VERSION, customerMoneyState, refundFollowUpId, stripeSecretKey } from './customer-payments.js';
 import { membershipAccount, membershipStorage, mirrorPatch } from './garage-guard-membership.js';
 import { manualCentsSince } from './money-ledger.js';
+import { moneySnapshot, refundJobPatch } from './money-service.js';
+import { moneyEventWrites } from './payment-events.js';
 
 /**
  * Manager view of the Stripe items the webhook could not settle on its own:
@@ -70,6 +72,13 @@ import { manualCentsSince } from './money-ledger.js';
  * on the job by hand, or applied elsewhere) is settled like one on the job: the
  * owner confirms the correction (jobPaymentAcknowledged, else 409
  * stripe_review_refund_settled_earlier) and records nothing more first.
+ * A refund of a charge on the job can instead be recorded on the job in the same commit (recordOnJob): the service money
+ * this review refunds comes off the job's paid total as a 'refund' ledger entry (money-service refundJobPatch, with a
+ * money.payment.record_refund audit), so closing the review corrects the job. A card dispute (chargeback) is held as
+ * payment_reviews/{sessionId}:dispute (then {sessionId}:dispute:closed when it closes after that one was resolved): the
+ * owner closes it with payment.reconcile once Stripe shows how it ended; a lost dispute on a charge the job counts as
+ * paid first needs its chargeback recorded on the job (Estimates & payments, Record a refund or chargeback, with the
+ * dispute ID). Nothing here moves money in Stripe.
  */
 
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
@@ -81,13 +90,15 @@ export const STRIPE_REVIEW_ACTIONS = Object.freeze(['payment.reconcile', 'paymen
 export const REFUND_REASONS = Object.freeze({ duplicate_charge: 'Duplicate charge', exceeds_balance: 'More than the job balance', customer_request: 'Customer asked for a refund', job_cancelled: 'Job cancelled', other: 'Other' });
 export const DISMISS_REASONS = Object.freeze({ not_a_customer: 'Not a Hub customer yet', handled_elsewhere: 'Handled outside the Hub', duplicate_membership: 'Duplicate membership', other: 'Other' });
 const COMMON = ['action', 'requestId', 'reviewId', 'expectedRevision', 'actorId'];
-const FIELDS = { 'payment.reconcile': ['note', 'appliedElsewhere'], 'payment.refund': ['reason', 'note', 'jobPaymentAcknowledged', 'keptCentsAcknowledged', 'tipRefundedFirst'], 'membership.link': ['customerId'], 'membership.dismiss': ['reason', 'note'] };
+const FIELDS = { 'payment.reconcile': ['note', 'appliedElsewhere'], 'payment.refund': ['reason', 'note', 'jobPaymentAcknowledged', 'recordOnJob', 'keptCentsAcknowledged', 'tipRefundedFirst'], 'membership.link': ['customerId'], 'membership.dismiss': ['reason', 'note'] };
 const FINAL = new Set(['stripe_review_idempotency_conflict', 'stripe_review_changed_since_operation', 'stripe_review_actor_changed']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SESSION_ID = /^cs_(?:test_|live_)?[A-Za-z0-9_]{1,160}$/, SUBSCRIPTION_ID = /^sub_[A-Za-z0-9_]{1,160}$/;
-// A payment review is the checkout session's own ID, or one of its refund follow-ups ({sessionId}:refund, {sessionId}:refund:2 ...).
-const PAYMENT_REVIEW_ID = /^cs_(?:test_|live_)?[A-Za-z0-9_]{1,160}(?::refund(?::(?:[2-9]|[1-9][0-9]))?)?$/;
-const FOLLOW_UP = /^(.+):refund(?::([2-9]|[1-9][0-9]))?$/;
+// A payment review is the checkout session's own ID, one of its refund follow-ups ({sessionId}:refund, {sessionId}:refund:2 ...),
+// or its card dispute ({sessionId}:dispute, then {sessionId}:dispute:closed).
+const PAYMENT_REVIEW_ID = /^cs_(?:test_|live_)?[A-Za-z0-9_]{1,160}(?::refund(?::(?:[2-9]|[1-9][0-9]))?|:dispute(?::closed)?)?$/;
+const FOLLOW_UP = /^(.+):refund(?::([2-9]|[1-9][0-9]))?$/, DISPUTE = /^(.+):dispute(?::closed)?$/;
+const disputeOf = review => review?.reason === 'payment_disputed' && DISPUTE.test(String(review.id || ''));
 const fail = (code, message, status = 503, details) => Object.assign(new Error(message), { code: 'stripe_review_' + code, status, ...(details ? { details } : {}) });
 const text = (value, max = 200) => typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max) : '';
 const count = value => Number.isInteger(value) ? value : null;
@@ -207,6 +218,8 @@ function paymentReview(row, job) {
     // service part and tip it left kept, so the queue reads only the refund beyond it).
     ...(priorRefundedCents !== null && priorRefundedCents > 0 ? { priorRefundedCents, ...(tipCents > 0 && priorOf(row).keptTipCents !== undefined ? { priorKeptServiceCents: priorOf(row).keptServiceCents, priorKeptTipCents: priorOf(row).keptTipCents } : {}) } : {}),
     jobTotalCents: count(row.jobTotalCents), jobPaidCents: count(row.jobPaidCents), jobBalanceCents: count(row.jobBalanceCents),
+    // A card dispute: what the latest signed Stripe event said about it.
+    ...(row.reason === 'payment_disputed' ? { disputeId: text(row.disputeId, 200), disputeStatus: text(row.disputeStatus, 40), disputeAmountCents: count(row.disputeAmountCents), disputeReason: text(row.disputeReason, 60), chargebackOnJob: chargebackOnJob(job, row.disputeId) } : {}),
     createdBy: text(row.createdBy, 80), recordedBy: text(row.recordedBy, 80), createdAt: text(row.createdAt, 40),
     customer: text(job?.customer, 200), jobFound: Boolean(job), recordedOnJob: recordedOnJob(job, sessionId),
   };
@@ -275,6 +288,7 @@ function validate(input, actor) {
   if (input.actorId !== undefined && String(input.actorId).trim().toLowerCase() !== String(actor.user).trim().toLowerCase()) throw fail('actor_changed', 'The signed-in employee changed. Sign in as the original employee to finish this request, or discard it.', 403);
   if (input.action === 'payment.refund' && !Object.hasOwn(REFUND_REASONS, input.reason)) throw fail('invalid_field', 'Choose why the charge was refunded.', 400);
   if (input.jobPaymentAcknowledged !== undefined && typeof input.jobPaymentAcknowledged !== 'boolean') throw fail('invalid_field', 'Confirm whether the job still counts this charge as paid.', 400);
+  if (input.recordOnJob !== undefined && typeof input.recordOnJob !== 'boolean' || input.recordOnJob === true && input.jobPaymentAcknowledged === true) throw fail('invalid_field', 'Either record the refund on the job here, or confirm the job\'s payment is corrected by hand, not both.', 400);
   if (input.keptCentsAcknowledged !== undefined && (!Number.isSafeInteger(input.keptCentsAcknowledged) || input.keptCentsAcknowledged < 1)) throw fail('invalid_field', 'Confirm the amount the business kept from the partial refund.', 400);
   if (input.tipRefundedFirst !== undefined && typeof input.tipRefundedFirst !== 'boolean') throw fail('invalid_field', 'Say whether the crew tip was refunded first.', 400);
   if (input.appliedElsewhere !== undefined && typeof input.appliedElsewhere !== 'boolean') throw fail('invalid_field', 'Say whether the charge\'s service part was applied to another job or settled outside the Hub.', 400);
@@ -287,8 +301,8 @@ function validate(input, actor) {
 // refund follow-up ({sessionId}:refund or {sessionId}:refund:N) is about, which
 // the review also names.
 function heldSession(review) {
-  const id = String(review.id || ''), named = review.sessionId === undefined ? id : String(review.sessionId), followUp = FOLLOW_UP.exec(id);
-  if (SESSION_ID.test(named) && (id === named || (followUp && followUp[1] === named && id === refundFollowUpId(named, followUp[2] ? Number(followUp[2]) : 1)))) return named;
+  const id = String(review.id || ''), named = review.sessionId === undefined ? id : String(review.sessionId), followUp = FOLLOW_UP.exec(id), dispute = DISPUTE.exec(id);
+  if (SESSION_ID.test(named) && (id === named || (followUp && followUp[1] === named && id === refundFollowUpId(named, followUp[2] ? Number(followUp[2]) : 1)) || (dispute && dispute[1] === named && review.reason === 'payment_disputed'))) return named;
   throw fail('stripe_mismatch', 'This review does not name the Stripe charge it holds. Nothing was saved.', 409);
 }
 
@@ -314,7 +328,7 @@ async function verifiedRefund(stripe, review) {
 }
 
 function snapshot(review) {
-  const keys = ['status', 'reason', 'resolution', 'amountCents', 'tipCents', 'jobId', 'plan', 'candidateCustomerIds', 'refundReason', 'refundedCents', 'refundFull', 'keptCents', 'keptServiceCents', 'keptTipCents', 'tipRefundedFirst', 'recordedOnJobAtResolution', 'settledEarlierAtResolution', 'serviceAppliedElsewhere', 'stripeCheck', 'linkedCustomerId', 'linkedJobId', 'dismissReason'];
+  const keys = ['status', 'reason', 'resolution', 'amountCents', 'tipCents', 'jobId', 'plan', 'candidateCustomerIds', 'refundReason', 'refundedCents', 'refundFull', 'keptCents', 'keptServiceCents', 'keptTipCents', 'tipRefundedFirst', 'recordedOnJobAtResolution', 'settledEarlierAtResolution', 'serviceAppliedElsewhere', 'stripeCheck', 'jobRefundCents', 'disputeStatus', 'disputeAmountCents', 'linkedCustomerId', 'linkedJobId', 'dismissReason'];
   return Object.fromEntries(keys.filter(key => review[key] !== undefined).map(key => [key, review[key]]));
 }
 
@@ -324,7 +338,7 @@ function resolvedView(review, actor) {
   return {
     id: review.id, kind: payment ? 'payment' : 'membership', revision: text(review.revision, 80), status: text(review.status, 30), resolution: text(review.resolution, 30),
     resolvedAt: text(review.resolvedAt, 40), resolvedBy: text(review.resolvedBy, 80), note: review.resolution === 'refunded' && !canRecordRefund(actor) ? '' : text(review.resolutionNote, 500),
-    ...(payment ? { jobId: text(review.jobId, 180), amountCents: count(review.amountCents), refundReason: text(review.refundReason, 40), refundedCents: count(review.refundedCents), refundFull: review.refundFull === true, keptCents: count(review.keptCents), recordedOnJobAtResolution: review.recordedOnJobAtResolution === true, ...(review.settledEarlierAtResolution === true ? { settledEarlierAtResolution: true } : {}), ...(review.serviceAppliedElsewhere === true ? { serviceAppliedElsewhere: true } : {}), ...(review.stripeCheck ? { stripeCheck: text(review.stripeCheck, 30) } : {}),
+    ...(payment ? { jobId: text(review.jobId, 180), amountCents: count(review.amountCents), refundReason: text(review.refundReason, 40), refundedCents: count(review.refundedCents), refundFull: review.refundFull === true, keptCents: count(review.keptCents), recordedOnJobAtResolution: review.recordedOnJobAtResolution === true, ...(review.settledEarlierAtResolution === true ? { settledEarlierAtResolution: true } : {}), ...(review.serviceAppliedElsewhere === true ? { serviceAppliedElsewhere: true } : {}), ...(review.stripeCheck ? { stripeCheck: text(review.stripeCheck, 30) } : {}), ...(count(review.jobRefundCents) !== null ? { jobRefundCents: review.jobRefundCents } : {}), ...(review.disputeStatus ? { disputeStatus: text(review.disputeStatus, 40) } : {}),
       ...(tipOf(review) !== 0 ? { tipCents: tipOf(review), ...(review.keptServiceCents !== undefined || review.keptTipCents !== undefined ? { keptServiceCents: count(review.keptServiceCents), keptTipCents: count(review.keptTipCents) } : {}), ...(review.tipRefundedFirst === true ? { tipRefundedFirst: true } : {}) } : {}) }
       : { linkedCustomerId: text(review.linkedCustomerId, 180), linkedJobId: text(review.linkedJobId, 180), dismissReason: text(review.dismissReason, 40) }),
   };
@@ -421,8 +435,65 @@ function serviceFirst(review, missing) {
   return fail('service_not_recorded', `Not on the job: closing this review lets the job's ${Number.isSafeInteger(missing.jobBalanceCents) ? `${usd(missing.jobBalanceCents)} ` : ''}balance be paid again. First record ${service} under Estimates & payments${tipCents > 0 ? ` (never the ${usd(tipCents)} tip)` : ''}; ${usd(missing.recordedSinceCents)} recorded since the hold. Or tick that it went to another job or outside the Hub. Nothing was saved.`, 409,
     { amountCents: count(review.amountCents), tipCents, serviceCents: missing.keptServiceCents, recordedSinceCents: missing.recordedSinceCents, jobBalanceCents: missing.jobBalanceCents });
 }
+// A chargeback the owner recorded on the job for this dispute (money-service payment.record_refund with its dispute ID).
+const chargebackOnJob = (job, disputeId) => typeof disputeId === 'string' && Boolean(disputeId) && (Array.isArray(job?.payment?.refunds) ? job.payment.refunds : []).some(row => row?.reference === disputeId);
+// What Stripe shows for a dispute review's card dispute now. A test-mode dispute Stripe cannot show to the configured account
+// is read from the review (the latest signed Stripe event), owner-only like any unchecked close; a live one never is.
+async function stripeDispute(stripe, review) {
+  try {
+    if (!stripe) throw fail('stripe_unconfigured', 'Stripe is not configured, so this dispute cannot be checked. Nothing was saved. Ask the owner to set the Stripe key, then try again.', 409);
+    if (!/^(?:dp|du)_[A-Za-z0-9_]{1,160}$/.test(String(review.disputeId || ''))) throw fail('stripe_mismatch', 'This review does not name the Stripe dispute it holds. Nothing was saved.', 409);
+    const dispute = await stripe(`disputes/${encodeURIComponent(review.disputeId)}`);
+    if (dispute.id !== review.disputeId || (dispute.payment_intent?.id ?? dispute.payment_intent) !== review.paymentIntentId || typeof dispute.status !== 'string') throw fail('stripe_mismatch', 'Stripe returned a different dispute than the one held for review. Nothing was saved.', 409);
+    return { status: text(dispute.status, 40), amountCents: count(dispute.amount) ?? count(review.disputeAmountCents) };
+  } catch (error) {
+    const unseen = unseenCharge(error, stripe, review);
+    if (!unseen) throw liveCharge(review) ? liveUnchecked(error, stripe) : error;
+    return { status: text(review.disputeStatus, 40), amountCents: count(review.disputeAmountCents), unchecked: unseen };
+  }
+}
+// A card dispute is closed by the owner once Stripe shows how it ended. A lost dispute on a charge the job counts as paid
+// needs its chargeback on the job first (Record a refund or chargeback, with the dispute ID), so closing it never leaves
+// the job counting money the bank took back.
+async function reconcileDispute({ store, review, input, actor, stripe, now }) {
+  if (!canRecordRefund(actor)) throw fail('owner_required', 'A card dispute takes money back from the business, so only the owner closes it.', 403);
+  const comment = note(input.note, { required: true, label: 'A note on how the dispute ended' });
+  const job = await heldJob(store, review), onJob = recordedOnJob(job, heldSession(review)), dispute = await stripeDispute(stripe, review);
+  if (dispute.status === 'lost' && onJob && !chargebackOnJob(job, review.disputeId)) {
+    throw fail('chargeback_not_recorded', `Stripe shows this dispute lost${Number.isSafeInteger(dispute.amountCents) ? ` (${usd(dispute.amountCents)})` : ''}, and the job still counts the charge as paid. Record the chargeback on the job under Estimates & payments first (Record a refund or chargeback, Stripe ID ${review.disputeId}), then close this review. Nothing was saved.`, 409,
+      { disputeId: review.disputeId, disputeStatus: 'lost', disputeAmountCents: dispute.amountCents, recordedOnJob: true });
+  }
+  return { patch: { resolution: 'reconciled', resolutionNote: comment, recordedOnJobAtResolution: onJob, disputeStatus: dispute.status, ...(dispute.unchecked ? { stripeCheck: dispute.unchecked } : {}) }, reason: `Card dispute ${dispute.status || 'status unknown'}: ${comment}`, visibility: 'owner', marks: jobMark(job, now) };
+}
+// The service money a refund review takes back from a charge the job counts as paid: what Stripe shows refunded beyond what
+// the charge's earlier close settled, less any crew tip it refunded (tips are never taken off the job's service money).
+// null when that cannot be read.
+function serviceRefunded(review, refund, split) {
+  const tipCents = tipOf(review), prior = priorOf(review);
+  if (tipCents === 0) return refund.refundedCents - prior.prior;
+  const before = prior.prior === 0 ? serviceOf(count(review.amountCents), tipCents) : prior.keptServiceCents !== undefined && refund.refundedCents >= prior.prior ? prior.keptServiceCents : null;
+  const after = refund.full ? 0 : split.keptServiceCents;
+  return Number.isSafeInteger(before) && Number.isSafeInteger(after) ? before - after : null;
+}
+// The job write (its money audit, and with paymentEvents its FUN-33 balance crossing) that records this refund on the
+// job in the resolve commit, at the revision read. The owner-only refund note never goes on the job.
+async function refundOnJob(job, review, cents, { input, actor, now, mode, invoiceState, paymentEvents }) {
+  if (!job?.revision || !Number.isSafeInteger(cents) || cents <= 0) throw fail('refund_amount_unknown', 'The service money this refund took back cannot be read from Stripe\'s amounts. Record it on the job under Estimates & payments (Record a refund or chargeback), then record the refund here confirming the job is corrected. Nothing was saved.', 409);
+  const actorId = String(actor.user).toLowerCase(), via = actor.via === 'mcp' ? 'mcp' : 'hub', reason = input.reason === 'exceeds_balance' ? 'overpaid' : input.reason;
+  let planned;
+  try { planned = refundJobPatch(job, { amountCents: cents, method: 'stripe_refund', reason, reviewId: review.id, refundedAt: now, by: actorId, requestId: input.requestId, now, unified: mode === 'unified', invoiceState }); }
+  catch (error) { if (/^money_/.test(error?.code || '')) throw fail(`job_${error.code.slice('money_'.length)}`, `${error.message} Nothing was saved.`, error.status || 409, error.details); throw error; }
+  const patch = { ...planned.patch, paymentReviewResolvedAt: now, updatedAt: now }, events = [];
+  if (paymentEvents) {
+    const recorded = await moneyEventWrites({ before: job, after: { ...job, ...patch }, now, idempotencyKey: { kind: 'requestId', value: input.requestId }, actor: { id: actorId, kind: 'human', role: actor.role }, via, source: { collection: STRIPE_REVIEW_OPERATIONS, id: input.requestId.toLowerCase() }, reason: 'refund' });
+    Object.assign(patch, recorded.patch); events.push(...recorded.writes);
+  }
+  const audit = auditWrite({ actor: { id: actorId, kind: 'human', role: actor.role }, via, action: 'money.payment.record_refund', entity: { collection: 'jobs', id: job.id }, before: moneySnapshot(job), after: moneySnapshot({ ...job, ...patch }), requestId: input.requestId, reason: `Review queues: ${planned.reason}`, visibility: 'business', now });
+  return [{ collection: 'jobs', id: job.id, revision: job.revision, patch }, audit, ...events];
+}
 const PLANS = {
   async 'payment.reconcile'({ store, review, input, actor, stripe, now, mode }) {
+    if (disputeOf(review)) return reconcileDispute({ store, review, input, actor, stripe, now });
     // A refund is the owner's to record (checked against Stripe, owner-only note and audit), never a business-visible reconcile.
     const owner = canRecordRefund(actor);
     if (review.reason === 'payment_refunded' && !owner) throw fail('owner_required', OWNER_REFUND, 403);
@@ -463,11 +534,14 @@ const PLANS = {
     const exit = review.reason === 'payment_refunded', why = exit ? `Stripe no longer shows a refund${comment ? `: ${comment}` : ''}` : comment;
     return { patch: { resolution: 'reconciled', resolutionNote: comment, recordedOnJobAtResolution: onJob, ...applied }, reason: `${why}${saying(applied)}` || null, ...(exit ? { visibility: 'owner' } : {}), marks: jobMark(job, now) };
   },
-  async 'payment.refund'({ store, review, input, actor, stripe, now, mode }) {
+  async 'payment.refund'({ store, review, input, actor, stripe, now, mode, invoiceState, paymentEvents }) {
     if (!canRecordRefund(actor)) throw fail('owner_required', 'Only the owner can record a refund.', 403);
+    if (disputeOf(review)) throw fail('dispute_not_refund', 'A card dispute is not a Stripe refund. If it was lost, record the chargeback on the job under Estimates & payments (Record a refund or chargeback, with the dispute ID), then mark this review reconciled. Nothing was saved.', 409);
     const comment = note(input.note), job = await heldJob(store, review), onJob = recordedOnJob(job, heldSession(review));
-    // Recording the refund never changes the job, which still counts a charge already on it as paid.
-    if (onJob && input.jobPaymentAcknowledged !== true) throw fail('refund_on_job', 'This charge is already counted as paid on the job, and recording the refund here does not change the job. Confirm that you will correct the job\'s payment, then record the refund.', 409, { recordedOnJob: true });
+    // The job still counts a charge already on it as paid: the refund is recorded on the job in this commit (recordOnJob), or
+    // the owner confirms the job's payment is corrected by hand (jobPaymentAcknowledged).
+    if (onJob && input.jobPaymentAcknowledged !== true && input.recordOnJob !== true) throw fail('refund_on_job', 'This charge is already counted as paid on the job. Record the refund on the job here too (its paid total drops by the service money refunded), or confirm that you will correct the job\'s payment by hand, then record the refund.', 409, { recordedOnJob: true });
+    if (input.recordOnJob === true && !onJob) throw fail('refund_not_on_job', 'This charge is not counted as paid on the job, so there is nothing to take off the job. Record the refund without it. Nothing was saved.', 409, { recordedOnJob: false });
     // A follow-up of a charge not on its job: the earlier close in its chain already settled what the charge kept (the
     // money kept recorded on the job by hand, or the charge applied elsewhere), so this further refund is corrected where
     // that money was put, exactly like a charge on the job; nothing more is recorded on the job first.
@@ -490,10 +564,13 @@ const PLANS = {
     const where = onJob ? ` (${shown}${kept ? `${kept}; ` : ''}the job still counts this charge as paid)`
       : settledEarlier ? ` (${shown}${kept ? `${kept}; ` : ''}an earlier review of this charge was closed: what it kept is on the job, recorded by hand, or on another job)`
         : refund.full ? '' : ` (${shown}${kept || `the ${usd(refund.keptCents)} kept is not on the job`})`;
+    // Recorded on the job too: the service money this review refunds comes off the job's paid total in the same commit.
+    const jobRefundCents = input.recordOnJob === true ? serviceRefunded(review, refund, split) : null;
+    const corrected = input.recordOnJob === true ? await refundOnJob(job, review, jobRefundCents, { input, actor, now, mode, invoiceState, paymentEvents }) : [];
     // Refund notes and the audit reason are owner-only.
     return {
-      patch: { resolution: 'refunded', refundReason: input.reason, resolutionNote: comment, refundedCents: refund.refundedCents, refundFull: refund.full, keptCents: refund.keptCents, ...(refund.full ? {} : split), ...(!refund.full && tipFirst ? { tipRefundedFirst: true } : {}), recordedOnJobAtResolution: onJob, ...(settledEarlier ? { settledEarlierAtResolution: true } : {}) },
-      reason: `${REFUND_REASONS[input.reason]}${comment ? `: ${comment}` : ''}${where}`, visibility: 'owner', marks: jobMark(job, now),
+      patch: { resolution: 'refunded', refundReason: input.reason, resolutionNote: comment, refundedCents: refund.refundedCents, refundFull: refund.full, keptCents: refund.keptCents, ...(refund.full ? {} : split), ...(!refund.full && tipFirst ? { tipRefundedFirst: true } : {}), recordedOnJobAtResolution: onJob, ...(settledEarlier ? { settledEarlierAtResolution: true } : {}), ...(corrected.length ? { jobRefundCents } : {}) },
+      reason: `${REFUND_REASONS[input.reason]}${comment ? `: ${comment}` : ''}${corrected.length ? ` (${usd(jobRefundCents)} taken off the job's paid total)` : where}`, visibility: 'owner', marks: jobMark(job, now), writes: corrected,
     };
   },
   async 'membership.link'({ store, review, input, actor, now }) {
@@ -528,7 +605,8 @@ const PLANS = {
 // customer's Pay button comes back; the held charge itself is never booked. Only
 // a tipped portal review reads the ledger, so every other resolution is unchanged.
 async function releaseHeldCheckout(store, review, now) {
-  if (review.kind !== CHECKOUT_KINDS.portal || !(tipOf(review) > 0) || !safeId(review.jobId)) return [];
+  // A card dispute review holds no checkout: closing it never releases the charge's own hold.
+  if (disputeOf(review) || review.kind !== CHECKOUT_KINDS.portal || !(tipOf(review) > 0) || !safeId(review.jobId)) return [];
   const sessionId = heldSession(review), ledger = await store.read(PORTAL_CHECKOUT_COLLECTION, review.jobId);
   if (!ledger?.revision || ledger.status !== 'held' || ledger.sessionId !== sessionId) return [];
   return [{ collection: PORTAL_CHECKOUT_COLLECTION, id: review.jobId, revision: ledger.revision, patch: { status: 'settled', settledAt: now, settledBy: 'review_resolved' } }];
@@ -540,7 +618,7 @@ async function releaseHeldCheckout(store, review, now) {
 // review never reaches this function's commit path, so it continues to block
 // any replacement collection.
 async function releaseReviewedFieldCard(store, review, now, checkedJobRevision) {
-  if (review.kind !== CHECKOUT_KINDS.crew || !safeId(review.jobId)) return [];
+  if (disputeOf(review) || review.kind !== CHECKOUT_KINDS.crew || !safeId(review.jobId)) return [];
   const sessionId = heldSession(review);
   const [claim, session, job] = await Promise.all([
     store.read('fieldPaymentCardCheckouts', review.jobId),
@@ -557,12 +635,12 @@ async function releaseReviewedFieldCard(store, review, now, checkedJobRevision) 
   ];
 }
 
-async function execute(store, actor, input, collection, now, fingerprint, receiptId, stripe, mode) {
+async function execute(store, actor, input, collection, now, fingerprint, receiptId, stripe, mode, invoiceState, paymentEvents) {
   const review = await store.read(collection, input.reviewId);
   if (!review) throw fail('not_found', 'This review no longer exists. Refresh the review queue.', 404);
   if (review.status !== 'open') throw fail('already_resolved', 'This review was already resolved. Refresh the review queue.', 409, { resolution: text(review.resolution, 30) });
   if (review.revision !== input.expectedRevision) throw fail('revision_conflict', 'This review changed after you opened it. Refresh and review it again.', 409);
-  const plan = await PLANS[input.action]({ store, review, input, actor, now, stripe, mode });
+  const plan = await PLANS[input.action]({ store, review, input, actor, now, stripe, mode, invoiceState, paymentEvents });
   const released = collection === PAYMENT_REVIEW_COLLECTION ? await releaseHeldCheckout(store, review, now) : [];
   const checkedJobRevision = (plan.marks || []).find(mark => mark.collection === 'jobs' && mark.id === review.jobId)?.revision;
   const fieldReleased = collection === PAYMENT_REVIEW_COLLECTION ? await releaseReviewedFieldCard(store, review, now, checkedJobRevision) : [];
@@ -582,8 +660,10 @@ async function execute(store, actor, input, collection, now, fingerprint, receip
 }
 
 /** Resolve one open payment or membership review. `now` is an ISO string; `stripe` is stripeReviewClient(env) or a fake;
- * `totalsMode` is MONEY_UNIFIED_TOTALS (money-core moneyTotalsMode), the money a new checkout would charge the job. */
-export async function resolveStripeReview(store, actor, input, now = new Date().toISOString(), { stripe = null, totalsMode = 'off' } = {}) {
+ * `totalsMode` is MONEY_UNIFIED_TOTALS (money-core moneyTotalsMode), the money a new checkout would charge the job;
+ * `invoiceState` (MONEY_INVOICE_STATE_ENABLED) and `paymentEvents` (FUNNEL_PAYMENT_EVENTS_ENABLED with MONEY_API_ENABLED) apply to
+ * a refund recorded on the job as they do to the money API. */
+export async function resolveStripeReview(store, actor, input, now = new Date().toISOString(), { stripe = null, totalsMode = 'off', invoiceState = false, paymentEvents = false } = {}) {
   requireDispatcher(actor);
   const collection = validate(input, actor), actorId = String(actor.user).toLowerCase();
   const fingerprint = await digest({ actor: actorId, input }), receiptId = input.requestId.toLowerCase();
@@ -598,7 +678,7 @@ export async function resolveStripeReview(store, actor, input, now = new Date().
   }
   const prior = await replay(true);
   if (prior) return prior;
-  try { return result(await execute(store, actor, input, collection, now, fingerprint, receiptId, stripe, totalsMode), false); }
+  try { return result(await execute(store, actor, input, collection, now, fingerprint, receiptId, stripe, totalsMode, invoiceState === true, paymentEvents === true), false); }
   catch (error) {
     if (FINAL.has(error.code)) throw error;
     // A lost commit response (or a racing copy of this request) may have saved: the receipt is the proof.

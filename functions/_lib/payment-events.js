@@ -67,8 +67,9 @@ export function paymentKind(job, { purpose, amountCents, occurredAt, tipCents = 
  * Paid-in-full from ledger balance math: paid is true when a positive total's
  * balance is 0 and the recorded money is verified, false while a balance is
  * open, and null when the balance cannot be computed (unknown is never "paid").
- * Refunds recorded on the job that the ledger does not net yet
- * (money_refunds_unreconciled) leave the balance unknown until FUN-17 nets them.
+ * Refunds recorded on the job that the ledger does not net
+ * (money_refunds_unreconciled) leave the balance unknown; the ones the money API
+ * records are netted (money-core nettedRefunds), so their balance is known.
  */
 export function paidInFullState(job) {
   const totals = customerMoneyTotals(job), revision = job?.estimate?.revision;

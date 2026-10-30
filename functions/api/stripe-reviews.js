@@ -14,8 +14,9 @@
  * owner-only; a live-mode charge is never closed without the check, so it stays
  * 409 stripe_review_stripe_unconfigured / stripe_review_stripe_not_found for
  * everyone until the live key is set), payment.refund {reason, note, jobPaymentAcknowledged?,
- * keptCentsAcknowledged?} (owner only, confirmed against Stripe; the first
- * acknowledgement is required when the charge is already on the job, the second
+ * keptCentsAcknowledged?, recordOnJob?} (owner only, confirmed against Stripe; when the
+ * charge is already on the job, either recordOnJob:true takes the service money refunded off the job's paid total
+ * in the same commit, or the first acknowledgement says the job is corrected by hand; the second
  * (the exact cents kept, from the 409 stripe_review_refund_partial details) when
  * Stripe shows only part of a charge that is not on the job refunded; on a
  * tipped charge, tipRefundedFirst? says the crew tip was refunded before the
@@ -26,13 +27,15 @@
  * crew return and webhook never put that charge on the job afterwards. A
  * payment reviewId is the checkout session ID, or {sessionId}:refund (then
  * {sessionId}:refund:2, :3 ...) for a refund Stripe showed after that charge's
- * review was closed, beyond what it settled (each GET row names it in reviewId).
+ * review was closed, beyond what it settled (each GET row names it in reviewId), or {sessionId}:dispute
+ * ({sessionId}:dispute:closed) for a card dispute, which the owner closes with payment.reconcile.
  */
 import { getHubSession } from '../_lib/hub-session.js';
 import { requireDispatcher } from '../_lib/dispatch-service.js';
 import { paymentReviewCheckoutBlockEnabled } from '../_lib/customer-payments.js';
 import { resolveStripeReview, stripeReviewClient, stripeReviewOverview, stripeReviewStorage } from '../_lib/stripe-reviews.js';
-import { moneyTotalsMode } from '../_lib/money-core.js';
+import { moneyInvoiceStateEnabled, moneyTotalsMode } from '../_lib/money-core.js';
+import { funnelPaymentEventsEnabled } from '../_lib/payment-events.js';
 
 const MAX_BYTES = 8192;
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -83,7 +86,8 @@ export function stripeReviewHandlers({ session = getHubSession, storage = stripe
         try { input = JSON.parse(raw); } catch { return reply(400, { ok: false, code: 'stripe_review_json_invalid', error: 'The review request was incomplete. Refresh and try again.' }); }
         // Both payment actions check the held charge in Stripe (read-only) before anything is saved, and measure a tipped
         // charge's service part against the balance a new checkout would charge (MONEY_UNIFIED_TOTALS).
-        return reply(200, await resolveStripeReview(storage(env), actor, input, now().toISOString(), { stripe: ['payment.refund', 'payment.reconcile'].includes(input?.action) ? stripe(env) : null, totalsMode: moneyTotalsMode(env) }));
+        // A refund recorded on the job (recordOnJob) follows the money API's invoice and funnel-event rules.
+        return reply(200, await resolveStripeReview(storage(env), actor, input, now().toISOString(), { stripe: ['payment.refund', 'payment.reconcile'].includes(input?.action) ? stripe(env) : null, totalsMode: moneyTotalsMode(env), invoiceState: moneyInvoiceStateEnabled(env), paymentEvents: funnelPaymentEventsEnabled(env) }));
       } catch (error) { return failure(error); }
     },
   };
