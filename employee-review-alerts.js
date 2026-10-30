@@ -64,13 +64,16 @@ function onJobRefundCopy(rows){
   const total=known?' ('+(prior?money(rows.reduce((sum,row)=>sum+row.refundedCents-priorOf(row),0))+' more to reduce in all, '+money(prior)+' recorded earlier':money(rows.reduce((sum,row)=>sum+row.refundedCents,0))+' refunded in all')+')':'';
   return 'Stripe shows refunds on '+rows.length+' charges their jobs already count as paid'+total+'. Only the owner settles them: record each refund, then reduce each job’s payment by the amount refunded'+(prior?', less any refund recorded earlier on that charge':'')+'.';
 }
-function paymentCopy(rows){
+function paymentCopy(all){
+  // Card disputes (chargebacks) are their own item: the owner closes each once Stripe shows how it ended.
+  const disputes=all.filter(row=>row?.reason==='payment_disputed'),rows=all.filter(row=>row?.reason!=='payment_disputed');
   const onJob=rows.filter(row=>row?.recordedOnJob===true),off=rows.filter(row=>row?.recordedOnJob!==true),later=off.filter(followUp),held=off.filter(row=>!followUp(row)),refunded=onJob.filter(row=>row?.reason==='payment_refunded'),settled=onJob.length-refunded.length,parts=[];
   if(held.length)parts.push(heldCopy(held));
   if(later.length)parts.push(laterCopy(later));
   if(refunded.length)parts.push(onJobRefundCopy(refunded));
   // A held charge a crew return has since put on its job only needs its review closed.
   if(settled)parts.push(settled===1?'One held charge is now on its job: mark it reconciled to close its review.':settled+' held charges are now on their jobs: mark them reconciled to close their reviews.');
+  if(disputes.length)parts.push((disputes.length===1?'A customer disputed a card charge with their card company.':disputes.length+' card charges are disputed by customers.')+' Only the owner closes a dispute review, once Stripe shows how it ended; a lost one needs its chargeback recorded on the job under Estimates & payments first.');
   return parts.join(' ');
 }
 async function read(path){

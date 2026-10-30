@@ -47,9 +47,17 @@ import { jobWaiver, pickupWaiverProblem } from './pickup-minimum.js';
  * down exactly as before the flag under its own number); on any other job it
  * records the payment and ledger alone, and the DTO's invoice status reads
  * not_issued for an invoice a payment wrote.
+ * payment.record_refund (refundJobPatch) records money that went back to the customer (a Stripe refund, a lost card
+ * dispute, cash or a check): a negative 'refund' ledger entry and a payment.refunds record, the paid total and an
+ * invoice that takes payments made net. It moves no money and messages no one; the refund itself is made in Stripe.
  */
-export const MONEY_ACTIONS = Object.freeze(['estimate.save', 'estimate.record_approval', 'estimate.mark_sent', 'deposit.record_offline', 'payment.record_offline', 'invoice.issue', 'invoice.void', 'change_order.void', 'costs.save']);
+export const MONEY_ACTIONS = Object.freeze(['estimate.save', 'estimate.record_approval', 'estimate.mark_sent', 'deposit.record_offline', 'payment.record_offline', 'payment.record_refund', 'invoice.issue', 'invoice.void', 'change_order.void', 'costs.save']);
 export const OFFLINE_METHODS = Object.freeze(['cash', 'check', 'card_terminal', 'bank_transfer', 'other']);
+// payment.record_refund: how the money left (a Stripe refund, a lost card dispute, cash or a check handed back) and why.
+export const REFUND_METHODS = Object.freeze(['stripe_refund', 'chargeback', 'cash', 'check', 'other']);
+export const MONEY_REFUND_REASONS = Object.freeze({ duplicate_charge: 'Duplicate charge', overpaid: 'More than the job balance', customer_request: 'Customer asked for a refund', job_cancelled: 'Job cancelled', dispute_lost: 'Card dispute lost (chargeback)', other: 'Other' });
+// A Stripe refund (re_, pyr_) or dispute (dp_, du_) ID: one refund record per ID on a job.
+const STRIPE_REFUND_REF = /^(?:re|pyr|dp|du)_[A-Za-z0-9_]{1,120}$/;
 export const SENT_CHANNELS = Object.freeze(['email', 'text', 'in_person', 'phone', 'other']);
 export const COST_KEYS = Object.freeze(['labor', 'disposal', 'materials', 'fuel', 'processing', 'other']);
 const OTHER_COST_KEYS = COST_KEYS.filter(key => key !== 'labor');
@@ -62,12 +70,12 @@ const ESTIMATE_KINDS = new Set(['service', 'product', 'labor', 'disposal', 'fee'
 const COMMON = ['action', 'requestId', 'jobId', 'expectedRevision', 'actorId'];
 const FIELDS = {
   'estimate.save': ['lineItems', 'scope', 'depositCents', 'validUntil'], 'estimate.record_approval': ['approvedBy'], 'estimate.mark_sent': ['channel', 'note'],
-  'deposit.record_offline': ['amountCents', 'method', 'reference', 'receivedAt'], 'payment.record_offline': ['amountCents', 'method', 'reference', 'receivedAt'],
+  'deposit.record_offline': ['amountCents', 'method', 'reference', 'receivedAt'], 'payment.record_offline': ['amountCents', 'method', 'reference', 'receivedAt'], 'payment.record_refund': ['amountCents', 'method', 'reason', 'note', 'stripeRef', 'refundedAt'],
   'invoice.issue': ['dueDate', 'customerReference'], 'invoice.void': ['reason'], 'change_order.void': ['changeOrderId', 'reason'], 'costs.save': ['costs', 'expectedLaborRevision'],
 };
 const FINAL = new Set(['money_idempotency_conflict', 'money_changed_since_operation', 'money_actor_changed']);
 // Why an action can reopen a paid-in-full balance (reasonCodes.balanceReopened).
-const REOPEN_REASONS = { 'estimate.save': 'estimate_revised', 'estimate.record_approval': 'resigned' };
+const REOPEN_REASONS = { 'estimate.save': 'estimate_revised', 'estimate.record_approval': 'resigned', 'payment.record_refund': 'refund' };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOTAL_KEYS = ['quoteCents', 'approvedChangeCents', 'totalCents', 'paidCents', 'tipCents', 'appliedCents', 'balanceCents', 'overpaidCents', 'depositRequiredCents', 'depositPaidCents', 'depositDueCents', 'dueNowCents', 'purpose', 'complete', 'issues'];
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -295,6 +303,52 @@ const recordOffline = kind => async ({ store, job, input, actor, now, fieldRevie
   return { patch, writes, mirrors, warnings, reason: `${usd(amount)} ${input.method} ${reference}`, payment: { amountCents: amount, kind: deposit ? 'deposit' : 'balance', method: input.method }, clock: input.receivedAt === undefined ? {} : { clockSource: 'attested', occurredAt: receivedAt } };
 };
 
+/**
+ * A refund or chargeback taken back out of the job's service money, as the job patch that records it (pure, no clock):
+ * payment.amount drops by amountCents, payment.refunds[] gets the record money-core nets (nettedRefunds) and the
+ * refund holds read (refundsRecorded: commissions, field pay, tips, job actuals), the stored ledger gets a 'refund'
+ * entry, and an invoice that takes payments gets its paid, balance and status, the way a payment sets them. It never
+ * creates or numbers an invoice and never changes the job's status. Tips are not refunded here: the amount is at most
+ * the money applied to the service (paid minus tips). One record per Stripe refund or dispute ID (stripeRef) and per
+ * Review queues review (reviewId). Used by payment.record_refund and by a Review queues refund recorded on the job.
+ */
+export function refundJobPatch(job, { amountCents, method, reason, note = '', stripeRef = '', reviewId = '', refundedAt, by, requestId, now, unified = false, invoiceState = false }) {
+  if (paymentNeedsVerification(job)) throw fail('payment_needs_review', 'A payment on this job is recorded but not verified, so a refund cannot be recorded yet. Verify the payment first.', 409);
+  const totals = customerMoneyTotals(job, { unified });
+  if ([totals.totalCents, totals.paidCents, totals.recordedCents, totals.appliedCents].includes(null)) throw fail('total_unknown', 'The quote and recorded payments must be readable before a refund is recorded. Review this job.', 409, { issues: totals.issues });
+  if (amountCents > totals.appliedCents) throw fail('amount_exceeds_paid', `The refund cannot be more than the ${usd(totals.appliedCents)} paid toward the service. Crew tips are not refunded here.`, 409, { appliedCents: totals.appliedCents });
+  const payment = plain(job.payment) ? job.payment : {}, prior = Array.isArray(payment.refunds) ? payment.refunds : [];
+  const id = `refund:${stripeRef || reviewId || requestId.toLowerCase()}`;
+  if (prior.some(row => plain(row) && (row.id === id || stripeRef && row.reference === stripeRef))) throw fail('refund_duplicate', 'This refund is already recorded on the job.', 409);
+  const appliedCents = totals.appliedCents - amountCents, balanceCents = Math.max(0, totals.totalCents - appliedCents);
+  const row = { id, amountCents, amount: amountCents / 100, method, reason, ...(note ? { note } : {}), reference: stripeRef, refundedAt, recordedBy: by, requestId, ...(reviewId ? { reviewId } : {}) };
+  const nextPayment = { ...payment, amount: (totals.recordedCents - amountCents) / 100, refunds: [...prior, row] };
+  const entry = { ...paymentEntry({ id, kind: 'refund', amountCents, method, processorRef: stripeRef, at: refundedAt, by }), processor: '', verified: true, source: 'hub_offline' };
+  const ledger = reconcileLedger({ ...job, payment: nextPayment }, [entry]), patch = { payment: nextPayment, ...ledgerPatch(ledger, now) }, warnings = [], mirrors = [];
+  if (ledger.unreconciledCents !== 0 || ledger.issues.some(issue => issue !== 'money_refund_recorded')) warnings.push({ code: 'ledger_needs_review', message: 'The refund was recorded. Older payment records on this job need review before the ledger reconciles.', details: { issues: ledger.issues } });
+  const invoice = plain(job.invoice) ? job.invoice : null;
+  if (invoice && given(invoice.amount) && !['void', 'superseded', 'draft'].includes(String(invoice.status || '').toLowerCase()) && (!invoiceState || invoiceTakesPayment(invoice))) {
+    const status = balanceCents === 0 ? 'paid' : appliedCents > 0 ? 'partial' : 'issued';
+    patch.invoice = { ...invoice, status, amount: totals.totalCents / 100, amountCents: totals.totalCents, paid: appliedCents / 100, paidCents: appliedCents, balance: balanceCents / 100, balanceCents, updatedAt: now };
+    if (safeId(job.customerId)) mirrors.push({ collection: 'customers', id: job.customerId, exists: true, patch: { latestJobId: job.id, lastPaymentStatus: status, lastPaymentBalance: balanceCents / 100, paymentUpdatedAt: now, updatedAt: now } });
+  }
+  if (balanceCents > 0) warnings.push({ code: 'balance_reopened', message: `The job now shows a ${usd(balanceCents)} balance. If the price came down instead, revise the estimate.` });
+  return { patch, mirrors, warnings, reason: `${usd(amountCents)} ${method}${stripeRef ? ` ${stripeRef}` : ''}: ${MONEY_REFUND_REASONS[reason] || reason}${note ? `: ${note}` : ''}` };
+}
+
+function recordRefund({ store, job, input, actor, now }) {
+  const amountCents = whole(input.amountCents, 'The refund', 1, MAX_TOTAL_CENTS);
+  if (!REFUND_METHODS.includes(input.method)) throw fail('invalid_refund_method', `Choose how the money went back: ${REFUND_METHODS.join(', ')}.`);
+  if (!Object.hasOwn(MONEY_REFUND_REASONS, input.reason)) throw fail('invalid_refund_reason', 'Choose why the money went back.');
+  const note = text(input.note, 'The note', 500, { required: input.reason === 'other', min: input.reason === 'other' ? 3 : 0 });
+  const stripeRef = given(input.stripeRef) && input.stripeRef !== '' ? input.stripeRef : '';
+  if (stripeRef && (typeof stripeRef !== 'string' || !STRIPE_REFUND_REF.test(stripeRef))) throw fail('invalid_stripe_ref', 'Use the Stripe refund ID (re_…) or dispute ID (dp_…), or leave it blank.');
+  const refundedAt = input.refundedAt === undefined ? now : instant(input.refundedAt);
+  if (!refundedAt || Date.parse(refundedAt) > Date.parse(now) + 300000 || store.paymentEvents === true && !funnelTimeAccepted(refundedAt)) throw fail('invalid_refunded_at', 'The refund time must be a valid time that is not in the future.');
+  const plan = refundJobPatch(job, { amountCents, method: input.method, reason: input.reason, note, stripeRef, refundedAt, by: actor.user, requestId: input.requestId, now, unified: unifiedTotals(store), invoiceState: invoiceStateOn(store) });
+  return { ...plan, clock: input.refundedAt === undefined ? {} : { clockSource: 'attested', occurredAt: refundedAt } };
+}
+
 // A job the homeowner signed in person on the 25/75 terms (SIGNED_25_75, walkthrough-handoff.js): its signed schedule,
 // whose 75% remainder is due on the job day, or null for any other job.
 function signedSchedule(job) {
@@ -400,7 +454,7 @@ async function saveCosts({ store, job, input, actor, now }) {
   return plan(saved, move.remove.filter(path => !path.startsWith('costs.')), move.writes, record ? record.laborCents : move.writes.length ? move.writes[0].patch.laborCents : before);
 }
 
-const PLANS = { 'estimate.save': saveEstimate, 'estimate.record_approval': recordApproval, 'estimate.mark_sent': markSent, 'deposit.record_offline': recordOffline('deposit'), 'payment.record_offline': recordOffline('payment'), 'invoice.issue': issueInvoice, 'invoice.void': voidInvoice, 'change_order.void': voidChange, 'costs.save': saveCosts };
+const PLANS = { 'estimate.save': saveEstimate, 'estimate.record_approval': recordApproval, 'estimate.mark_sent': markSent, 'deposit.record_offline': recordOffline('deposit'), 'payment.record_offline': recordOffline('payment'), 'payment.record_refund': recordRefund, 'invoice.issue': issueInvoice, 'invoice.void': voidInvoice, 'change_order.void': voidChange, 'costs.save': saveCosts };
 
 /**
  * Money fields for the audit trail: no signatures, notes or contact details.

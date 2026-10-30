@@ -34,7 +34,8 @@ const TIP_FLOOR_CENTS = 50000;
  * the account's default API version; GET /api/stripe-reviews rows also carry tipCents (0) and serviceCents; with
  * PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED the payment_reviews query also selects sessionId, reason, resolution and
  * tipCents; the portal checkout ledger's createdAt comes from the injected clock; crew/postjob asks
- * GET /api/job-payment?config=tips once per render; and charge.refunded webhooks stay acknowledged and ignored.
+ * GET /api/job-payment?config=tips once per render. (charge.refunded and charge.dispute.* webhooks open Review queues
+ * items for every Hub checkout whatever this flag says; they never write money.)
  * Two Review queues fixes apply whatever the flag, neither changing an amount charged or recorded: a refund Stripe
  * shows after the review of a charge NOT on its job was closed, beyond what that close settled, opens the
  * {sessionId}:refund follow-up exactly as it always did for a charge on its job (instead of answering "already
@@ -56,7 +57,7 @@ const CLOSED_STATUSES = ['cancelled', 'canceled', 'superseded', 'lost'];
 // normal place for a balance tip.
 const TIP_CLOSED_STATUSES = [...CLOSED_STATUSES, 'no_show', 'no-show', 'noshow'];
 /** Why no tip can be added to this job, or '' when one can: never on a cancelled, superseded, lost or no-show job, on
- * a void or superseded invoice, or while refunds are recorded on it (money-core does not reconcile those yet). */
+ * a void or superseded invoice, or once a refund or chargeback is recorded on it (money-core refundsRecorded). */
 export function tipRefusal(job) {
   if (!job || [job.status, job.pipelineStatus].some(status => TIP_CLOSED_STATUSES.includes(String(status || '').toLowerCase()))) return 'This job is closed, so a tip cannot be added.';
   if (['void', 'superseded'].includes(String(job.invoice?.status || '').toLowerCase())) return 'This invoice is no longer open, so a tip cannot be added.';
@@ -184,6 +185,7 @@ export function customerDepositState(job, finance = customerMoneyState(job), mod
 
 // The portal checkout's own rule: throws when no card payment can open, else
 // the customerDepositState it charges. Money documents offer "Pay" only on it.
+// A job with a refund or chargeback recorded on it is never charged by card here (CUSTOMER_PORTAL_MONEY_REVIEW).
 // A Hub quote draft that was not sent in its current revision (P2-07) is never
 // payable, even once the job is completed: the customer has not seen that total.
 // In mode 'unified' it charges money-core's unified figures, and refuses
@@ -197,6 +199,9 @@ export function payable(job, mode = 'off') {
   if (unsentQuoteDraft(job)) throw failure('Your estimate is being updated. Payment opens once Easy Garage Cleaning sends it to you for review.', 409, 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE');
   if (customerPaymentNeedsReview(job)) throw failure('A recorded payment is awaiting team verification. Please wait before paying again.');
   if (job.fieldPaymentCardRequestId) throw failure('A field card checkout is open for this job. Please wait for the team to verify it before paying again.', 409, 'field_card_checkout_open');
+  // A refund or chargeback recorded on the job leaves its balance for the team to settle (collect it again, or lower the
+  // price): a card payment never charges it back on its own, like a tip or a field payment on that job.
+  if (refundsRecorded(job)) throw failure(MONEY_REVIEW_TEXT, 409, 'CUSTOMER_PORTAL_MONEY_REVIEW');
   const status = String(job.customerApproval?.status || job.estimate?.status || job.quoteStatus || '').toLowerCase();
   if (!['accepted', 'approved'].includes(status) && !['completed', 'paid'].includes(String(job.pipelineStatus || job.status || '').toLowerCase())) throw failure('Approve the estimate before paying');
   const due = customerDepositState(job, undefined, mode);
@@ -845,6 +850,46 @@ export async function recordCrewStripePayment(env, checkout, { expectedJobId = '
   return { ...result, payment, invoice, paymentSyncPayload };
 }
 
+
+// A card dispute (chargeback) Stripe reports on a Hub checkout is never written to the job by the webhook: it opens
+// payment_reviews/{sessionId}:dispute for the owner (reason payment_disputed, created once), a later signed Stripe change
+// to that open review updates it under its revision, and a dispute that ends after the owner closed that review opens
+// {sessionId}:dispute:closed, once, so how it ended is never missed. Review queues settles it (stripe-reviews.js); a lost
+// dispute's chargeback is recorded on the job by a person (money-service payment.record_refund). The dispute fields come
+// from the signed event; the checkout is the one read again from Stripe. Returns {reviewOpen}.
+export const disputeReviewId = (sessionId, closed = false) => `${sessionId}:dispute${closed ? ':closed' : ''}`;
+const DISPUTE_ENDED = new Set(['won', 'lost', 'warning_closed']);
+export async function recordStripeDispute(env, checkout, dispute, { now = new Date().toISOString() } = {}) {
+  const kind = checkout?.metadata?.kind;
+  if (![CHECKOUT_KINDS.portal, CHECKOUT_KINDS.crew].includes(kind)) throw failure('Stripe has not verified this job payment', 409, 'payment_unverified');
+  const { jobId, sessionId, tipCents } = verifiedCheckout(checkout, kind), disputeId = clean(dispute?.id), status = clean(dispute?.status, 40);
+  if (!/^(?:dp|du)_[A-Za-z0-9_]+$/.test(disputeId) || !/^[a-z_]{1,40}$/.test(status)) throw failure('Stripe has not verified this dispute', 409, 'payment_unverified');
+  const fields = { disputeId, disputeStatus: status, disputeAmountCents: Number.isSafeInteger(dispute.amount) && dispute.amount > 0 ? dispute.amount : null, disputeReason: clean(dispute.reason, 60), disputeSeenAt: now };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let id = disputeReviewId(sessionId), review = await readPaymentReview(env, sessionId, id);
+    if (review && review.status !== 'open') {
+      // Closed already: only a dispute that has since ended differently opens the one follow-up.
+      if (!DISPUTE_ENDED.has(status) || review.disputeId === disputeId && review.disputeStatus === status) return { reviewOpen: false };
+      id = disputeReviewId(sessionId, true); review = await readPaymentReview(env, sessionId, id);
+      if (review && review.status !== 'open') return { reviewOpen: false };
+    }
+    if (review) {
+      if (review.disputeId === disputeId && review.disputeStatus === status && review.disputeAmountCents === fields.disputeAmountCents) return { reviewOpen: true };
+      const saved = await patchPaymentReview(env, review, { ...fields, updatedAt: now });
+      if (saved === 'saved') return { reviewOpen: true };
+      if (saved === 'failed') break;
+      continue;
+    }
+    const job = await paymentJob(env, jobId), finance = customerMoneyState(job);
+    await recordPaymentReview(env, {
+      sessionId, jobId, kind, reason: 'payment_disputed', status: 'open', amountCents: checkout.amount_total, ...(tipCents ? { tipCents } : {}), currency: 'usd', paymentIntentId: clean(checkout.payment_intent?.id || checkout.payment_intent), livemode: checkout.livemode === true,
+      jobRevision: job.__updateTime, jobTotalCents: cents(finance.total), jobPaidCents: cents(finance.paid), jobBalanceCents: cents(finance.balance),
+      createdBy: kind === CHECKOUT_KINDS.crew ? clean(checkout.metadata?.created_by, 80) : 'customer_portal', recordedBy: 'stripe_webhook', createdAt: now, ...fields,
+    }, id);
+    return { reviewOpen: true };
+  }
+  throw failure('Payment information is temporarily unavailable', 503, 'payment_storage_unavailable');
+}
 
 /**
  * Whether Pay is held for this job right now (the portal GET, with tips on only).

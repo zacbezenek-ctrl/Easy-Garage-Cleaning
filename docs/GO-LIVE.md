@@ -200,7 +200,7 @@ Plus, on egc-api: the B3 secrets, `OPENAI_API_KEY`, `STORAGE_DRIVER=filesystem` 
 
 Card payments already work; this build records them more carefully, so Stripe must be set up fully.
 
-1. Stripe → Developers → Webhooks → the endpoint `https://easygaragecleaning.com/api/stripe-webhook`. It must send `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `invoice.paid`, `invoice.payment_failed` and `customer.subscription.deleted`.
+1. Stripe → Developers → Webhooks → the endpoint `https://easygaragecleaning.com/api/stripe-webhook`. It must send `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `invoice.paid`, `invoice.payment_failed` and `customer.subscription.deleted`, and `charge.refunded`, `charge.dispute.created`, `charge.dispute.updated` and `charge.dispute.closed` so a refund or card dispute made in Stripe reaches Hub > Review queues (they never change a job's money by themselves).
 2. `STRIPE_SECRET_KEY` in Cloudflare Production must be your **live** secret key (or a restricted live key that can read Checkout Sessions and Charges). The webhook now reads every card payment back from Stripe; without the key it answers 503 and Stripe keeps retrying.
 
 **Check it worked:**

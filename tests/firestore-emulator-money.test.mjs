@@ -201,6 +201,20 @@ test('the money API commit, receipt, audit and ledger contracts hold on real Fir
     assert.deepEqual([receipt.scope, receipt.targets.map(row => row.id)], ['numberless_invoice_backfill', [madeUp]]);
     assert.equal((await runNumberlessInvoiceBackfill(strict, { apply: true, now: NOW })).writes.planned, 0, 'a rerun finds 0');
   });
+
+  await t.test('a refund persists the net paid total, its refund record and ledger entry, and the reopened invoice, on real Firestore', async () => {
+    const refundJob = `money-refund-${run}`, session = { sessionId: `cs_test_refund_${run}`, paymentIntentId: `pi_refund_${run}`, amount: 1000, purpose: 'balance', verifiedAt: '2026-09-20T16:00:00.000Z' };
+    await store.commit([{ collection: 'jobs', id: refundJob, patch: { type: 'job', customerId: `cust-${run}`, customer: 'Synthetic Customer', serviceType: 'Garage transformation', date: '2026-09-20', status: 'completed', pipelineStatus: 'completed',
+      total: 1000, estimate: { amount: 1000, status: 'approved' }, payment: { amount: 1000, verified: true, method: 'stripe', stripeSessions: [session] }, invoice: { number: `INV-R${run.slice(0, 5).toUpperCase()}`, status: 'paid', amount: 1000, paid: 1000, balance: 0, issuedAt: '2026-09-20T22:00:00.000Z' } } }]);
+    const body = { action: 'payment.record_refund', requestId: randomUUID(), jobId: refundJob, expectedRevision: (await store.read('jobs', refundJob)).revision, amountCents: 25000, method: 'stripe_refund', reason: 'customer_request', stripeRef: `re_synthetic_${run}` };
+    const saved = await mutateMoney(store, owner, body, NOW), job = await store.read('jobs', refundJob);
+    assert.deepEqual([job.payment.amount, job.payment.refunds.map(row => [row.id, row.amountCents, row.refundedAt]), job.payment.stripeSessions.length], [750, [[`refund:re_synthetic_${run}`, 25000, NOW]], 1]);
+    assert.deepEqual(job.paymentLedger.map(row => [row.kind, row.amountCents]), [['balance', 100000], ['refund', 25000]]);
+    assert.deepEqual([job.paymentLedgerStatus, job.paymentLedgerIssues, job.invoice.status, job.invoice.balanceCents, saved.job.totals.balanceCents], ['needs_review', ['money_refund_recorded'], 'partial', 25000, 25000]);
+    assert.equal((await store.read('hub_audit', (await store.read('moneyOperations', body.requestId.toLowerCase())).auditId)).action, 'money.payment.record_refund');
+    assert.equal((await mutateMoney(store, owner, body, NOW)).replayed, true);
+    assert.equal((await store.read('jobs', refundJob)).payment.amount, 750, 'a replay takes nothing off twice');
+  });
 });
 
 // TIPS: a tipped charge with no review is booked in ONE commit, the job update plus a precondition-only delete of

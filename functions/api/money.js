@@ -44,7 +44,7 @@ async function checkoutWarnings(checkouts, env, jobId) {
   if (outcome === 'expired') return [{ code: 'checkout_closed', message: 'The customer’s open card checkout for the old balance was closed; the portal opens a new one for the new balance.' }];
   if (outcome === 'paid') return [{ code: 'checkout_paid', message: 'The customer already paid a card checkout opened for the old balance. It is recorded when Stripe confirms it; refund what exceeds the new total.' }];
   if (outcome === 'none' || outcome === 'current') return [];
-  return [{ code: 'checkout_open', message: 'A card checkout opened before this void may still be open for the old balance. If the customer pays it, the extra payment is flagged for review; refund the difference.' }];
+  return [{ code: 'checkout_open', message: 'A card checkout opened before this change may still be open for the old balance. If the customer pays it, the extra payment is flagged for review; refund the difference.' }];
 }
 
 // Reads take the Date; mutations take its ISO string. Writes stay off unless
@@ -52,7 +52,7 @@ async function checkoutWarnings(checkouts, env, jobId) {
 // Labor dollars are owner-only (EGC_STAFF_PAY_OWNER_ONLY): laborCostViewer resolves
 // that from the signed session, and anyone else gets laborCents null (never 0).
 // jobberGuard is the FUN-32 billing hold on invoice.issue (EGC_JOBBER_GUARD_BILLING); checkouts closes a portal card
-// checkout sized before a change_order.void (CHANGE-ORDERS).
+// checkout sized before a change_order.void (CHANGE-ORDERS) or a payment.record_refund.
 export function moneyHandlers({ session = getHubSession, storage = moneyStorage, now = () => new Date(), jobberGuard = (store, env, input, at) => jobberGuardInvoiceHolds(store, env, input, at, { receipts: MONEY_RECEIPTS }), checkouts = closeStaleCheckout } = {}) {
   return {
     async get({ request, env }) {
@@ -89,7 +89,8 @@ export function moneyHandlers({ session = getHubSession, storage = moneyStorage,
         const store = storage(env), at = now().toISOString(), guard = await jobberGuard(store, env, input, at);
         if (guard.holds.length) return reply(409, { ok: false, code: 'money_jobber_billing_hold', error: jobberGuardBillingError(guard.holds), details: { checkedAt: guard.state.checkedAt, findings: guard.holds.slice(0, 10).map(jobberGuardHoldView) } });
         const result = await mutateMoney(store, actor, input, at);
-        if (input.action === 'change_order.void') result.warnings = [...(result.warnings || []), ...await checkoutWarnings(checkouts, env, input.jobId)];
+        // A refund also closes an open portal checkout: a job with a refund on it takes no card payment (customer-payments payable).
+        if (['change_order.void', 'payment.record_refund'].includes(input.action)) result.warnings = [...(result.warnings || []), ...await checkoutWarnings(checkouts, env, input.jobId)];
         return reply(200, result);
       } catch (error) { return failure(error); }
     },

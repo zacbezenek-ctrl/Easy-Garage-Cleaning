@@ -14,6 +14,9 @@
 const TZ='America/Denver', PREFIX='egc.money.pending.v1.', FLAG_PREFIX='egc.money.flag.v1.', MAX_LINES=12;
 const HANDLED=new Set(['estimate','accept','deposit','payment','invoice']);
 const METHODS=[['cash','Cash'],['check','Check'],['card_terminal','Card terminal'],['bank_transfer','Bank transfer / ACH'],['other','Other']];
+// payment.record_refund (money-service REFUND_METHODS, MONEY_REFUND_REASONS): money that went back to the customer.
+const REFUND_METHODS=[['stripe_refund','Refunded in Stripe'],['chargeback','Card dispute lost (chargeback)'],['cash','Cash handed back'],['check','Check written'],['other','Other']];
+const REFUND_REASONS=[['customer_request','Customer asked for a refund'],['duplicate_charge','Duplicate charge'],['overpaid','More than the job balance'],['job_cancelled','Job cancelled'],['dispute_lost','Card dispute lost (chargeback)'],['other','Other']];
 const CHANNELS=[['email','Email'],['text','Text message'],['in_person','In person'],['phone','Phone call'],['other','Other']];
 const KINDS=[['service','Service'],['labor','Labor'],['product','Product'],['disposal','Disposal'],['fee','Fee']];
 const ACTIVE_INVOICE=new Set(['issued','partial','overdue','paid','pending_verification']);
@@ -107,6 +110,7 @@ function freshDraft(){
   if(S.view==='accept')return{approvedBy:job.customer||''};
   if(S.view==='deposit')return{amount:dollars(t.depositDueCents),method:'check',reference:''};
   if(S.view==='payment')return{amount:dollars(t.balanceCents),method:'check',reference:''};
+  if(S.view==='refund')return{amount:'',method:'stripe_refund',reason:'customer_request',stripeRef:'',note:''};
   // A job signed in person on the 25/75 terms: its balance is due on the signed job day (money-service.js issueInvoice).
   if(S.view==='invoice'){const signed=job.estimate?.remainderDueDate&&job.estimate.remainderDueDate>today()?job.estimate.remainderDueDate:job.estimate?.remainderDueDate?today():'';return{dueDate:job.invoice.dueDate&&job.invoice.dueDate>=(signed||today())?job.invoice.dueDate:signed||addDays(today(),7),customerReference:job.invoice.customerReference||''};}
   if(S.view==='sent')return{channel:'email',note:''};
@@ -132,6 +136,7 @@ function body(){
   if(S.view==='accept'){if(d.approvedBy.trim().length<2)problem('Enter the name of the person who approved.');return{action:'estimate.record_approval',...base,approvedBy:d.approvedBy.trim()};}
   if(S.view==='deposit'||S.view==='payment'){const amount=cents(d.amount);if(!(amount>0))problem('Enter the amount received in dollars and cents.');if(d.reference.trim().length<2)problem('Enter a receipt, check or transaction reference.');return{action:S.view==='deposit'?'deposit.record_offline':'payment.record_offline',...base,amountCents:amount,method:d.method,reference:d.reference.trim()};}
   if(S.view==='invoice'){if(!validDate(d.dueDate)||d.dueDate<today())problem('Choose a payment due date of today or later.');return{action:'invoice.issue',...base,dueDate:d.dueDate,...(d.customerReference.trim()?{customerReference:d.customerReference.trim()}:{})};}
+  if(S.view==='refund'){const amount=cents(d.amount),ref=d.stripeRef.trim();if(!(amount>0))problem('Enter the amount that went back in dollars and cents.');if(amount>job.totals.appliedCents)problem(`The refund cannot be more than the ${money(job.totals.appliedCents)} paid toward the service.`);if(ref&&!/^(re|pyr|dp|du)_[A-Za-z0-9_]+$/.test(ref))problem('Use the Stripe refund ID (re_…) or dispute ID (dp_…), or leave it blank.');if(d.reason==='other'&&d.note.trim().length<3)problem('Say why, in the note.');return{action:'payment.record_refund',...base,amountCents:amount,method:d.method,reason:d.reason,...(ref?{stripeRef:ref}:{}),...(d.note.trim()?{note:d.note.trim()}:{})};}
   if(S.view==='sent')return{action:'estimate.mark_sent',...base,channel:d.channel,...(d.note.trim()?{note:d.note.trim()}:{})};
   if(S.view==='void'){if(d.reason.trim().length<3)problem('Enter why the invoice is being voided.');return{action:'invoice.void',...base,reason:d.reason.trim()};}
   if(S.view==='change'){if(d.reason.trim().length<3)problem('Enter why the change is being voided.');return{action:'change_order.void',...base,changeOrderId:d.changeOrderId,reason:d.reason.trim()};}
@@ -139,7 +144,7 @@ function body(){
 }
 function estimateTotal(){let total=0;for(const line of S.draft.lines){const value=lineTotal(line);if(value===null)return null;total+=value;}return total;}
 
-const SAVED={'estimate.save':'Estimate saved','estimate.record_approval':'Approval recorded','estimate.mark_sent':'Estimate marked as sent','deposit.record_offline':'Deposit recorded','payment.record_offline':'Payment recorded','invoice.issue':'Invoice issued','invoice.void':'Invoice voided','change_order.void':'Approved change voided'};
+const SAVED={'estimate.save':'Estimate saved','estimate.record_approval':'Approval recorded','estimate.mark_sent':'Estimate marked as sent','deposit.record_offline':'Deposit recorded','payment.record_offline':'Payment recorded','payment.record_refund':'Refund recorded','invoice.issue':'Invoice issued','invoice.void':'Invoice voided','change_order.void':'Approved change voided'};
 async function submit(){
   if(S.busy||!S.job)return;
   if(S.pending){S.error='Retry or discard the earlier unconfirmed save first.';S.errorKind='pending';render();return;}
@@ -224,7 +229,7 @@ async function reloadLatest(){if(S.busy)return;await load();}
 function switchView(view){if(S.busy)return;S.view=view;S.error='';S.errorKind='';S.draft=freshDraft();render();focusFirst();}
 function voidChange(id){if(S.busy)return;S.view='change';S.error='';S.errorKind='';S.draft={changeOrderId:id,reason:''};render();focusFirst();}
 
-const TITLES={estimate:['CUSTOMER ESTIMATE','Estimate'],accept:['CUSTOMER APPROVAL','Record approval'],deposit:['OFFLINE DEPOSIT','Record a deposit'],payment:['OFFLINE PAYMENT','Record a payment'],invoice:['CUSTOMER INVOICE','Invoice'],sent:['CUSTOMER ESTIMATE','Record that the estimate was sent'],void:['VOID INVOICE','Void invoice'],change:['APPROVED CHANGE','Void approved change']};
+const TITLES={estimate:['CUSTOMER ESTIMATE','Estimate'],accept:['CUSTOMER APPROVAL','Record approval'],deposit:['OFFLINE DEPOSIT','Record a deposit'],payment:['OFFLINE PAYMENT','Record a payment'],invoice:['CUSTOMER INVOICE','Invoice'],sent:['CUSTOMER ESTIMATE','Record that the estimate was sent'],void:['VOID INVOICE','Void invoice'],change:['APPROVED CHANGE','Void approved change'],refund:['REFUND OR CHARGEBACK','Record a refund or chargeback']};
 function field(label,input,help){const id=input.id||'em-'+input.name;input.id=id;if(help)input.setAttribute('aria-describedby',id+'-help');return h('div',{class:'em-field'},h('label',{htmlFor:id},label),input,help?h('small',{id:id+'-help'},help):null);}
 function bind(name,{tag='input',after,...props}={}){const d=S.draft;return h(tag,{name,...props,value:d[name]??'',oninput:e=>{d[name]=e.target.value;if(after)after();},onchange:e=>{d[name]=e.target.value;}});}
 function select(name,options){const d=S.draft,node=h('select',{name,onchange:e=>{d[name]=e.target.value;}},options.map(([value,label])=>h('option',{value},label)));node.value=d[name];return node;}
@@ -273,13 +278,26 @@ function acceptView(){
 function paymentView(){
   const job=S.job,t=job.totals,deposit=S.view==='deposit';
   if(!(t.totalCents>0))return[h('p',{class:'em-notice warn'},'Save a priced estimate before recording money.')];
-  if(t.balanceCents===0)return[h('p',{class:'em-notice'},'This job has no balance due.')];
+  if(t.balanceCents===0)return[h('p',{class:'em-notice'},'This job has no balance due.'),deposit?null:refundLink()];
   return[h('p',{},deposit?`Deposit due ${money(t.depositDueCents)} of ${money(t.depositRequiredCents)} · balance ${money(t.balanceCents)}`:`Balance due ${money(t.balanceCents)}`),
     field('Amount received ($)',bind('amount',{inputMode:'decimal',autocomplete:'off',required:true})),
     field('How it was received',select('method',METHODS)),
     field('Receipt, check or transaction reference',bind('reference',{maxLength:160,autocomplete:'off',required:true}),'Needed to verify and reconcile this payment.'),
-    job.ledger?.complete===false?h('p',{class:'em-notice warn'},'Older payment records on this job need review. New money is still recorded exactly.'):null,
-    note('Records money already received. It never charges a card. '+automation(deposit?'deposit-received':'payment-received'))];
+    job.ledger?.complete===false&&(job.ledger.issues||[]).some(issue=>issue!=='money_refund_recorded')?h('p',{class:'em-notice warn'},'Older payment records on this job need review. New money is still recorded exactly.'):null,
+    note('Records money already received. It never charges a card. '+automation(deposit?'deposit-received':'payment-received')),deposit?null:refundLink()];
+}
+// Money that went back to the customer: a Stripe refund, a lost card dispute, or cash or a check handed back.
+function refundLink(){return S.job.totals.appliedCents>0?h('button',{type:'button',class:'em-button',onclick:()=>switchView('refund')},'Record a refund or chargeback…'):null;}
+function refundView(){
+  const t=S.job.totals;
+  if(!(t.appliedCents>0))return[h('p',{class:'em-notice warn'},'No service money is recorded on this job, so there is nothing to refund here.')];
+  return[h('p',{},`Paid toward the service ${money(t.appliedCents)} · balance ${money(t.balanceCents)}`),
+    field('Amount that went back ($)',bind('amount',{inputMode:'decimal',autocomplete:'off',required:true}),'Service money only. A crew tip is never refunded here.'),
+    field('How it went back',select('method',REFUND_METHODS)),
+    field('Why',select('reason',REFUND_REASONS)),
+    field('Stripe refund or dispute ID (optional)',bind('stripeRef',{maxLength:130,autocomplete:'off',placeholder:'re_… or dp_…'}),'Records each Stripe refund or dispute once.'),
+    field('Note',bind('note',{tag:'textarea',rows:3,maxLength:500}),'Required when the reason is Other. Kept in the audit trail.'),
+    note('Records money already returned: make the refund in Stripe first. The job’s paid total drops by this amount and any open balance shows again; commissions, crew tips and field pay on this job stay held for review. Nothing is sent to the customer, and the customer portal will not take a card payment on this job until the office settles it.')];
 }
 function invoiceView(){
   const job=S.job,t=job.totals,invoice=job.invoice,active=ACTIVE_INVOICE.has(invoice.status),preview=job.invoicePreview;
@@ -312,9 +330,9 @@ function changeView(){
 }
 function sentView(){return[field('How it was sent',select('channel',CHANNELS)),field('Note (optional)',bind('note',{tag:'textarea',rows:3,maxLength:500})),note('Records that you already sent the estimate yourself. Nothing is sent from here.')];}
 function voidView(){const invoice=S.job.invoice;return[h('p',{},`Void invoice ${invoice.number||''} (${invoice.status.replace('_',' ')}). Recorded payments stay on the job.`),field('Reason',bind('reason',{tag:'textarea',rows:3,maxLength:500,required:true}),'Kept in the audit trail.'),note('Nothing is sent to the customer.')];}
-const VIEWS={estimate:estimateView,accept:acceptView,deposit:paymentView,payment:paymentView,invoice:invoiceView,sent:sentView,void:voidView,change:changeView};
-const LABELS={estimate:'Save estimate',accept:'Record approval',deposit:'Save deposit',payment:'Save payment',invoice:'Issue invoice',sent:'Record sent',void:'Void invoice',change:'Void change'};
-function canSubmit(){const job=S.job;if(!job)return false;if(S.view==='estimate')return!(job.estimate&&lockedEstimate(job));if(S.view==='accept')return Boolean(job.estimate)&&job.totals.quoteCents>0&&job.approval?.status!=='approved'&&!['accepted','approved'].includes(job.estimate.status);if(S.view==='deposit'||S.view==='payment')return job.totals.totalCents>0&&job.totals.balanceCents>0;if(S.view==='invoice')return job.totals.totalCents>0;if(S.view==='change')return(Array.isArray(job.changeOrders)?job.changeOrders:[]).some(line=>line.id===S.draft?.changeOrderId);return true;}
+const VIEWS={estimate:estimateView,accept:acceptView,deposit:paymentView,payment:paymentView,invoice:invoiceView,sent:sentView,void:voidView,change:changeView,refund:refundView};
+const LABELS={estimate:'Save estimate',accept:'Record approval',deposit:'Save deposit',payment:'Save payment',invoice:'Issue invoice',sent:'Record sent',void:'Void invoice',change:'Void change',refund:'Record refund'};
+function canSubmit(){const job=S.job;if(!job)return false;if(S.view==='estimate')return!(job.estimate&&lockedEstimate(job));if(S.view==='accept')return Boolean(job.estimate)&&job.totals.quoteCents>0&&job.approval?.status!=='approved'&&!['accepted','approved'].includes(job.estimate.status);if(S.view==='deposit'||S.view==='payment')return job.totals.totalCents>0&&job.totals.balanceCents>0;if(S.view==='invoice')return job.totals.totalCents>0;if(S.view==='change')return(Array.isArray(job.changeOrders)?job.changeOrders:[]).some(line=>line.id===S.draft?.changeOrderId);if(S.view==='refund')return job.totals.appliedCents>0;return true;}
 
 function render(){
   const dialog=S.dialog;if(!dialog)return;
@@ -331,9 +349,9 @@ function render(){
   } else {
     fill(main,summary(),S.error?h('p',{class:'em-notice error',role:'alert',tabIndex:-1},S.error):null,VIEWS[S.view]());
     if(S.errorKind==='conflict')actions.append(h('button',{type:'button',class:'em-button',disabled:S.busy,onclick:()=>void reloadLatest()},'Load latest details'));
-    if(['sent','void','change'].includes(S.view))actions.append(h('button',{type:'button',class:'em-button',disabled:S.busy,onclick:()=>switchView(S.view==='sent'?'estimate':'invoice')},'Back'));
+    if(['sent','void','change','refund'].includes(S.view))actions.append(h('button',{type:'button',class:'em-button',disabled:S.busy,onclick:()=>switchView(S.view==='sent'?'estimate':S.view==='refund'?'payment':'invoice')},'Back'));
     else actions.append(h('button',{type:'button',class:'em-button',disabled:S.busy,onclick:()=>close()},'Cancel'));
-    if(canSubmit())actions.append(h('button',{type:'submit',class:'em-button primary'+(['void','change'].includes(S.view)?' danger':''),disabled:S.busy||S.loading},S.busy?'Saving…':LABELS[S.view]));
+    if(canSubmit())actions.append(h('button',{type:'submit',class:'em-button primary'+(['void','change','refund'].includes(S.view)?' danger':''),disabled:S.busy||S.loading},S.busy?'Saving…':LABELS[S.view]));
     if(S.busy)status.textContent='Saving…';else if(S.loading)status.textContent='Refreshing job money…';
   }
   const form=h('form',{class:'em-sheet',noValidate:true,'aria-busy':S.busy||S.loading?'true':'false',onsubmit:e=>{e.preventDefault();void submit();}},head,main,h('footer',{class:'em-foot'},status,actions));

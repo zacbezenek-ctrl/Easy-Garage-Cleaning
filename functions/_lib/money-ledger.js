@@ -1,4 +1,4 @@
-import { MAX_TOTAL_CENTS, PAYMENT_KINDS, paymentLedger } from './money-core.js';
+import { MAX_TOTAL_CENTS, PAYMENT_KINDS, REFUND_RECORDED, paymentLedger } from './money-core.js';
 
 /**
  * Stored payment ledger (job.paymentLedger[]). The recorded paid total
@@ -7,7 +7,7 @@ import { MAX_TOTAL_CENTS, PAYMENT_KINDS, paymentLedger } from './money-core.js';
  *   {id, kind, amountCents, method, processor, processorRef, receiptUrl, at, by, verified, source}
  * Itemized entries are verified Stripe sessions, card tips and gift credits (derived by
  * money-core paymentLedger, the same evidence the revenue report trusts) and
- * payments recorded through the money API. Whatever the paid total holds that
+ * payments and refunds recorded through the money API (a refund is a 'refund' entry, counted against the total). Whatever the paid total holds that
  * no itemized entry explains (payments recorded before the ledger existed or
  * by the legacy browser tools) is ONE recomputed 'legacy:manual' aggregate,
  * written only when the evidence is clean. Stripe and gift credit writers
@@ -45,8 +45,10 @@ export const legacyEntry = (job, amountCents) => ({ id: LEGACY_ENTRY_ID, kind: '
  * Reconciles a job's stored ledger (plus `extra` new entries) against its
  * recorded paid total. `complete` means every recorded cent is itemized or in
  * the clean legacy aggregate. Issues use money_* codes; derived-evidence
- * problems (unverified card sessions, conflicting receipts, refunds) block the
- * aggregate so a card payment is never relabelled as a manual one.
+ * problems (unverified card sessions, conflicting receipts, refunds not netted)
+ * block the aggregate so a card payment is never relabelled as a manual one. A
+ * refund the money API netted is itemized as a 'refund' entry and leaves the
+ * ledger reconciled but not complete (money_refund_recorded).
  */
 export function reconcileLedger(job, extra = []) {
   const derived = paymentLedger(job), issues = [...derived.issues], stored = job?.paymentLedger, itemized = new Map();
@@ -67,7 +69,8 @@ export function reconcileLedger(job, extra = []) {
   for (const row of extra) itemized.set(row.id, row);
   const rows = [...itemized.values()], itemizedCents = total(rows), paidCents = derived.paidCents, found = [...new Set(issues)];
   let entries = rows, legacyCents = 0;
-  if (paidCents !== null && itemizedCents !== null && !found.length) {
+  // A netted refund (money_refund_recorded) is itemized, so it never blocks the aggregate; the ledger still is not complete.
+  if (paidCents !== null && itemizedCents !== null && !found.some(issue => issue !== REFUND_RECORDED)) {
     if (paidCents > itemizedCents) { legacyCents = paidCents - itemizedCents; entries = [...rows, legacyEntry(job, legacyCents)]; }
     else if (paidCents < itemizedCents) found.push('money_ledger_exceeds_paid');
   }
