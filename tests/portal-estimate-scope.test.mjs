@@ -50,14 +50,14 @@ test('a signed walkthrough job shows the customer a sold-scope summary and none 
 });
 
 // D-DEPOSIT: what the homeowner sees after signing on the walkthrough, and what an earlier 50% job keeps showing.
-test('a job signed on the 25%/75% terms shows its deposit due the signing day and the 75% due on the job day; a job signed on the earlier 50% terms keeps its 50% deposit', async t => {
+test('a job signed on the 25%/75% terms shows its deposit due the signing day and the 75% due when the job is complete; a job signed on the earlier 50% terms keeps its 50% deposit', async t => {
   const { id, job } = await signedJob(plan());
   // The earlier terms, as the handoff saved them before 2026-10-18 (no saved payment terms on the estimate).
   const { commercialPolicy, paymentSchedule, depositPct, amountCents, depositRequiredCents, ...earlier } = job.estimate;
   const legacy = { ...job, termsVersion: '2026-09-deposit50', acceptance: { ...job.acceptance, termsVersion: '2026-09-deposit50' }, deposit: { ...job.deposit, amount: 700 }, estimate: { ...earlier, depositRequired: 700, termsVersion: '2026-09-deposit50' } };
   assert.deepEqual([commercialPolicy, depositPct, amountCents, depositRequiredCents], [SIGNED_25_75, 25, 140000, 35000]);
   for (const [label, saved, expected] of [
-    ['current terms', job, { deposit: 350, schedule: { depositDueDate: '2026-09-22', remainderDueDate: '2026-09-24', timeZone: 'America/Denver', depositCents: 35000, remainderCents: 105000, policyVersion: '2026-10-deposit25' }, terms: /^This flat-rate estimate covers the scope shown\. 25% deposit \$350\.00 due 2026-09-22; 75% remainder \$1,050\.00 due 2026-09-24 \(America\/Denver\)\./, rows: [['Total', 140000], ['25% deposit due 2026-09-22', 35000], ['Scheduled 75% remainder due 2026-09-24', 105000]] }],
+    ['current terms', job, { deposit: 350, schedule: { depositDueDate: '2026-09-22', remainderDueDate: '2026-09-24', timeZone: 'America/Denver', depositCents: 35000, remainderCents: 105000, policyVersion: '2026-10-deposit25' }, terms: /^This flat-rate estimate covers the scope shown\. 25% deposit \$350\.00 due 2026-09-22; 75% remainder \$1,050\.00 due when the job is complete, scheduled for 2026-09-24 \(America\/Denver\)\./, rows: [['Total', 140000], ['25% deposit due 2026-09-22', 35000], ['75% remainder due when the job is complete', 105000]] }],
     ['earlier 50% terms', legacy, { deposit: 700, schedule: undefined, terms: /^This flat-rate estimate covers the scope shown\. The displayed deposit is due upfront/, rows: [['Total', 140000], ['Deposit due upfront', 70000]] }]]) {
     await t.test(label, async st => {
       portalStore(st, { [id]: saved });

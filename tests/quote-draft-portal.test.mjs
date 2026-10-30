@@ -66,7 +66,7 @@ const FLAGS = [env, { ...env, CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES: 'true' }, 
 test('issued 25/75 quote displays and binds its dated policy in portal approval and estimate document',async t=>{
  const h=hub(),id=await h.save(),job=h.job(id);Object.assign(job.estimate,{status:'sent',sentRevision:1,depositRequired:449.5,depositRequiredCents:44950,termsVersion:FINAL_25_75.version,commercialPolicy:FINAL_25_75,paymentSchedule:{depositDueDate:'2026-09-25',remainderDueDate:'2026-10-02',timeZone:'America/Denver',depositCents:44950,remainderCents:134850,policyVersion:FINAL_25_75.version}});job.deposit.amount=449.5;
  portalStore(t,{[id]:job});const handlers=portalHandlers(VIEWED),cookie=await portalCookie(id),shown=(await portalView(handlers,cookie)).body.estimate;
- assert.match(shown.terms,/25% deposit.*2026-09-25.*75% remainder.*2026-10-02/);assert.equal(shown.termsVersion,FINAL_25_75.version);
+ assert.match(shown.terms,/25% deposit.*2026-09-25.*75% remainder.*due when the job is complete/);assert.equal(shown.termsVersion,FINAL_25_75.version);
  const result=await portalPost(handlers,cookie,approve(shown,{request_id:randomUUID()}));assert.equal(result.status,200);assert.equal(result.body.approval.termsVersion,FINAL_25_75.version);
  const html=renderMoneyDocument(job,{kind:'estimate',now:VIEWED});assert.match(html,/25% deposit/);assert.match(html,/2026-09-25/);assert.doesNotMatch(html,/remaining balance due on completion/);
 });

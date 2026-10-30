@@ -74,14 +74,16 @@ test('the public schedule of a SENT_25_75 quote dates the deposit by the approva
   const estimate = { status: 'sent', amount: 1500, amountCents: 150000, depositRequired: 375, depositRequiredCents: 37500, commercialPolicy: { ...SENT_25_75 }, paymentSchedule: schedule }, saved = structuredClone(estimate);
   const sent = publicQuotePaymentSchedule(estimate);
   assert.deepEqual(sent, { depositDueDate: null, depositDueOn: 'approval', remainderDueDate: '2026-11-10', timeZone: 'America/Denver', depositCents: 37500, remainderCents: 112500, policyVersion: SENT_25_75.version });
-  assert.equal(quotePaymentSummary(sent), '25% deposit $375.00 due on approval; 75% remainder $1,125.00 due 2026-11-10 (America/Denver).');
+  // Owner decision 2026-10-30: the 75% is due when the job is complete, with the job's current day (never the saved one).
+  assert.equal(quotePaymentSummary(sent, '2026-11-17'), '25% deposit $375.00 due on approval; 75% remainder $1,125.00 due when the job is complete, scheduled for 2026-11-17 (America/Denver).');
+  assert.equal(quotePaymentSummary(sent), '25% deposit $375.00 due on approval; 75% remainder $1,125.00 due when the job is complete.', 'no booked day: none is named');
   const approved = publicQuotePaymentSchedule({ ...estimate, status: 'approved', acceptedAt: '2026-10-21T03:30:00.000Z' });
   assert.equal(approved.depositDueDate, '2026-10-20');
-  assert.equal(quotePaymentSummary(approved), '25% deposit $375.00 due on approval (2026-10-20); 75% remainder $1,125.00 due 2026-11-10 (America/Denver).');
+  assert.equal(quotePaymentSummary(approved, '2026-11-10'), '25% deposit $375.00 due on approval (2026-10-20); 75% remainder $1,125.00 due when the job is complete, scheduled for 2026-11-10 (America/Denver).');
   // Approved after the saved job day (a job rescheduled before the quote was sent again): due on the day it was approved.
   const late = publicQuotePaymentSchedule({ ...estimate, status: 'accepted', acceptedAt: '2026-12-01T18:00:00.000Z' });
   assert.equal(late.depositDueDate, '2026-12-01', 'the approval date, not the job day');
-  assert.equal(quotePaymentSummary(late), '25% deposit $375.00 due on approval (2026-12-01); 75% remainder $1,125.00 due 2026-11-10 (America/Denver).');
+  assert.equal(quotePaymentSummary(late), '25% deposit $375.00 due on approval (2026-12-01); 75% remainder $1,125.00 due when the job is complete (America/Denver).');
   assert.deepEqual(estimate, saved, 'the saved schedule is never rewritten');
   // Fail closed: a saved deposit date on these terms, or no deposit date on dated terms, is not a schedule any surface shows.
   assert.equal(publicQuotePaymentSchedule({ ...estimate, paymentSchedule: { ...schedule, depositDueDate: '2026-10-20' } }), null);
@@ -89,6 +91,6 @@ test('the public schedule of a SENT_25_75 quote dates the deposit by the approva
   // A quote already sent on FINAL_25_75 keeps its recorded dates exactly.
   const final = { ...estimate, commercialPolicy: { ...FINAL_25_75 }, paymentSchedule: { ...schedule, depositDueDate: '2026-11-03', policyVersion: FINAL_25_75.version } };
   assert.deepEqual(publicQuotePaymentSchedule(final), { depositDueDate: '2026-11-03', remainderDueDate: '2026-11-10', timeZone: 'America/Denver', depositCents: 37500, remainderCents: 112500, policyVersion: FINAL_25_75.version });
-  assert.equal(quotePaymentSummary(publicQuotePaymentSchedule({ ...final, status: 'approved', acceptedAt: '2026-10-21T03:30:00.000Z' })), '25% deposit $375.00 due 2026-11-03; 75% remainder $1,125.00 due 2026-11-10 (America/Denver).');
-  assert.equal(withheldQuotePaymentSummary(estimate).text, '25% deposit due when you approve your estimate; 75% remainder due on the job day 2026-11-10 (America/Denver). The amounts are shown when your estimate is sent to you, and nothing is due before then.');
+  assert.equal(quotePaymentSummary(publicQuotePaymentSchedule({ ...final, status: 'approved', acceptedAt: '2026-10-21T03:30:00.000Z' })), '25% deposit $375.00 due 2026-11-03; 75% remainder $1,125.00 due when the job is complete (America/Denver).');
+  assert.equal(withheldQuotePaymentSummary(estimate, { jobDate: '2026-11-17' }).text, '25% deposit due when you approve your estimate; 75% remainder due when your job is complete, scheduled for 2026-11-17 (America/Denver). The amounts are shown when your estimate is sent to you, and nothing is due before then.');
 });

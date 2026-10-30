@@ -4,7 +4,7 @@ import { customerMoneyTotals, invoiceTakesPayment, moneyInvoiceStateEnabled, mon
 import { manualEntryIds } from './money-ledger.js';
 import { billedChangeCents } from './change-orders.js';
 import { unsentQuoteDraft } from './quote-model.js';
-import { paymentDateLabel, publicQuotePaymentSchedule, scheduleSplit } from './quote-payment-policy.js';
+import { businessPaymentDate, paymentDateLabel, publicQuotePaymentSchedule, scheduleSplit } from './quote-payment-policy.js';
 import { moneyStorage } from './money-storage.js';
 import { FIELD_CARD_CHECKOUTS, activeFieldCard, fieldCardClose } from './field-payment-card.js';
 import { syncFieldPayment } from './field-payment-sync.js';
@@ -994,9 +994,10 @@ export async function createCustomerStripeCheckout(env, secret, jobId, origin, {
   // and the job day its remainder is due, as the portal does; any other quote keeps the wording of its own terms. As on the
   // portal (scheduleDue), the percent names only the whole scheduled deposit: the rest of a part-paid one (cash recorded,
   // or a job signed again at a higher total) is the "remaining deposit". A deposit due on approval (a quote sent on
-  // SENT_25_75) says so.
-  const schedule = publicQuotePaymentSchedule(job.estimate), split = schedule && scheduleSplit(schedule), jobDay = schedule ? paymentDateLabel(schedule.remainderDueDate) : '';
-  if (amountCents < 50) throw failure(customerMoneyState(job, mode).balance < .5 ? 'There is no outstanding balance' : schedule ? `Your deposit is paid. The remaining balance is due on the job day, ${jobDay}.` : 'Your deposit is paid. The remaining balance is due on completion.');
+  // SENT_25_75) says so. The remainder is due when the job is complete, with the job's current day (quote-payment-policy.js
+  // quotePaymentSummary, owner decision 2026-10-30).
+  const schedule = publicQuotePaymentSchedule(job.estimate), split = schedule && scheduleSplit(schedule), day = businessPaymentDate(job.date), complete = `when your job is complete${day ? ` (scheduled for ${paymentDateLabel(day)})` : ''}`;
+  if (amountCents < 50) throw failure(customerMoneyState(job, mode).balance < .5 ? 'There is no outstanding balance' : schedule ? `Your deposit is paid. The remaining balance is due ${complete}.` : 'Your deposit is paid. The remaining balance is due on completion.');
   const tip = validTip(tipCents, amountCents, deposit.purpose);
   if (!tips) await checkoutReviewHold(env, jobId, job);
   const params = new URLSearchParams({
@@ -1007,7 +1008,7 @@ export async function createCustomerStripeCheckout(env, secret, jobId, origin, {
     'line_items[0][quantity]': '1', 'line_items[0][price_data][currency]': 'usd',
     'line_items[0][price_data][unit_amount]': String(amountCents),
     'line_items[0][price_data][product_data][name]': `Easy Garage Cleaning — ${deposit.purpose === 'deposit' ? schedule ? amountCents === schedule.depositCents ? `${split.depositPct}% deposit` : amountCents < schedule.depositCents ? 'remaining deposit' : 'deposit' : 'upfront deposit' : 'remaining balance'}`,
-    'line_items[0][price_data][product_data][description]': `${clean(job.serviceType || 'Garage service', 100)}. ${deposit.purpose === 'deposit' ? schedule ? `${schedule.depositDueOn === 'approval' ? 'Due on approval of your quote' : 'Applied to your approved quote'}; the remaining ${split.remainderPct}% is due on the job day, ${jobDay}.` : 'Applied to your approved quote; remaining balance due on completion.' : `Balance after previous payments and credits${changeCents ? `, including ${(changeCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} in approved changes` : ''}.`}`,
+    'line_items[0][price_data][product_data][description]': `${clean(job.serviceType || 'Garage service', 100)}. ${deposit.purpose === 'deposit' ? schedule ? `${schedule.depositDueOn === 'approval' ? 'Due on approval of your quote' : 'Applied to your approved quote'}; the remaining ${split.remainderPct}% is due ${complete}.` : 'Applied to your approved quote; remaining balance due on completion.' : `Balance after previous payments and credits${changeCents ? `, including ${(changeCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} in approved changes` : ''}.`}`,
     'metadata[kind]': 'egc_customer_portal_payment', 'metadata[job_id]': jobId, 'metadata[payment_purpose]': deposit.purpose,
     'metadata[quote_revision]': String(job.estimate?.revision || 1), 'metadata[quoted_total_cents]': String(cents(customerMoneyState(job, mode).total)),
     'payment_intent_data[metadata][kind]': 'egc_customer_portal_payment', 'payment_intent_data[metadata][job_id]': jobId, 'payment_intent_data[metadata][payment_purpose]': deposit.purpose,

@@ -89,7 +89,7 @@ test('a draft saved on FINAL_25_75 is sent on SENT_25_75: deposit due on approva
  assert.deepEqual(job.estimate.commercialPolicy,FINAL_25_75,'saved, not yet sent');
  const preview=await previewQuoteSend(f.store,owner,{jobId:job.id,expectedRevision:job.revision},NOW,{env:ENV});
  assert.deepEqual(preview.job.estimate.commercialPolicy,SENT_25_75);assert.equal(preview.job.estimate.paymentSchedule.depositDueDate,null);assert.equal(preview.job.estimate.paymentSchedule.remainderDueDate,'2026-10-02');
- assert.match(preview.summary,/25% deposit \$\d[\d,]*\.\d\d due on approval; 75% remainder \$[\d,]+\.\d\d due 2026-10-02 \(America\/Denver\)\.$/);
+ assert.match(preview.summary,/25% deposit \$\d[\d,]*\.\d\d due on approval; 75% remainder \$[\d,]+\.\d\d due when the job is complete, scheduled for 2026-10-02 \(America\/Denver\)\.$/);
  assert.doesNotMatch(preview.summary,/2026-09-2\d/,'never the seven-day or walkthrough date');
  const verified=()=>f.writesTo('jobs').filter(write=>write.id==='w1'&&write.verify).length,verifiedBefore=verified();
  await sendQuoteDraft(f.store,owner,{jobId:job.id,expectedRevision:job.revision,requestId:randomUUID(),confirmToken:preview.confirmToken},NOW,{env:ENV});
@@ -102,7 +102,7 @@ test('a draft saved on FINAL_25_75 is sent on SENT_25_75: deposit due on approva
  assert.equal(f.job(job.id).estimate.paymentSchedule.remainderDueDate,'2026-10-02','nor by saving the revision');
  const resend=await previewQuoteSend(f.store,owner,{jobId:job.id,expectedRevision:f.job(job.id).revision},NOW,{env:ENV});
  assert.deepEqual([resend.job.estimate.paymentSchedule.depositDueDate,resend.job.estimate.paymentSchedule.remainderDueDate],[null,'2026-11-01']);
- assert.match(resend.summary,/due on approval; 75% remainder \$[\d,]+\.\d\d due 2026-11-01 \(America\/Denver\)\.$/);
+ assert.match(resend.summary,/due on approval; 75% remainder \$[\d,]+\.\d\d due when the job is complete, scheduled for 2026-11-01 \(America\/Denver\)\.$/);
  await sendQuoteDraft(f.store,owner,{jobId:job.id,expectedRevision:f.job(job.id).revision,requestId:randomUUID(),confirmToken:resend.confirmToken},NOW,{env:ENV});
  assert.deepEqual([f.job(job.id).estimate.status,f.job(job.id).estimate.sentRevision,f.job(job.id).estimate.paymentSchedule.remainderDueDate,f.job(job.id).estimate.paymentSchedule.depositDueDate],['sent',2,'2026-11-01',null]);
  assert.equal(verified(),verifiedBefore+2,'the new schedule is verified against the walkthrough like the first');
@@ -890,7 +890,7 @@ test('quote draft API: quote authors only, same origin, bounded JSON and a proje
   const preview = await (await post({ action: 'send_preview', jobId: id, expectedRevision: f.job(id).revision })).json();
   assert.equal(typeof preview.confirmToken, 'string'); assert.equal(preview.delivery.mode, 'off');
   assert.equal(preview.job.estimate.paymentSchedule.depositDueDate,null,'due on approval, not seven days before the job (2026-09-25)');
-  assert.match(preview.summary,/25% deposit .* due on approval; 75% remainder .* due 2026-10-02 \(America\/Denver\)/);
+  assert.match(preview.summary,/25% deposit .* due on approval; 75% remainder .* due when the job is complete, scheduled for 2026-10-02 \(America\/Denver\)/);
   const sent = await post({ action: 'send', requestId: randomUUID(), jobId: id, expectedRevision: f.job(id).revision, confirmToken: preview.confirmToken });
   assert.equal(sent.status, 200); assert.equal(f.job(id).estimate.status, 'sent');
   assert.equal(f.job(id).estimate.paymentSchedule.remainderDueDate,'2026-10-02');
@@ -1378,7 +1378,7 @@ test('a quote draft saved with no terms before 2026-10-14 is sent on SENT_25_75;
   f.job(id).date = '2026-10-02';
   const preview = await previewQuoteSend(f.store, owner, { jobId: id, expectedRevision: f.job(id).revision }, LATER, options);
   const usd = cents => (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-  assert.ok(preview.summary.endsWith(`. 25% deposit ${usd(deposit)} due on approval; 75% remainder ${usd(total - deposit)} due 2026-10-02 (America/Denver).`), preview.summary);
+  assert.ok(preview.summary.endsWith(`. 25% deposit ${usd(deposit)} due on approval; 75% remainder ${usd(total - deposit)} due when the job is complete, scheduled for 2026-10-02 (America/Denver).`), preview.summary);
   assert.deepEqual([preview.job.estimate.commercialPolicy, preview.job.estimate.depositRequiredCents], [SENT_25_75, deposit]);
   await sendQuoteDraft(f.store, owner, { requestId: randomUUID(), jobId: id, expectedRevision: f.job(id).revision, confirmToken: preview.confirmToken }, LATER, { ...options, deliver: f.deliver });
   const sent = f.job(id);
@@ -1394,9 +1394,9 @@ test('a quote draft saved with no terms before 2026-10-14 is sent on SENT_25_75;
   portalStore(t, { 'job-x': { ...structuredClone(sent), id: 'job-x' }, 'job-legacy': legacySent });
   const view = (await portalView(portalHandlers(at), await portalCookie('job-x', {}, Date.parse(at)))).body;
   context.render(view); context.renderPayment(view);
-  assert.equal(view.estimate.terms, `This flat-rate estimate covers the scope shown. 25% deposit ${usd(deposit)} due on approval; 75% remainder ${usd(total - deposit)} due 2026-10-02 (America/Denver). Any material scope change requires your approval before additional work or charges.`);
+  assert.equal(view.estimate.terms, `This flat-rate estimate covers the scope shown. 25% deposit ${usd(deposit)} due on approval; 75% remainder ${usd(total - deposit)} due when the job is complete, scheduled for 2026-10-02 (America/Denver). Any material scope change requires your approval before additional work or charges.`);
   assert.deepEqual([view.estimate.termsVersion, view.estimate.depositRequired, view.payment.dueNow, node('estimate-deposit').textContent, node('pay-button').textContent], [SENT_25_75.version, deposit / 100, deposit / 100, '25% deposit due when you approve', `Pay $${(deposit / 100).toFixed(2)} deposit`]);
-  assert.equal(node('payment-due-now').textContent, `$${(deposit / 100).toFixed(2)} deposit due when you approve your estimate (25%). $${((total - deposit) / 100).toFixed(2)} (75%) due on the job day, Friday, October 2, 2026.`);
+  assert.equal(node('payment-due-now').textContent, `$${(deposit / 100).toFixed(2)} deposit due when you approve your estimate (25%). Remaining 75% ($${((total - deposit) / 100).toFixed(2)}) is due when your job is complete (scheduled for Friday, October 2, 2026).`);
   assert.doesNotMatch(JSON.stringify([view.estimate, view.payment, node('estimate-deposit').textContent, node('payment-due-now').textContent, node('pay-button').textContent]), /50%|upfront|on completion/i);
   const legacy = (await portalView(portalHandlers(at), await portalCookie('job-legacy', {}, Date.parse(at)))).body.estimate;
   assert.deepEqual([legacy.status, legacy.terms, legacy.depositRequired], ['sent', CUSTOMER_PORTAL_CONTENT.estimateTerms, 899], 'a quote already sent on the earlier terms keeps them');
@@ -1405,7 +1405,7 @@ test('a quote draft saved with no terms before 2026-10-14 is sent on SENT_25_75;
   portalStore(t, { 'job-legacy': revisedLegacy });
   const withheld = (await portalView(portalHandlers(at), await portalCookie('job-legacy', {}, Date.parse(at)))).body.estimate;
   assert.deepEqual([withheld.withheld, withheld.termsVersion], [true, SENT_25_75.version]);
-  assert.equal(withheld.terms, 'This flat-rate estimate covers the scope shown. 25% deposit due when you approve your estimate; 75% remainder due on the job day. The amounts are shown when your estimate is sent to you, and nothing is due before then. Any material scope change requires your approval before additional work or charges.');
+  assert.equal(withheld.terms, 'This flat-rate estimate covers the scope shown. 25% deposit due when you approve your estimate; 75% remainder due when your job is complete. The amounts are shown when your estimate is sent to you, and nothing is due before then. Any material scope change requires your approval before additional work or charges.');
 });
 
 test('assigned office drafts prepare and save repeatedly with or without source in the URL', async () => {

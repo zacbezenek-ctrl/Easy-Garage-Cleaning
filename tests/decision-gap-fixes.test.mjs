@@ -53,7 +53,7 @@ test('a withheld estimate on the 25/75 terms names them without any amount; any 
   assert.deepEqual([held.estimate.withheld, held.estimate.status, held.estimate.approvable, held.estimate.amount, held.estimate.depositRequired], [true, 'being_updated', false, 0, 0]);
   // Signed in person and held for the owner's prices: the job is booked and its prices are being confirmed, nothing is due
   // until the team sends the updated total (walkthrough-handoff.js releasePatch asks for no new approval).
-  assert.equal(held.estimate.terms, 'This flat-rate estimate covers the scope shown. 25% deposit; 75% remainder due on the job day 2026-10-20 (America/Denver). Your job is booked and our team is confirming its prices: the amounts are shown when we send you the updated total, and nothing is due before then. Any material scope change requires your approval before additional work or charges.');
+  assert.equal(held.estimate.terms, 'This flat-rate estimate covers the scope shown. 25% deposit; 75% remainder due when your job is complete, scheduled for 2026-10-20 (America/Denver). Your job is booked and our team is confirming its prices: the amounts are shown when we send you the updated total, and nothing is due before then. Any material scope change requires your approval before additional work or charges.');
   assert.equal(held.estimate.heldSigned, true);
   assert.equal(held.estimate.termsVersion, '2026-10-deposit25');
   assert.doesNotMatch(held.estimate.terms, /upfront|on completion/);
@@ -62,16 +62,16 @@ test('a withheld estimate on the 25/75 terms names them without any amount; any 
   // A sent FINAL_25_75 quote's unsent revision is sent on today's sent-quote terms (SENT_25_75), so it names those.
   assert.deepEqual([sentRevision.estimate.withheld, sentRevision.estimate.termsVersion, sentRevision.estimate.heldSigned], [true, '2026-10-19-deposit25-on-approval', undefined], 'an unsent revision is sent for approval');
   assert.match(sentRevision.estimate.terms, /The amounts are shown when your estimate is sent to you, and nothing is due before then\./);
-  assert.match(sentRevision.estimate.terms, /25% deposit due when you approve your estimate; 75% remainder due on the job day 2026-10-20 \(America\/Denver\)\./);
+  assert.match(sentRevision.estimate.terms, /25% deposit due when you approve your estimate; 75% remainder due when your job is complete, scheduled for 2026-10-20 \(America\/Denver\)\./);
   assert.doesNotMatch(sentRevision.estimate.terms, /upfront|on completion/);
-  assert.match((await view('job-paid-more')).estimate.terms, /50% deposit; 50% remainder due on the job day 2026-10-20/);
+  assert.match((await view('job-paid-more')).estimate.terms, /50% deposit; 50% remainder due when your job is complete, scheduled for 2026-10-20/);
   // Signed on the earlier 50% terms: the portal's own wording and version, as before.
   const legacy = await view('job-legacy');
   assert.deepEqual([legacy.estimate.withheld, legacy.estimate.terms, legacy.estimate.termsVersion, legacy.estimate.heldSigned], [true, CUSTOMER_PORTAL_CONTENT.estimateTerms, CUSTOMER_PORTAL_TERMS_VERSION, true]);
   assert.equal(withheldQuotePaymentSummary({ commercialPolicy: { ...FINAL_25_75, depositPct: 50 } }), null, 'only a verified 25/75 policy');
-  assert.equal(withheldQuotePaymentSummary({ commercialPolicy: { ...SIGNED_25_75 } }).text, '25% deposit; 75% remainder due on the job day. The amounts are shown when your estimate is sent to you, and nothing is due before then.', 'no schedule: no date');
-  assert.equal(withheldQuotePaymentSummary({ commercialPolicy: { ...SIGNED_25_75 } }, { signed: true }).text, '25% deposit; 75% remainder due on the job day. Your job is booked and our team is confirming its prices: the amounts are shown when we send you the updated total, and nothing is due before then.');
-  assert.equal(withheldQuotePaymentSummary({ commercialPolicy: { ...SENT_25_75 } }).text, '25% deposit due when you approve your estimate; 75% remainder due on the job day. The amounts are shown when your estimate is sent to you, and nothing is due before then.');
+  assert.equal(withheldQuotePaymentSummary({ commercialPolicy: { ...SIGNED_25_75 } }).text, '25% deposit; 75% remainder due when your job is complete. The amounts are shown when your estimate is sent to you, and nothing is due before then.', 'no schedule: no date');
+  assert.equal(withheldQuotePaymentSummary({ commercialPolicy: { ...SIGNED_25_75 } }, { signed: true }).text, '25% deposit; 75% remainder due when your job is complete. Your job is booked and our team is confirming its prices: the amounts are shown when we send you the updated total, and nothing is due before then.');
+  assert.equal(withheldQuotePaymentSummary({ commercialPolicy: { ...SENT_25_75 } }).text, '25% deposit due when you approve your estimate; 75% remainder due when your job is complete. The amounts are shown when your estimate is sent to you, and nothing is due before then.');
 });
 
 // Firestore (the job and the checkout ledger) and Stripe Checkout, for the real portal payment path.
@@ -101,10 +101,10 @@ function paymentStore(t, jobs) {
     if (!keys.has(key)) { const id = `cs_test_gap_${sessions.size + 1}`; keys.set(key, id); created.push(params); sessions.set(id, { id, status: 'open', url: `https://checkout.stripe.com/c/pay/${id}`, amount_total: Number(params.get('line_items[0][price_data][unit_amount]')) }); }
     return Response.json(sessions.get(keys.get(key)));
   });
-  return { created };
+  return { created, job: id => structuredClone(docs.get(`jobs/${id}`)?.value) };
 }
 
-test('Stripe Checkout names a 25/75 deposit by its split and the job day its remainder is due (the rest of a part-paid one without a percent); legacy jobs keep their wording', async t => {
+test('Stripe Checkout names a 25/75 deposit by its split and its remainder due when the job is complete (the rest of a part-paid one without a percent); legacy jobs keep their wording', async t => {
   const stripeEnv = { ...env, STRIPE_SECRET_KEY: 'sk_test_synthetic_gap_fixes' };
   const sent = signedJob({ customerApproval: { status: 'approved', approvedAt: '2026-10-19T16:00:00.000Z', approvedBy: 'Synthetic Customer' } }, { status: 'approved', acceptanceMethod: undefined, source: 'quote_draft', termsVersion: FINAL_25_75.version, commercialPolicy: { ...FINAL_25_75 },
     paymentSchedule: { depositCents: 62398, remainderCents: 187192, depositDueDate: '2026-10-13', remainderDueDate: '2026-10-20', timeZone: 'America/Denver', policyVersion: FINAL_25_75.version } });
@@ -113,12 +113,12 @@ test('Stripe Checkout names a 25/75 deposit by its split and the job day its rem
   const line = params => [params.get('line_items[0][price_data][product_data][name]'), params.get('line_items[0][price_data][product_data][description]'), params.get('line_items[0][price_data][unit_amount]')];
   for (const id of ['job-signed', 'job-sent']) {
     assert.equal((await pay(id)).status, 200, id);
-    assert.deepEqual(line(f.created.at(-1)), ['Easy Garage Cleaning — 25% deposit', 'Garage transformation. Applied to your approved quote; the remaining 75% is due on the job day, Tuesday, October 20, 2026.', '62398'], id);
+    assert.deepEqual(line(f.created.at(-1)), ['Easy Garage Cleaning — 25% deposit', 'Garage transformation. Applied to your approved quote; the remaining 75% is due when your job is complete (scheduled for Tuesday, October 20, 2026).', '62398'], id);
   }
   assert.equal((await pay('job-legacy')).status, 200);
   assert.deepEqual(line(f.created.at(-1)), ['Easy Garage Cleaning — upfront deposit', 'Garage transformation. Applied to your approved quote; remaining balance due on completion.', '124795']);
   const paid = await pay('job-paid');
-  assert.deepEqual([paid.status, paid.body.error], [409, 'Your deposit is paid. The remaining balance is due on the job day, Tuesday, October 20, 2026.']);
+  assert.deepEqual([paid.status, paid.body.error], [409, 'Your deposit is paid. The remaining balance is due when your job is complete (scheduled for Tuesday, October 20, 2026).']);
   const legacyPaid = await pay('job-legacy-paid');
   assert.deepEqual([legacyPaid.status, legacyPaid.body.error], [409, 'Your deposit is paid. The remaining balance is due on completion.']);
   assert.equal(f.created.length, 3, 'no checkout opened for a paid deposit');
@@ -127,7 +127,7 @@ test('Stripe Checkout names a 25/75 deposit by its split and the job day its rem
   const g = paymentStore(t, { 'job-part': part });
   const partPaid = await portalPost(portalHandlers(), await portalCookie('job-part'), { action: 'create_payment', request_id: 'synthetic-job-part' }, stripeEnv);
   assert.equal(partPaid.status, 200);
-  assert.deepEqual(line(g.created.at(-1)), ['Easy Garage Cleaning — remaining deposit', 'Garage transformation. Applied to your approved quote; the remaining 75% is due on the job day, Tuesday, October 20, 2026.', '39898']);
+  assert.deepEqual(line(g.created.at(-1)), ['Easy Garage Cleaning — remaining deposit', 'Garage transformation. Applied to your approved quote; the remaining 75% is due when your job is complete (scheduled for Tuesday, October 20, 2026).', '39898']);
   assert.equal(paymentDateLabel('2026-10-20'), 'Tuesday, October 20, 2026');
 });
 
@@ -141,20 +141,20 @@ test('a quote sent on SENT_25_75 says the deposit is due on approval in the port
   const final = sentOnApproval({}, { termsVersion: FINAL_25_75.version, commercialPolicy: { ...FINAL_25_75 }, paymentSchedule: { depositCents: 62398, remainderCents: 187192, depositDueDate: '2026-10-13', remainderDueDate: '2026-10-20', timeZone: 'America/Denver', policyVersion: FINAL_25_75.version } });
   const store = portalStore(t, { 'job-sent': sentOnApproval(), 'job-final': final }), handlers = portalHandlers();
   const cookie = await portalCookie('job-sent'), before = (await portalView(handlers, cookie)).body;
-  assert.equal(before.estimate.terms, 'This flat-rate estimate covers the scope shown. 25% deposit $623.98 due on approval; 75% remainder $1,871.92 due 2026-10-20 (America/Denver). Any material scope change requires your approval before additional work or charges.');
+  assert.equal(before.estimate.terms, 'This flat-rate estimate covers the scope shown. 25% deposit $623.98 due on approval; 75% remainder $1,871.92 due when the job is complete, scheduled for 2026-10-20 (America/Denver). Any material scope change requires your approval before additional work or charges.');
   assert.deepEqual([before.estimate.termsVersion, before.estimate.approvable, before.estimate.paymentSchedule.depositDueDate, before.estimate.paymentSchedule.depositDueOn], [SENT_25_75.version, true, null, 'approval']);
   assert.deepEqual([before.payment.purpose, before.payment.dueNow], ['deposit', 623.98]);
   const sentDoc = moneyDocumentModel({ ...store.job('job-sent'), id: 'job-sent' }, { kind: 'estimate', now: '2026-09-22T18:00:00.000Z' });
   assert.deepEqual(sentDoc.dates.find(([label]) => label === '25% deposit due'), ['25% deposit due', 'When you approve this estimate']);
   assert.ok(sentDoc.rows.some(row => row.label === '25% deposit due on approval' && row.cents === 62398));
-  assert.match(sentDoc.terms, /25% deposit \$623\.98 due on approval; 75% remainder \$1,871\.92 due 2026-10-20 \(America\/Denver\)\./);
+  assert.match(sentDoc.terms, /25% deposit \$623\.98 due on approval; 75% remainder \$1,871\.92 due when the job is complete, scheduled for 2026-10-20 \(America\/Denver\)\./);
   // The approval binds the terms the page showed.
   const approved = await portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: 1, amount_cents: 249590, estimate_fingerprint: before.estimate.fingerprint, terms_version: before.estimate.termsVersion, request_id: randomUUID() });
   assert.equal(approved.status, 200, JSON.stringify(approved.body));
   assert.equal(approved.body.approval.termsVersion, SENT_25_75.version);
   const after = (await portalView(handlers, cookie)).body, saved = { ...store.job('job-sent'), id: 'job-sent' };
   assert.equal(after.estimate.status, 'approved');
-  assert.match(after.estimate.terms, /25% deposit \$623\.98 due on approval \(2026-09-22\); 75% remainder \$1,871\.92 due 2026-10-20 \(America\/Denver\)\./);
+  assert.match(after.estimate.terms, /25% deposit \$623\.98 due on approval \(2026-09-22\); 75% remainder \$1,871\.92 due when the job is complete, scheduled for 2026-10-20 \(America\/Denver\)\./);
   assert.deepEqual([after.estimate.paymentSchedule.depositDueDate, after.payment.purpose, after.payment.dueNow], ['2026-09-22', 'deposit', 623.98], 'payable right after approval, due that day');
   assert.equal(saved.estimate.paymentSchedule.depositDueDate, null, 'the saved schedule is not rewritten');
   const approvedDoc = moneyDocumentModel(saved, { kind: 'estimate', now: '2026-09-22T18:30:00.000Z' });
@@ -163,7 +163,7 @@ test('a quote sent on SENT_25_75 says the deposit is due on approval in the port
   for (const doc of [sentDoc, approvedDoc]) assert.doesNotMatch(JSON.stringify([doc.dates, doc.rows, doc.terms, doc.payNote]), /upfront|on completion|seven days|null/i);
   // Already sent on FINAL_25_75: its recorded deposit date, on the portal and the document.
   const finalView = (await portalView(handlers, await portalCookie('job-final'))).body;
-  assert.match(finalView.estimate.terms, /25% deposit \$623\.98 due 2026-10-13; 75% remainder \$1,871\.92 due 2026-10-20 \(America\/Denver\)\./);
+  assert.match(finalView.estimate.terms, /25% deposit \$623\.98 due 2026-10-13; 75% remainder \$1,871\.92 due when the job is complete, scheduled for 2026-10-20 \(America\/Denver\)\./);
   assert.deepEqual([finalView.estimate.termsVersion, finalView.estimate.paymentSchedule.depositDueDate, finalView.estimate.paymentSchedule.depositDueOn], [FINAL_25_75.version, '2026-10-13', undefined]);
   assert.deepEqual(moneyDocumentModel({ ...final, id: 'job-final' }, { kind: 'estimate', now: '2026-09-22T18:00:00.000Z' }).dates.find(([label]) => label === '25% deposit due'), ['25% deposit due', 'October 13, 2026']);
 });
@@ -177,7 +177,7 @@ test('a SENT_25_75 quote approved after its saved job day dates the deposit by t
   assert.equal(approved.status, 200, JSON.stringify(approved.body));
   const after = (await portalView(handlers, cookie)).body, saved = { ...store.job('job-late'), id: 'job-late' };
   assert.equal(saved.estimate.acceptedAt, at);
-  assert.equal(after.estimate.terms, 'This flat-rate estimate covers the scope shown. 25% deposit $623.98 due on approval (2026-10-29); 75% remainder $1,871.92 due 2026-10-20 (America/Denver). Any material scope change requires your approval before additional work or charges.');
+  assert.equal(after.estimate.terms, 'This flat-rate estimate covers the scope shown. 25% deposit $623.98 due on approval (2026-10-29); 75% remainder $1,871.92 due when the job is complete, scheduled for 2026-10-20 (America/Denver). Any material scope change requires your approval before additional work or charges.');
   assert.deepEqual([after.estimate.paymentSchedule.depositDueDate, after.estimate.paymentSchedule.remainderDueDate], ['2026-10-29', '2026-10-20']);
   assert.equal(saved.estimate.paymentSchedule.depositDueDate, null, 'the saved schedule is not rewritten');
   const doc = moneyDocumentModel(saved, { kind: 'estimate', now: at });
@@ -186,14 +186,14 @@ test('a SENT_25_75 quote approved after its saved job day dates the deposit by t
   assert.doesNotMatch(JSON.stringify([doc.dates.find(([label]) => label === '25% deposit due'), doc.rows.filter(row => /deposit/.test(row.label)).map(row => row.label)]), /2026-10-20|October 20/, 'the deposit is never dated by the job day');
 });
 
-test('Stripe Checkout and the receipt for a quote sent on SENT_25_75 say the deposit was due on approval and the 75% on the job day', async t => {
+test('Stripe Checkout and the receipt for a quote sent on SENT_25_75 say the deposit was due on approval and the 75% when the job is complete', async t => {
   const stripeEnv = { ...env, STRIPE_SECRET_KEY: 'sk_test_synthetic_gap_fixes' };
   const approved = sentOnApproval({ customerApproval: { status: 'approved', approvedAt: '2026-09-22T17:00:00.000Z', approvedBy: 'Synthetic Customer', source: 'customer_portal', termsVersion: SENT_25_75.version }, quoteStatus: 'approved' }, { status: 'approved', acceptedAt: '2026-09-22T17:00:00.000Z', acceptedBy: 'Synthetic Customer' });
   const f = paymentStore(t, { 'job-approved': approved, 'job-unapproved': sentOnApproval() });
   const line = params => [params.get('line_items[0][price_data][product_data][name]'), params.get('line_items[0][price_data][product_data][description]'), params.get('line_items[0][price_data][unit_amount]')];
   const paid = await portalPost(portalHandlers(), await portalCookie('job-approved'), { action: 'create_payment', request_id: 'synthetic-sent-approved' }, stripeEnv);
   assert.equal(paid.status, 200, JSON.stringify(paid.body));
-  assert.deepEqual(line(f.created.at(-1)), ['Easy Garage Cleaning — 25% deposit', 'Garage transformation. Due on approval of your quote; the remaining 75% is due on the job day, Tuesday, October 20, 2026.', '62398']);
+  assert.deepEqual(line(f.created.at(-1)), ['Easy Garage Cleaning — 25% deposit', 'Garage transformation. Due on approval of your quote; the remaining 75% is due when your job is complete (scheduled for Tuesday, October 20, 2026).', '62398']);
   const early = await portalPost(portalHandlers(), await portalCookie('job-unapproved'), { action: 'create_payment', request_id: 'synthetic-sent-unapproved' }, stripeEnv);
   assert.notEqual(early.status, 200, 'nothing is charged before the approval');
   assert.equal(f.created.length, 1);
@@ -201,7 +201,7 @@ test('Stripe Checkout and the receipt for a quote sent on SENT_25_75 say the dep
   // document lists the 25/75 dates, the deposit's the approval day. An issued invoice keeps only its own due date.
   const paidJob = { ...approved, ...PAID, invoice: { amount: 2495.9, paid: 623.98, balance: 1871.92, status: 'partial' }, id: 'job-approved' };
   const receipt = moneyDocumentModel(paidJob, { kind: 'receipt', now: '2026-09-22T18:00:00.000Z' }), invoice = moneyDocumentModel(paidJob, { kind: 'invoice', now: '2026-09-22T18:00:00.000Z' });
-  assert.deepEqual(invoice.dates, [['Issued', 'Not issued yet'], ['Payment due', 'Not specified'], ['25% deposit due', 'On approval, September 22, 2026'], ['75% remainder due', 'October 20, 2026'], ['Business timezone', 'America/Denver']]);
+  assert.deepEqual(invoice.dates, [['Issued', 'Not issued yet'], ['Payment due', 'Not specified'], ['25% deposit due', 'On approval, September 22, 2026'], ['75% remainder due', 'When the job is complete, scheduled for October 20, 2026'], ['Business timezone', 'America/Denver']]);
   for (const doc of [receipt, invoice]) assert.doesNotMatch(JSON.stringify([doc.dates, doc.rows, doc.terms, doc.payNote]), /upfront|on completion|seven days|null/i);
   const issued = moneyDocumentModel({ ...paidJob, invoice: { ...paidJob.invoice, number: 'INV-SYN1', status: 'issued', issuedAt: '2026-10-21T16:00:00.000Z', dueDate: '2026-10-28' } }, { kind: 'invoice', now: '2026-10-21T18:00:00.000Z' });
   assert.deepEqual(issued.dates, [['Issued', 'October 21, 2026'], ['Payment due', 'October 28, 2026']]);
@@ -343,3 +343,66 @@ test('the public FAQ, the prep guide and the business rate card state the 25% de
   assert.doesNotMatch(terms.join(' '), /50%|on completion/);
   for (const copy of [faq, guide, terms.join(' ')]) assert.doesNotMatch(copy, /seven days|7 days|by the date on|on completion/i, 'no seven-day or completion deposit is promised');
 });
+
+// QA 2026-10-30: Dispatch moved a 25/75 job a week later after its deposit was paid, and the portal, Stripe Checkout and
+// the estimate documents still named the old saved day for the 75%. Owner decision 2026-10-30: the 75% is due when the
+// job is complete, so every surface the customer reads says so, with the job's current appointment day as context and
+// never the saved day. A job keeps the terms it was signed on: its saved schedule is never rewritten, and the amounts and
+// what is charged do not change.
+test('after Dispatch moves a 25/75 job, every customer surface says the 75% is due when the job is complete, scheduled for its new day; the saved schedule is kept', async t => {
+  const MOVED = '2026-10-27', stripeEnv = { ...env, STRIPE_SECRET_KEY: 'sk_test_synthetic_gap_fixes' };
+  const f = paymentStore(t, { 'job-moved': signedJob({ date: MOVED }), 'job-moved-paid': signedJob({ ...PAID, date: MOVED }), 'job-moved-held': signedJob({ ...HELD, date: MOVED }), 'job-moved-sent': sentOnApproval({ date: MOVED }), 'job-unbooked': signedJob({ date: '' }) });
+  const handlers = portalHandlers(), view = async id => (await portalView(handlers, await portalCookie(id))).body;
+  const onScreen = body => JSON.stringify([body.estimate.terms, body.appointment]);
+  // The portal: the appointment and the estimate terms (the payment card words it from the appointment day).
+  for (const id of ['job-moved', 'job-moved-paid', 'job-moved-sent']) {
+    const body = await view(id);
+    assert.equal(body.appointment.date, MOVED, id);
+    assert.match(body.estimate.terms, /75% remainder \$1,871\.92 due when the job is complete, scheduled for 2026-10-27 \(America\/Denver\)\./, id);
+    assert.doesNotMatch(onScreen(body), /2026-10-20|job day/, `${id}: the old saved day is never named`);
+    assert.deepEqual([body.estimate.paymentSchedule.remainderDueDate, body.estimate.paymentSchedule.remainderCents], ['2026-10-20', 187192], `${id}: the saved schedule is served as signed`);
+  }
+  assert.match((await view('job-moved-held')).estimate.terms, /25% deposit; 75% remainder due when your job is complete, scheduled for 2026-10-27 \(America\/Denver\)\./, 'a withheld quote names the new day too');
+  const unbooked = await view('job-unbooked');
+  assert.match(unbooked.estimate.terms, /75% remainder \$1,871\.92 due when the job is complete \(America\/Denver\)\./, 'no booked day: no day is named');
+  assert.doesNotMatch(onScreen(unbooked), /2026-10-20/);
+  // A sent quote approved after the move: the approval binds the page it showed.
+  const sent = await view('job-moved-sent');
+  const approved = await portalPost(handlers, await portalCookie('job-moved-sent'), { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: 1, amount_cents: 249590, estimate_fingerprint: sent.estimate.fingerprint, terms_version: sent.estimate.termsVersion, request_id: randomUUID() });
+  assert.equal(approved.status, 200, JSON.stringify(approved.body));
+  // Stripe Checkout: the same amount, described with the completion rule and the new day.
+  const line = params => [params.get('line_items[0][price_data][product_data][name]'), params.get('line_items[0][price_data][product_data][description]'), params.get('line_items[0][price_data][unit_amount]')];
+  assert.equal((await portalPost(handlers, await portalCookie('job-moved'), { action: 'create_payment', request_id: 'synthetic-job-moved' }, stripeEnv)).status, 200);
+  assert.deepEqual(line(f.created.at(-1)), ['Easy Garage Cleaning — 25% deposit', 'Garage transformation. Applied to your approved quote; the remaining 75% is due when your job is complete (scheduled for Tuesday, October 27, 2026).', '62398']);
+  const paid = await portalPost(handlers, await portalCookie('job-moved-paid'), { action: 'create_payment', request_id: 'synthetic-job-moved-paid' }, stripeEnv);
+  assert.deepEqual([paid.status, paid.body.error], [409, 'Your deposit is paid. The remaining balance is due when your job is complete (scheduled for Tuesday, October 27, 2026).']);
+  // The estimate and invoice documents.
+  for (const kind of ['estimate', 'invoice']) {
+    const doc = moneyDocumentModel({ ...f.job('job-moved-paid'), id: 'job-moved-paid' }, { kind, now: '2026-10-21T18:00:00.000Z' });
+    assert.deepEqual(doc.dates.find(([label]) => label === '75% remainder due'), ['75% remainder due', 'When the job is complete, scheduled for October 27, 2026'], kind);
+    assert.doesNotMatch(JSON.stringify([doc.dates, doc.rows, doc.terms]), /2026-10-20|October 20|job day/, kind);
+  }
+  const estimateDoc = moneyDocumentModel({ ...f.job('job-moved'), id: 'job-moved' }, { kind: 'estimate', now: '2026-10-21T18:00:00.000Z' });
+  assert.ok(estimateDoc.rows.some(row => row.label === '75% remainder due when the job is complete' && row.cents === 187192), JSON.stringify(estimateDoc.rows));
+  assert.match(estimateDoc.terms, /75% remainder \$1,871\.92 due when the job is complete, scheduled for 2026-10-27 \(America\/Denver\)\./);
+  // The Hub's own printed estimate (MONEY_DOCUMENT_ENABLED off, the default).
+  const suite = read('employee-suite.js'), source = ['const esc=', 'const payMoney=', 'function financeState(', 'function customerDocumentTerms(', 'window.opsPrintDocument='].map(prefix => suite.split(/\r?\n/).find(item => item.startsWith(prefix))).join('\n');
+  const print = async job => {
+    let html = '';
+    const win = { document: { write: value => { html += value; }, close() {} } };
+    const context = vm.createContext({ window: { open: () => win }, jobs: () => [job], location: { origin: 'https://easygaragecleaning.com' }, dateLabel: String, Intl });
+    vm.runInContext(source, context);
+    await context.window.opsPrintDocument(job.id, 'estimate');
+    return html.replace(/<style>[^]*<\/style>/, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  };
+  const printed = await print({ ...f.job('job-moved'), id: 'job-moved' });
+  assert.match(printed, /75% remainder due when the job is complete, scheduled for 2026-10-27 \$1,871\.92 /);
+  assert.match(printed, /75% remainder \$1,871\.92 due when the job is complete, scheduled for 2026-10-27 \(America\/Denver\)\./);
+  assert.doesNotMatch(printed, /2026-10-20/);
+  assert.match(await print({ ...f.job('job-unbooked'), id: 'job-unbooked' }), /75% remainder due when the job is complete \$1,871\.92 /, 'no booked day: no day is named');
+  // The agreement itself is unchanged on every job.
+  for (const id of ['job-moved', 'job-moved-paid', 'job-moved-held', 'job-moved-sent', 'job-unbooked']) {
+    assert.deepEqual([f.job(id).estimate.commercialPolicy, f.job(id).estimate.paymentSchedule.remainderDueDate, f.job(id).estimate.paymentSchedule.remainderCents], [id === 'job-moved-sent' ? { ...SENT_25_75 } : { ...SIGNED_25_75 }, '2026-10-20', 187192], id);
+  }
+});
+
