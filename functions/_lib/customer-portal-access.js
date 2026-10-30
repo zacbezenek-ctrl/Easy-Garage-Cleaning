@@ -2,6 +2,7 @@ import { readJob } from './firestore-job.js';
 import { sameOperationalProperty, verifiedAccountRoot } from './dispatch-lineage.js';
 import { readBusinessProjectViewer } from './business-hub-store.js';
 import { customerPortalLinkVersion } from './customer-portal.js';
+import { businessManaged } from './portal-invitation.js';
 
 function accessError(status, code, message) {
   return Object.assign(new Error(message), { status, code });
@@ -28,7 +29,7 @@ export async function readCustomerPortalContext(env, session, {read=readJob, bus
       catch (error) { throw accessError(error.status || 503, 'CUSTOMER_PORTAL_BUSINESS_ACCESS', error.publicMessage || 'Business project access could not be verified.'); }
       const person = { id: session.actorId, name: viewer.name, role: 'Business account', status: 'active', permissions: viewer.permissions };
       return {
-        session: { ...session, permissions: viewer.permissions }, accountJobId: job.id,
+        session: { ...session, permissions: viewer.permissions }, accountJobId: job.id, businessManaged: true,
         jobUpdateTime: job.__updateTime || '', accountUpdateTime: job.__updateTime || '',
         memoryJobId: job.id, memoryUpdateTime: job.__updateTime || '',
         job: { ...job, notes: '', customerMemory: job.customerMemory || {}, customerCollaborators: [person], giftWallet: { cards: [], redemptions: [] }, garageGuard: {}, membership: {} },
@@ -100,6 +101,8 @@ export async function readCustomerPortalContext(env, session, {read=readJob, bus
     linkVersion,
     linkRoot: accountJob.id,
     accountJobId: accountJob.id,
+    // B2B-SAFE: the job or its account root is a company project (M-02), so an owner link here mints no further access.
+    businessManaged: businessManaged(job, accountJob),
     jobUpdateTime: job.__updateTime || '',
     accountUpdateTime: accountJob.__updateTime || '',
     memoryJobId:memoryJob.id,

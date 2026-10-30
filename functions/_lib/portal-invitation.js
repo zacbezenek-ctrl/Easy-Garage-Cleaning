@@ -1,5 +1,5 @@
 import { createCustomerPortalAccessToken, customerPortalConfigured } from './customer-portal.js';
-import { customerPortalLinkAccount } from './customer-portal-revocation.js';
+import { customerPortalAccountRoot, customerPortalLinkAccount } from './customer-portal-revocation.js';
 import { firebaseServiceAccountConfigured, firestoreFetch } from './firebase-service-account.js';
 import { readJob, patchJob, decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js';
 import { pricesPendingApproval } from './quote-model.js';
@@ -48,6 +48,11 @@ export function businessAccountJob(job) {
   const value = job?.businessAccountId;
   return typeof value === 'string' ? value.trim() !== '' : value != null && value !== false;
 }
+
+// Linking marks only the company's project, so a later visit under its account
+// root (customerAccountOwnerJobId, verified as a portal link resolves it) is
+// that company's project too and gets no owner link either (security review M-02).
+export const businessManaged = (job, root) => businessAccountJob(job) || businessAccountJob(root);
 
 // A signed job held for the owner's price approval (pricesPendingApproval) is not an approved quote to share yet.
 export function quoteApproved(job = {}) {
@@ -121,6 +126,7 @@ async function recipient(c, job, beforeWrite) {
 export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = false, now: clock = () => new Date() } = {}) {
   if (!/^[A-Za-z0-9_-]{1,120}$/.test(String(jobId || ''))) return { status: 'needs_job' };
   if (!firebaseServiceAccountConfigured(env)) return { status: 'not_configured', reason: 'secure_storage' };
+  const read = id => readJob(env, id);
   let job;
   try { job = await readJob(env, jobId); } catch { return { status: 'storage_unavailable' }; }
   if (!job) return { status: 'needs_job' };
@@ -147,6 +153,10 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
   };
   if (!job.__updateTime) return { status: 'storage_unavailable' };
   if (businessAccountJob(job)) return save({ status: 'suppressed', reason: 'business_account_job' });
+  // A later visit of a company project, before any HighLevel call. An account root that cannot be verified never sends.
+  let root;
+  try { root = await customerPortalAccountRoot(read, job); } catch { return { status: 'storage_unavailable' }; }
+  if (businessManaged(job, root)) return save({ status: 'suppressed', reason: 'business_account_job' });
   if (job.notify === false) return save({ status: 'suppressed', reason: 'job_notifications_off' });
   const c = config(env);
   if (!customerPortalConfigured(env) || !c.token || !c.locationId) return save({ status: 'not_configured', reason: 'portal_or_highlevel' });
@@ -164,7 +174,8 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
   // revocation (or re-parenting) also ends this invitation. An unverifiable
   // account never sends.
   let account, linkVersion;
-  try { ({ account, linkVersion } = await customerPortalLinkAccount(id => readJob(env, id), current)); } catch { return { status: 'storage_unavailable' }; }
+  try { ({ account, linkVersion } = await customerPortalLinkAccount(read, current)); } catch { return { status: 'storage_unavailable' }; }
+  if (businessManaged(current, account)) return save({ status: 'suppressed', reason: 'business_account_job' });
   const token = await createCustomerPortalAccessToken(env, jobId, clock().getTime(), linkVersion, account.id);
   const url = `${PORTAL}?access=${encodeURIComponent(token)}`;
   const firstName = String(job.customer || '').trim().split(/\s+/)[0].replace(/[<>]/g, '').slice(0, 50);
@@ -193,8 +204,8 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
   try {
     halt = await invitationPause(env);
     if (!halt) {
-      const latest = await readJob(env, jobId);
-      halt = !latest ? { status: 'needs_job' } : pricesPendingApproval(latest) ? { status: 'not_approved', reason: 'prices_pending_approval' } : businessAccountJob(latest) ? { status: 'suppressed', reason: 'business_account_job' }
+      const latest = await readJob(env, jobId), root = latest && await customerPortalAccountRoot(read, latest);
+      halt = !latest ? { status: 'needs_job' } : pricesPendingApproval(latest) ? { status: 'not_approved', reason: 'prices_pending_approval' } : businessManaged(latest, root) ? { status: 'suppressed', reason: 'business_account_job' }
         : latest.notify === false ? { status: 'suppressed', reason: 'job_notifications_off' } : null;
     }
   } catch { halt = { status: 'storage_unavailable' }; }

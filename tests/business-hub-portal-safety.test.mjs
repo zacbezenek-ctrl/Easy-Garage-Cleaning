@@ -35,8 +35,9 @@ const ACTOR_FIELDS = ['approvedByActorId', 'approvedByBusinessAccountId', 'appro
 const approve = { action: 'approve_estimate', signed_name: 'Synthetic Signer', confirmed: true };
 
 // Firestore REST emulation for any collection (versioned updateTime, updateMask
-// patches, 412 on a stale precondition) plus HighLevel call capture.
-function firestore(t, jobs, accounts = { [ACCOUNT]: account }) {
+// patches, 412 on a stale precondition) plus HighLevel call capture. intercept
+// may change documents (put) or answer a request before the emulation does.
+function firestore(t, jobs, accounts = { [ACCOUNT]: account }, intercept = () => undefined) {
   const documents = new Map(), writes = [], highLevel = [], events = [];
   let counter = 0;
   const put = (path, data) => documents.set(path, { data: structuredClone(data), updateTime: `2026-09-22T00:00:00.${String(++counter).padStart(6, '0')}Z` });
@@ -45,7 +46,10 @@ function firestore(t, jobs, accounts = { [ACCOUNT]: account }) {
   const body = path => ({ name: `projects/egcw-1ec83/databases/(default)/documents/${path}`, fields: encodeFirestoreFields(documents.get(path).data), updateTime: documents.get(path).updateTime });
   t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
     const url = new URL(input), method = options.method || 'GET';
-    if (url.hostname === 'services.leadconnectorhq.com') { highLevel.push(url.pathname); return Response.json({}, { status: 500 }); }
+    if (url.hostname === 'services.leadconnectorhq.com') highLevel.push(url.pathname);
+    const answer = await intercept({ url, method, options, put });
+    if (answer) return answer;
+    if (url.hostname === 'services.leadconnectorhq.com') return Response.json({}, { status: 500 });
     assert.equal(url.hostname, 'firestore.googleapis.com', `Unexpected external request to ${url.hostname}`);
     // FUN-03: portal writers commit the job change with its funnel events.
     if (url.pathname.endsWith('/documents:commit')) {
@@ -197,6 +201,78 @@ test('the portal offers collaborator invitations only on an owner session for a 
     const view = await call(await viewer());
     assert.equal(view.status, 200);
     assert.equal(view.body.experience.invitesAvailable, expected);
+  });
+});
+
+// Security review M-02: linking a company project marks only that job. A later
+// visit under the same account root (customerAccountOwnerJobId) carries no
+// businessAccountId of its own, yet is still the company's project, so it gets
+// no homeowner owner link either, exactly as message-links and the customer
+// account sign-in already refuse it.
+const visit = (root, extra = {}) => ({ 'root-1': job({ ...root, status: 'completed' }), 'job-1': job({ customerAccountOwnerJobId: 'root-1', ...extra }) });
+const approvedVisit = { estimate: { ...job().estimate, status: 'approved' } };
+const linkRoot = put => put('jobs/root-1', job({ ...LINK, status: 'completed' }));
+
+test('M-02: staff cannot copy a homeowner owner link for a later visit of a company project', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
+  const f = firestore(t, { ...visit(LINK), 'root-2': job(UNLINKED), 'job-2': job({ customerAccountOwnerJobId: 'root-2' }) });
+  const staff = (await createHubSessionCookie(env, 'ZacB')).split(';')[0], link = customerPortalLinkHandler({ now: () => new Date(NOW) });
+  const request = jobId => new Request(`${origin}/api/customer-portal-link`, { method: 'POST', headers: { Origin: origin, Cookie: staff, 'Content-Type': 'application/json' }, body: JSON.stringify({ job_id: jobId }) });
+  const refused = await link({ env, request: request('job-1') });
+  assert.equal(refused.status, 409);
+  const body = await refused.json();
+  assert.equal(body.url, undefined);
+  assert.match(body.error, /Business Hub/);
+  assert.deepEqual(f.writes, [], 'the visit is not marked as having a portal link');
+  const homeowner = await link({ env, request: request('job-2') });
+  assert.equal(homeowner.status, 200, 'a visit under a homeowner account still gets its link');
+  assert.match((await homeowner.json()).url, /access=/);
+});
+
+test('M-02: an approved later visit of a company project records a suppression and never calls HighLevel', async t => {
+  for (const [name, root, expected, highLevel] of [['company root', LINK, 'suppressed', []], ['homeowner root', UNLINKED, 'needs_contact', ['/contacts/contact-1']]]) await t.test(name, async st => {
+    const f = firestore(st, visit(root, approvedVisit));
+    const state = await sendAcceptedQuotePortal(withHighLevel, 'job-1', { now: () => new Date(NOW) });
+    assert.equal(state.status, expected);
+    if (expected === 'suppressed') {
+      assert.deepEqual(state, { jobId: 'job-1', requestedAt: NOW, attemptedAt: NOW, attempts: 1, status: 'suppressed', reason: 'business_account_job' });
+      assert.deepEqual(f.doc('portal_invitations/job-1'), state, 'the server-only ledger holds the suppression');
+    }
+    assert.deepEqual(f.highLevel, highLevel, 'a company visit gets no contact lookup, upsert or message');
+  });
+});
+
+test('M-02: a company link saved on the visit\'s account root mid-send stops the invitation before HighLevel is messaged', async t => {
+  const contact = { contact: { id: 'contact-1', locationId: 'location-1', phone: '+19705550142', email: 'tenant@example.invalid', dnd: false } };
+  for (const [name, when] of [['never linked (control)', ''], ['linked while HighLevel is checked', 'contact'], ['linked after the delivery claim', 'claim']]) await t.test(name, async st => {
+    const f = firestore(st, visit(UNLINKED, approvedVisit), undefined, ({ url, method, options, put }) => {
+      const claim = method === 'PATCH' && url.pathname.endsWith('/portal_invitations/job-1') && decodeFirestoreFields(JSON.parse(options.body).fields).status === 'sending';
+      if ((when === 'contact' && url.pathname === '/contacts/contact-1') || (when === 'claim' && claim)) linkRoot(put);
+      if (url.pathname === '/contacts/contact-1') return Response.json(contact);
+      if (url.pathname === '/conversations/messages') return Response.json({ messageId: 'message-1', conversationId: 'conversation-1' });
+    });
+    const state = await sendAcceptedQuotePortal(withHighLevel, 'job-1', { now: () => new Date(NOW) });
+    if (!when) {
+      assert.equal(state.status, 'submitted', 'fixture: an unlinked visit is invited');
+      return assert.ok(f.highLevel.includes('/conversations/messages'));
+    }
+    assert.deepEqual([state.status, state.reason], ['suppressed', 'business_account_job']);
+    assert.deepEqual([f.doc('portal_invitations/job-1').status, f.doc('portal_invitations/job-1').reason], ['suppressed', 'business_account_job'], 'recorded, and any claim released');
+    assert.equal(f.highLevel.includes('/conversations/messages'), false, 'no message is sent');
+  });
+});
+
+test('M-02: a homeowner link on a later visit of a company project offers and mints no collaborator invitations', async t => {
+  for (const [name, root, available, status] of [['company root', LINK, false, 403], ['homeowner root', UNLINKED, true, 200]]) await t.test(name, async st => {
+    const f = firestore(st, visit(root));
+    const view = await call(await cookie());
+    assert.equal(view.status, 200);
+    assert.deepEqual([view.body.viewer.owner, view.body.experience.invitesAvailable], [true, available]);
+    const invite = await call(await cookie(), { action: 'create_collaborator_invite', person_id: 'person-1' });
+    assert.equal(invite.status, status);
+    if (!available) assert.deepEqual([invite.body.code, invite.body.url], ['CUSTOMER_PORTAL_BUSINESS_PROJECT', undefined]);
+    else assert.match(invite.body.url, /access=/);
+    assert.deepEqual(f.writes, []);
   });
 });
 

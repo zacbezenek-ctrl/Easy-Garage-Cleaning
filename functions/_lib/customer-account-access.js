@@ -17,7 +17,7 @@ import { customerMoneyState, customerPaymentNeedsReview } from './customer-payme
 import { denverToday } from './dispatch-time.js';
 import { customerAccountId, portalSessionVersion } from './customer-account-session.js';
 import { projectReleased } from './business-hub-core.js';
-import { businessAccountJob } from './portal-invitation.js';
+import { businessManaged } from './portal-invitation.js';
 import { hasBusinessAccess } from './hub-session.js';
 import { auditWrite } from './hub-audit.js';
 
@@ -56,7 +56,6 @@ const operational = row => Boolean(row && customerAccountId(row.id) && !row.reco
 const cursor = value => typeof value === 'string' && value.length <= 1500 && !value.includes('/') && value !== '.' && value !== '..';
 const stage = job => { const raw = String(job.pipelineStatus || job.status || 'scheduled').toLowerCase(); return raw === 'canceled' || raw === 'lost' ? 'cancelled' : STAGES.has(raw) ? raw : 'scheduled'; };
 const hidden = job => ['superseded'].includes(String(job.pipelineStatus || job.status || '').toLowerCase());
-const businessManaged = (job, root) => businessAccountJob(job) || businessAccountJob(root);
 
 function decode(document) {
   const prefix = `${ROOT}/jobs/`, name = document?.name;

@@ -1,7 +1,7 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { createCustomerPortalAccessToken } from '../_lib/customer-portal.js';
 import { customerPortalLinkAccount } from '../_lib/customer-portal-revocation.js';
-import { businessAccountJob } from '../_lib/portal-invitation.js';
+import { businessAccountJob, businessManaged } from '../_lib/portal-invitation.js';
 import { readJob, patchJob } from '../_lib/firestore-job.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
@@ -29,7 +29,8 @@ export function customerPortalLinkHandler({ now = () => new Date() } = {}) {
     const job = await readJob(env, jobId).catch(() => null);
     if (!job) return reply(404, { ok: false, error: 'Job not found' });
     // A homeowner owner link would bypass the company's member roles.
-    if (businessAccountJob(job)) return reply(409, { ok: false, error: 'This job is shared with a business account. Its team opens it from the Business Hub, so no homeowner portal link was created.' });
+    const shared = () => reply(409, { ok: false, error: 'This job is shared with a business account. Its team opens it from the Business Hub, so no homeowner portal link was created.' });
+    if (businessAccountJob(job)) return shared();
     // Embed the account's current version and root: this link works until
     // staff next revoke the account's portal links or re-parent the job.
     let account, linkVersion;
@@ -38,6 +39,8 @@ export function customerPortalLinkHandler({ now = () => new Date() } = {}) {
       if (error.code === 'CUSTOMER_PORTAL_REVOKE_ACCOUNT_REVIEW' || (error.code?.startsWith('dispatch_lineage_') && error.code !== 'dispatch_lineage_missing')) return reply(409, { ok: false, error: 'This job’s customer account needs review before a portal link can be shared' });
       return reply(503, { ok: false, error: 'The customer account could not be loaded. Retry shortly.' });
     }
+    // So would one for a later visit under a company project's account root (M-02).
+    if (businessManaged(job, account)) return shared();
     const current = now();
     const token = await createCustomerPortalAccessToken(env, jobId, current.getTime(), linkVersion, account.id);
     const createdAt = current.toISOString();
