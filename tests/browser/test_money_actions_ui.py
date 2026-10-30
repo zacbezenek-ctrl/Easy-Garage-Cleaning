@@ -34,6 +34,10 @@ const jobs = {
     invoice: { number: 'INV-ABC123', status: 'issued', amount: 1400, dueDate: '2026-09-29', issuedAt: '2026-09-20T18:00:00.000Z' } },
   'job-change': { ...base, total: 1400, estimate: { ...estimate, status: 'accepted' }, customerApproval: { status: 'approved', amount: 1400 }, approvedChangeTotal: 150,
     customerDecisions: [{ id: 'd1', title: 'Haul extra shelving', priceDelta: 150, status: 'approved' }] },
+  // Paid in full by one card charge: a refund or chargeback is recorded from the payment screen.
+  'job-paid': { ...base, status: 'completed', pipelineStatus: 'completed', total: 1400, estimate: { ...estimate, status: 'accepted' }, customerApproval: { status: 'approved', amount: 1400 },
+    payment: { amount: 1400, verified: true, method: 'stripe', stripeSessions: [{ sessionId: 'cs_test_paid', paymentIntentId: 'pi_test_paid', amount: 1400, purpose: 'balance', verifiedAt: '2026-09-22T18:00:00.000Z' }] },
+    invoice: { number: 'INV-ABC123', status: 'paid', amount: 1400, paid: 1400, balance: 0, dueDate: '2026-09-29', issuedAt: '2026-09-20T18:00:00.000Z' } },
 };
 process.stdout.write(JSON.stringify(Object.fromEntries(Object.entries(jobs).map(([id, job]) => [id, moneyProjection({ ...job, id, revision: 'r1' }, NOW)]))));
 '''
@@ -249,6 +253,41 @@ class MoneyActionsBrowserTests(unittest.TestCase):
         self.assertTrue(UUID.match(body['requestId']))
         self.assertEqual({key: body[key] for key in ('action', 'jobId', 'expectedRevision', 'actorId', 'changeOrderId', 'reason')}, {'action': 'change_order.void', 'jobId': 'job-billed', 'expectedRevision': 'r1', 'actorId': 'zacb', 'changeOrderId': 'change-decision-freezer', 'reason': 'The crew left the freezer in place'})
         self.assertEqual(self.page.evaluate('toasts.at(-1)'), 'Approved change voided · nothing was sent to the customer')
+
+    def test_a_refund_or_chargeback_is_recorded_from_the_payment_screen_within_the_service_money_and_nothing_is_sent(self):
+        # A job with no money recorded offers no refund.
+        self.open('job-new', 'payment'); expect(self.page.get_by_role('button', name='Record a refund or chargeback…', exact=True)).to_have_count(0)
+        self.page.get_by_role('button', name='Cancel', exact=True).click()
+        self.open('job-paid', 'payment')
+        expect(self.page.locator('.em-body')).to_contain_text('This job has no balance due.')
+        self.page.get_by_role('button', name='Record a refund or chargeback…', exact=True).click()
+        expect(self.page.locator('#em-title')).to_contain_text('Record a refund or chargeback'); expect(self.primary()).to_have_text('Record refund')
+        body = self.page.locator('.em-body')
+        expect(body).to_contain_text('Paid toward the service $1,400.00 · balance $0.00'); expect(body).to_contain_text('A crew tip is never refunded here.')
+        expect(body).to_contain_text('Nothing is sent to the customer, and the customer portal will not take a card payment on this job until the office settles it.')
+        self.assertEqual(self.label('How it went back').evaluate('el=>[...el.options].map(o=>o.value)'), ['stripe_refund', 'chargeback', 'cash', 'check', 'other'])
+        self.assertEqual(self.label('Why').evaluate('el=>[...el.options].map(o=>o.value)'), ['customer_request', 'duplicate_charge', 'overpaid', 'job_cancelled', 'dispute_lost', 'other'])
+        # Back returns to the payment screen; the refund form opens again empty.
+        self.page.get_by_role('button', name='Back', exact=True).click(); expect(self.page.locator('#em-title')).to_contain_text('Record a payment')
+        self.page.get_by_role('button', name='Record a refund or chargeback…', exact=True).click()
+        for fill, message in [({}, 'Enter the amount that went back'), ({'Amount that went back ($)': '1500'}, 'cannot be more than the $1,400.00 paid toward the service'),
+                              ({'Amount that went back ($)': '250', 'Stripe refund or dispute ID (optional)': 'ch_not_a_refund'}, 'Use the Stripe refund ID'),
+                              ({'Stripe refund or dispute ID (optional)': ''}, None)]:
+            for name, value in fill.items(): self.label(name).fill(value)
+            if message is None: break
+            self.primary().click(); expect(self.page.get_by_role('alert')).to_contain_text(message)
+        self.label('Why').select_option('other'); self.primary().click(); expect(self.page.get_by_role('alert')).to_contain_text('Say why, in the note.')
+        self.assertEqual(self.posts, [])
+        self.label('Why').select_option('dispute_lost'); self.label('How it went back').select_option('chargeback'); self.label('Stripe refund or dispute ID (optional)').fill('dp_synthetic_1')
+        for width in [375, 320]:
+            self.page.set_viewport_size({'width': width, 'height': 812}); self.assertLessEqual(self.page.evaluate("document.querySelector('.egc-money').scrollWidth"), width)
+            heights = self.page.locator('.egc-money button:visible, .egc-money input:visible, .egc-money select:visible').evaluate_all('els=>els.map(e=>e.getBoundingClientRect().height)')
+            self.assertTrue(all(height >= 44 for height in heights), heights)
+        self.primary().click(); expect(self.page.get_by_role('dialog')).to_have_count(0)
+        body = self.posts[-1]; self.assertTrue(UUID.match(body['requestId']))
+        self.assertEqual({key: value for key, value in body.items() if key != 'requestId'}, {'action': 'payment.record_refund', 'jobId': 'job-paid', 'expectedRevision': 'r1', 'actorId': 'zacb', 'amountCents': 25000, 'method': 'chargeback', 'reason': 'dispute_lost', 'stripeRef': 'dp_synthetic_1'})
+        self.assertEqual(self.page.evaluate('toasts.at(-1)'), 'Refund recorded · nothing was sent to the customer')
+        self.assertEqual(self.lifecycle, [], 'a refund starts no HighLevel automation')
 
     def test_flag_turned_off_while_the_dialog_is_open_hands_over_to_the_standard_tools(self):
         self.open('job-invoiced', 'payment')

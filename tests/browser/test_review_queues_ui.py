@@ -219,18 +219,76 @@ class ReviewQueuesBrowserTests(unittest.TestCase):
         expect(page.get_by_role('button', name='Retry original change')).to_have_count(0)
         self.assertIsNone(page.evaluate("Object.keys(sessionStorage).find(key => key.startsWith('egc.hub.pending.v1.reviews')) || null"), 'nothing is kept for a retry that cannot succeed')
 
-    def test_a_refund_on_a_charge_already_on_the_job_needs_the_owner_to_acknowledge_the_job_correction(self):
+    def test_a_refund_on_a_charge_already_on_the_job_needs_the_owner_to_choose_how_the_job_is_corrected(self):
+        # The job counts the charge as paid: the owner must choose to take the refund off the job now, or to correct it by hand.
         self.stripe = stripe_view(can_refund=True); self.stripe['paymentReviews'][0]['recordedOnJob'] = True; self.open(); page = self.page
         self.post_reply = lambda route, path, body: route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'authority': 'employee_hub', 'requestId': body['requestId'], 'action': body['action'], 'replayed': False, 'review': {'id': body['reviewId'], 'status': 'resolved', 'resolution': 'refunded', 'recordedOnJobAtResolution': True}}))
         page.locator('.rv-card').filter(has_text='$500.00').get_by_role('button', name='Record refund').click()
-        dialog = self.dialog(); expect(dialog).to_contain_text('does not change the job')
+        dialog = self.dialog(); expect(dialog).to_contain_text('This charge is already on the job, which counts it as paid. Take the refunded money off the job here, or correct the job’s payment by hand afterwards.')
+        choice = dialog.get_by_label('The job still counts this charge as paid')
+        expect(choice.locator('option')).to_have_text(['Choose how the job is corrected', 'Take the refunded money off the job now', 'I will correct the job’s payment by hand'])
         dialog.get_by_label('Reason').select_option('duplicate_charge'); dialog.get_by_role('button', name='Record refund').click()
-        expect(dialog.get_by_role('alert')).to_have_text('Confirm that you will correct the job’s payment before recording the refund.'); self.assertEqual(self.posts, [])
+        expect(dialog.get_by_role('alert')).to_have_text('Choose how the job’s payment is corrected before recording the refund.'); self.assertEqual(self.posts, [])
         self.assert_mobile()
-        dialog.get_by_label('I will correct the job’s payment').check(); dialog.get_by_role('button', name='Record refund').click()
+        choice.select_option('hand'); dialog.get_by_role('button', name='Record refund').click()
         expect(page.locator('dialog.rv-dialog')).to_have_count(0)
         self.assertEqual({key: self.posts[0][1][key] for key in ('action', 'reason', 'jobPaymentAcknowledged')}, {'action': 'payment.refund', 'reason': 'duplicate_charge', 'jobPaymentAcknowledged': True})
+        self.assertNotIn('recordOnJob', self.posts[0][1])
         expect(page.locator('#toasts')).to_contain_text('The job still counts this charge as paid until its payment is corrected.')
+
+    def test_a_card_dispute_is_closed_by_the_owner_only_and_a_lost_one_needs_its_chargeback_on_the_job_first(self):
+        dispute = {'reviewId': 'cs_test_held:dispute', 'reason': 'payment_disputed', 'recordedOnJob': True, 'disputeId': 'dp_synthetic_1', 'disputeStatus': 'needs_response', 'disputeAmountCents': 50000, 'disputeReason': 'fraudulent', 'chargebackOnJob': False}
+        # A manager sees the dispute and that only the owner settles it: no button closes it and none records a refund.
+        self.stripe = stripe_view(); self.stripe['paymentReviews'][0].update(dispute); self.open(); page = self.page
+        card = page.locator('.rv-card').filter(has_text='$500.00')
+        expect(card).to_contain_text('The customer disputed this charge with their card company (a chargeback).')
+        expect(card.locator('.rv-refund')).to_have_text('Stripe dispute dp_synthetic_1: needs response · $500.00 disputed. If it is lost, record the chargeback on the job under Estimates & payments, with this dispute ID, before closing it.')
+        expect(card.get_by_role('button')).to_have_count(0); expect(card).to_contain_text('A card dispute is settled by the owner.')
+        self.assert_mobile()
+        # The owner closes it with a note; a lost dispute without its chargeback on the job is refused and the note is kept.
+        self.stripe = stripe_view(can_refund=True); self.stripe['paymentReviews'][0].update(dispute)
+        page.get_by_role('button', name='Refresh').click(); expect(page.get_by_role('button', name='Refresh')).to_be_enabled()
+        expect(card.get_by_role('button', name='Record refund')).to_have_count(0)
+        refusal = 'Stripe shows this dispute lost ($500.00), and the job still counts the charge as paid. Record the chargeback on the job under Estimates & payments first (Record a refund or chargeback, Stripe ID dp_synthetic_1), then close this review. Nothing was saved.'
+        def closed(route, path, body):
+            self.stripe = {**self.stripe, 'paymentReviews': []}
+            route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'authority': 'employee_hub', 'requestId': body['requestId'], 'action': body['action'], 'replayed': False,
+                'review': {'id': body['reviewId'], 'kind': 'payment', 'status': 'resolved', 'resolution': 'reconciled', 'amountCents': 50000, 'recordedOnJobAtResolution': True, 'disputeStatus': 'lost'}}))
+        def lost(route, path, body):
+            self.post_reply = closed
+            route.fulfill(status=409, content_type='application/json', body=json.dumps({'ok': False, 'code': 'stripe_review_chargeback_not_recorded', 'error': refusal, 'details': {'disputeId': 'dp_synthetic_1', 'disputeStatus': 'lost', 'disputeAmountCents': 50000, 'recordedOnJob': True}}))
+        self.post_reply = lost
+        card.get_by_role('button', name='Close dispute review').click()
+        dialog = self.dialog(); expect(dialog.get_by_role('heading')).to_have_text('Close this card dispute?')
+        expect(dialog).to_contain_text('record the $500.00 chargeback on the job under Estimates & payments first (Record a refund or chargeback, with Stripe ID dp_synthetic_1)')
+        expect(dialog.locator('.rv-dialog-warning')).to_have_text('No chargeback with this dispute ID is recorded on the job yet.')
+        dialog.get_by_role('button', name='Close review').click(); expect(dialog.get_by_role('alert')).to_have_text('How the dispute ended is required.'); self.assertEqual(self.posts, [])
+        dialog.get_by_label('How the dispute ended').fill('Bank decided for the customer'); dialog.get_by_role('button', name='Close review').click()
+        expect(dialog.get_by_role('alert')).to_have_text(refusal); expect(dialog.get_by_label('How the dispute ended')).to_have_value('Bank decided for the customer')
+        self.assert_mobile()
+        dialog.get_by_role('button', name='Close review').click(); expect(page.locator('dialog.rv-dialog')).to_have_count(0)
+        self.assertEqual([{key: body[key] for key in ('action', 'reviewId', 'note')} for _, body in self.posts], [{'action': 'payment.reconcile', 'reviewId': 'cs_test_held:dispute', 'note': 'Bank decided for the customer'}] * 2)
+        expect(page.locator('#toasts')).to_contain_text('Dispute review closed.')
+
+    def test_the_owner_can_take_a_refund_on_a_charge_already_on_the_job_off_the_job_while_recording_it(self):
+        self.stripe = stripe_view(can_refund=True)
+        self.stripe['paymentReviews'][0].update({'reason': 'payment_refunded', 'refundedCents': 20000, 'keptCents': 30000, 'refundSeenAt': '2026-09-22T17:00:00.000Z', 'recordedOnJob': True})
+        self.open(); page = self.page
+        def saved(route, path, body):
+            self.stripe = {**self.stripe, 'paymentReviews': []}
+            route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'authority': 'employee_hub', 'requestId': body['requestId'], 'action': body['action'], 'replayed': False,
+                'review': {'id': body['reviewId'], 'kind': 'payment', 'status': 'resolved', 'resolution': 'refunded', 'amountCents': 50000, 'refundedCents': 20000, 'keptCents': 30000, 'refundFull': False, 'recordedOnJobAtResolution': True, 'jobRefundCents': 20000}}))
+        self.post_reply = saved
+        page.locator('.rv-card').filter(has_text='$500.00').get_by_role('button', name='Record refund').click()
+        dialog = self.dialog(); choice = dialog.get_by_label('The job still counts this charge as paid')
+        expect(choice.locator('option[value="record"]')).to_have_text('Take $200.00 off the job’s paid total now', use_inner_text=True)
+        dialog.get_by_label('Reason').select_option('duplicate_charge'); choice.select_option('record')
+        self.assert_mobile()
+        dialog.get_by_role('button', name='Record refund').click(); expect(page.locator('dialog.rv-dialog')).to_have_count(0)
+        self.assertEqual({key: self.posts[0][1][key] for key in ('action', 'reason', 'recordOnJob')}, {'action': 'payment.refund', 'reason': 'duplicate_charge', 'recordOnJob': True})
+        self.assertNotIn('jobPaymentAcknowledged', self.posts[0][1], 'one choice only: the server refuses both')
+        expect(page.locator('#toasts')).to_have_text('Refund recorded. $200.00 was taken off the job’s paid total.')
+        expect(page.locator('#toasts')).not_to_contain_text('until its payment is corrected')
 
     def test_a_refund_stripe_showed_after_the_charges_review_was_closed_is_recorded_by_its_follow_up_review_id(self):
         self.stripe = stripe_view(can_refund=True)
@@ -246,8 +304,8 @@ class ReviewQueuesBrowserTests(unittest.TestCase):
                 'review': {'id': body['reviewId'], 'kind': 'payment', 'status': 'resolved', 'resolution': 'refunded', 'amountCents': 50000, 'refundedCents': 50000, 'keptCents': 0, 'refundFull': True, 'recordedOnJobAtResolution': True}}))
         self.post_reply = saved
         card.get_by_role('button', name='Record refund').click()
-        dialog = self.dialog(); expect(dialog).to_contain_text('does not change the job')
-        dialog.get_by_label('Reason').select_option('duplicate_charge'); dialog.get_by_label('I will correct the job’s payment').check(); dialog.get_by_role('button', name='Record refund').click()
+        dialog = self.dialog(); expect(dialog).to_contain_text('Take the refunded money off the job here, or correct the job’s payment by hand afterwards.')
+        dialog.get_by_label('Reason').select_option('duplicate_charge'); dialog.get_by_label('The job still counts this charge as paid').select_option('hand'); dialog.get_by_role('button', name='Record refund').click()
         expect(page.locator('dialog.rv-dialog')).to_have_count(0)
         self.assertEqual({key: self.posts[0][1][key] for key in ('action', 'reviewId', 'expectedRevision', 'jobPaymentAcknowledged')}, {'action': 'payment.refund', 'reviewId': 'cs_test_held:refund', 'expectedRevision': 'rev-p1', 'jobPaymentAcknowledged': True})
         expect(page.locator('#toasts')).to_contain_text('The job still counts this charge as paid until its payment is corrected.')
@@ -265,7 +323,10 @@ class ReviewQueuesBrowserTests(unittest.TestCase):
         expect(card).to_contain_text('A $100.00 refund on this charge was recorded earlier, and Stripe now shows more refunded. If the job was already reduced by $100.00, reduce it only by the difference.')
         self.assert_mobile()
         card.get_by_role('button', name='Record refund').click()
-        dialog = self.dialog(); expect(dialog).to_contain_text('does not change the job'); expect(dialog.get_by_label('I will correct the job’s payment')).to_be_visible()
+        dialog = self.dialog(); choice = dialog.get_by_label('The job still counts this charge as paid'); expect(choice).to_be_visible()
+        # Taking it off the job now takes only the $100.00 beyond the earlier record, never the $200.00 or the $300.00 kept.
+        expect(choice.locator('option[value="record"]')).to_have_text('Take $100.00 off the job’s paid total now (the refund beyond the $100.00 recorded earlier)', use_inner_text=True)
+        expect(choice.locator('option[value="hand"]')).to_have_text('I will correct the job’s payment by hand', use_inner_text=True)
         expect(dialog.get_by_text('kept is not on the job')).to_have_count(0)
         dialog.get_by_role('button', name='Cancel').click()
         # The Command Center says the same: reduce the job, never "record the amount kept".
@@ -415,12 +476,29 @@ class ReviewQueuesBrowserTests(unittest.TestCase):
         page.locator('.rv-card').filter(has_text='$550.00').get_by_role('button', name='Record refund').click()
         dialog = self.dialog(); expect(dialog).to_contain_text('This charge is already on the job, which counts its $500.00 service part as paid (the $50.00 tip is kept apart).')
         dialog.get_by_label('Reason').select_option('other'); dialog.get_by_label('Which part did you refund in Stripe?').select_option('tip')
-        dialog.get_by_label('I will correct the job’s service payment and the crew tip').check()
+        choice = dialog.get_by_label('The job still counts this charge as paid')
+        expect(choice.locator('option[value="record"]')).to_have_text('Take the refunded service money off the job now (the crew tip stays held apart)', use_inner_text=True)
+        choice.select_option('hand')
         self.assert_mobile()
         dialog.get_by_role('button', name='Record refund').click(); expect(page.locator('dialog.rv-dialog')).to_have_count(0)
         self.assertEqual({key: self.posts[0][1][key] for key in ('action', 'jobPaymentAcknowledged', 'tipRefundedFirst')}, {'action': 'payment.refund', 'jobPaymentAcknowledged': True, 'tipRefundedFirst': True})
-        self.assertNotIn('keptCentsAcknowledged', self.posts[0][1])
+        self.assertNotIn('keptCentsAcknowledged', self.posts[0][1]); self.assertNotIn('recordOnJob', self.posts[0][1])
         expect(page.locator('#toasts')).to_contain_text('Refund recorded: $200.00 of $550.00 refunded. Reduce the job’s service payment by $150.00 and pay the crew none of the $50.00 tip.')
+        # Taking it off the job now instead: only the service part comes off; the tip stays held apart.
+        self.stripe = copy.deepcopy(stripe_view(can_refund=True)); self.stripe['paymentReviews'][0].update({**base, 'refundedCents': 20000, 'keptCents': 35000})
+        def taken(route, path, body):
+            self.stripe = {**self.stripe, 'paymentReviews': []}
+            route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'authority': 'employee_hub', 'requestId': body['requestId'], 'action': body['action'], 'replayed': False,
+                'review': {'id': body['reviewId'], 'kind': 'payment', 'status': 'resolved', 'resolution': 'refunded', 'amountCents': 55000, 'refundedCents': 20000, 'keptCents': 35000, 'refundFull': False, 'recordedOnJobAtResolution': True, 'tipCents': 5000, 'keptServiceCents': 35000, 'keptTipCents': 0, 'tipRefundedFirst': True, 'jobRefundCents': 15000}}))
+        self.post_reply = taken
+        page.get_by_role('button', name='Refresh').click(); expect(page.get_by_role('button', name='Refresh')).to_be_enabled()
+        page.locator('.rv-card').filter(has_text='$550.00').get_by_role('button', name='Record refund').click()
+        dialog = self.dialog(); dialog.get_by_label('Reason').select_option('other'); dialog.get_by_label('Which part did you refund in Stripe?').select_option('tip')
+        dialog.get_by_label('The job still counts this charge as paid').select_option('record'); dialog.get_by_role('button', name='Record refund').click()
+        expect(page.locator('dialog.rv-dialog')).to_have_count(0)
+        self.assertEqual({key: self.posts[1][1][key] for key in ('action', 'recordOnJob', 'tipRefundedFirst')}, {'action': 'payment.refund', 'recordOnJob': True, 'tipRefundedFirst': True})
+        self.assertNotIn('jobPaymentAcknowledged', self.posts[1][1])
+        expect(page.locator('#toasts')).to_contain_text('Refund recorded. $150.00 was taken off the job’s paid total; the crew tip is held for the owner apart.')
         # The Command Center never names a lump amount for a tipped charge.
         self.stripe = copy.deepcopy(stripe_view()); self.stripe['paymentReviews'][0].update({**base, 'refundedCents': 20000, 'keptCents': 35000})
         page.goto(self.url + '/hub-alerts')

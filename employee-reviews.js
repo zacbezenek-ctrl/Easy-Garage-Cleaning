@@ -132,7 +132,7 @@ function openDialog({title,copy,warning='',fields=[],confirmLabel,danger=false,d
     for(const spec of fields){
       const control=form.querySelector('[name="'+spec.name+'"]');
       if(spec.type==='checkbox'){values[spec.name]=control?.checked===true;if(spec.required&&!values[spec.name]){error.textContent=spec.requiredText||'Tick the box to continue.';error.hidden=false;control?.focus?.();return;}continue;}
-      values[spec.name]=String(control?.value??'').trim();if(spec.required&&!values[spec.name]){error.textContent=spec.label+' is required.';error.hidden=false;control?.focus?.();return;}
+      values[spec.name]=String(control?.value??'').trim();if(spec.required&&!values[spec.name]){error.textContent=spec.requiredText||spec.label+' is required.';error.hidden=false;control?.focus?.();return;}
     }
     error.hidden=true;S.busy=true;confirmButton.disabled=true;cancel.disabled=true;confirmButton.setAttribute('aria-busy','true');
     let message='';
@@ -252,6 +252,12 @@ function refundNotice(data,row={}){
   if(onJob)return 'Refund recorded. The job still counts this charge as paid until its payment is corrected.';
   return split?'Refund recorded: Stripe shows the full '+money(split.amountCents)+' refunded.':'Refund recorded.';
 }
+// The "take it off the job now" choice for an untipped charge on its job: the refund beyond what an earlier record of the
+// same charge already took off (the server takes exactly that), named when the queue knows it.
+function takeOff(row){
+  const {money}=kit(),split=refundSplit(row),prior=Number.isSafeInteger(row.priorRefundedCents)&&row.priorRefundedCents>0?row.priorRefundedCents:0,cents=split?split.refundedCents-prior:null;
+  return cents>0?'Take '+money(cents)+' off the job’s paid total now'+(prior?' (the refund beyond the '+money(prior)+' recorded earlier)':''):'Take the refunded money off the job now';
+}
 // partial is Stripe's split from a stripe_review_refund_partial answer: the owner records the money kept on the job first,
 // then confirms the exact amount kept. why says why the dialog opened when it replaces a reconcile. A tipped charge
 // partly refunded also asks which part was refunded, which decides its service part.
@@ -273,7 +279,7 @@ function refundPayment(row,partial=null,why=''){
     fields:[{label:'Reason',name:'reason',type:'select',required:true,options:[{value:'',label:'Choose a reason'},...Object.entries(reasons).map(([value,label])=>({value,label}))]},
       ...(askPart?[{label:'Which part did you refund in Stripe?',name:'refundedPart',type:'select',required:true,options:[{value:'',label:'Choose which part'},{value:'service',label:'The service first (the tip only past the service part)'},{value:'tip',label:'The crew tip first, then the service'}]}]:[]),
       {label:'Note (owner only)',name:'note',type:'textarea',maxlength:500,rows:3},
-      ...(onJob?[{label:'The job still counts this charge as paid',name:'jobCorrection',type:'select',required:true,options:[{value:'',label:'Choose how the job is corrected'},{value:'record',label:tip>0?'Take the refunded service money off the job now (the crew tip stays held apart)':'Take the refunded money off the job now'},{value:'hand',label:tip>0?'I will correct the job’s service payment and the crew tip by hand':'I will correct the job’s payment by hand'}]}]:[]),
+      ...(onJob?[{label:'The job still counts this charge as paid',name:'jobCorrection',type:'select',required:true,requiredText:'Choose how the job’s payment is corrected before recording the refund.',options:[{value:'',label:'Choose how the job is corrected'},{value:'record',label:tip>0?'Take the refunded service money off the job now (the crew tip stays held apart)':takeOff(row)},{value:'hand',label:tip>0?'I will correct the job’s service payment and the crew tip by hand':'I will correct the job’s payment by hand'}]}]:[]),
       ...(later?[{label:'I will correct the payment recorded when the earlier review was closed (on this job or another)'+(tip!==0?' and the crew tip':''),name:'jobPaymentAcknowledged',type:'checkbox',required:true,requiredText:'Confirm that you will correct that payment before recording the refund.'}]:[]),
       ...(keep!==null?[{label:keptLabel,name:'keptAcknowledged',type:'checkbox',required:true,requiredText:'Confirm the '+money(keep)+' kept before recording the refund.'}]:[])],
     submit:(values,draft)=>save(API.stripe,{action:'payment.refund',reviewId:paymentId(row),expectedRevision:row.revision,reason:values.reason,...(values.note?{note:values.note}:{}),...(onJob?values.jobCorrection==='record'?{recordOnJob:true}:{jobPaymentAcknowledged:values.jobCorrection==='hand'}:later?{jobPaymentAcknowledged:values.jobPaymentAcknowledged===true}:{}),...(keep!==null&&values.keptAcknowledged===true?{keptCentsAcknowledged:keep}:{}),...(askPart?{tipRefundedFirst:values.refundedPart==='tip'}:{})},
